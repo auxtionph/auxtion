@@ -8,6 +8,7 @@ import { SellerApplicationModule } from './modules/seller-application/seller-app
 import { ShopItemsModule } from './modules/shop-items/shop-items.module';
 import { AuctionsModule } from './modules/auctions/auctions.module';
 import { BiddingModule } from './modules/bidding/bidding.module';
+import { OffersModule } from './modules/offers/offers.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { BiddingModule } from './modules/bidding/bidding.module';
     ShopItemsModule,
     AuctionsModule,
     BiddingModule,
+    OffersModule,
   ],
 })
 export class AppModule {}
