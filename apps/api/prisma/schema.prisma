@@ -1,0 +1,303 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── ENUMS ─────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  BUYER
+  SELLER
+  ADMIN
+}
+
+enum SellerTier {
+  NEW
+  ESTABLISHED
+  POWER
+}
+
+enum SellerApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AuctionStatus {
+  SCHEDULED
+  LIVE
+  ENDED
+  CANCELLED
+}
+
+enum ShopItemType {
+  AUCTION
+  BUY_NOW
+  GIVEAWAY
+}
+
+enum ShopItemStatus {
+  AVAILABLE
+  QUEUED
+  LIVE
+  SOLD
+  CANCELLED
+}
+
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  CANCELLED
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  SHIPPED
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum PayoutStatus {
+  HELD
+  RELEASED
+  FROZEN
+}
+
+enum CancelReason {
+  SELLER_MANUAL
+  STREAM_ENDED
+  PAYMENT_TIMEOUT
+}
+
+enum Courier {
+  JT_EXPRESS
+  LBC
+  NINJA_VAN
+  FLASH_EXPRESS
+  GRAB_EXPRESS
+  OTHER
+}
+
+enum DisputeStatus {
+  OPEN
+  RESOLVED_BUYER
+  RESOLVED_SELLER
+}
+
+// ── MODELS ────────────────────────────────────────────────────────────────────
+
+model User {
+  id          String     @id @default(cuid())
+  email       String     @unique
+  phone       String?    @unique
+  displayName String
+  avatarUrl   String?
+  password    String
+  role        UserRole   @default(BUYER)
+  sellerTier  SellerTier @default(NEW)
+  totalSales  Int        @default(0)
+  isVerified  Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  sellerApplication SellerApplication?
+  auctions          Auction[]
+  shopItems         ShopItem[]
+  bids              Bid[]
+  buyerOffers       Offer[]            @relation("BuyerOffers")
+  sellerOffers      Offer[]            @relation("SellerOffers")
+  buyerOrders       Order[]            @relation("BuyerOrders")
+  sellerOrders      Order[]            @relation("SellerOrders")
+  itemNotifications ItemNotification[]
+
+  @@map("users")
+}
+
+model SellerApplication {
+  id             String                  @id @default(cuid())
+  userId         String                  @unique
+  fullName       String
+  idImageUrl     String
+  contactNo      String
+  description    String
+  payoutInfo     String
+  status         SellerApplicationStatus @default(PENDING)
+  rejectedReason String?
+  reviewedBy     String?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("seller_applications")
+}
+
+model Auction {
+  id        String        @id @default(cuid())
+  sellerId  String
+  title     String
+  status    AuctionStatus @default(SCHEDULED)
+  startTime DateTime
+  endTime   DateTime?
+  streamUrl String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  seller    User       @relation(fields: [sellerId], references: [id])
+  shopItems ShopItem[]
+  bids      Bid[]
+
+  @@map("auctions")
+}
+
+model ShopItem {
+  id           String         @id @default(cuid())
+  sellerId     String
+  auctionId    String?
+  title        String
+  description  String
+  photos       String[]
+  price        Int
+  minimumOffer Int
+  type         ShopItemType   @default(AUCTION)
+  status       ShopItemStatus @default(AVAILABLE)
+  queueOrder   Int?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  seller            User               @relation(fields: [sellerId], references: [id])
+  auction           Auction?           @relation(fields: [auctionId], references: [id])
+  bids              Bid[]
+  offers            Offer[]
+  orders            Order[]
+  itemNotifications ItemNotification[]
+
+  @@map("shop_items")
+}
+
+model Bid {
+  id        String   @id @default(cuid())
+  auctionId String
+  itemId    String
+  bidderId  String
+  amount    Int
+  isWinning Boolean  @default(false)
+  placedAt  DateTime @default(now())
+
+  auction Auction  @relation(fields: [auctionId], references: [id])
+  item    ShopItem @relation(fields: [itemId], references: [id])
+  bidder  User     @relation(fields: [bidderId], references: [id])
+
+  @@map("bids")
+}
+
+model Offer {
+  id        String      @id @default(cuid())
+  itemId    String
+  buyerId   String
+  sellerId  String
+  amount    Int
+  status    OfferStatus @default(PENDING)
+  expiresAt DateTime
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  item   ShopItem @relation(fields: [itemId], references: [id])
+  buyer  User     @relation("BuyerOffers", fields: [buyerId], references: [id])
+  seller User     @relation("SellerOffers", fields: [sellerId], references: [id])
+
+  @@map("offers")
+}
+
+model Order {
+  id               String        @id @default(cuid())
+  buyerId          String
+  sellerId         String
+  itemId           String
+  auctionId        String?
+  amount           Int
+  status           OrderStatus   @default(PENDING_PAYMENT)
+  courier          Courier?
+  trackingNumber   String?
+  shippedAt        DateTime?
+  deliveredAt      DateTime?
+  autoConfirmAt    DateTime?
+  payoutStatus     PayoutStatus  @default(HELD)
+  payoutReleaseAt  DateTime?
+  payoutReleasedAt DateTime?
+  cancelReason     CancelReason?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  buyer   User     @relation("BuyerOrders", fields: [buyerId], references: [id])
+  seller  User     @relation("SellerOrders", fields: [sellerId], references: [id])
+  item    ShopItem @relation(fields: [itemId], references: [id])
+  payment Payment?
+  dispute Dispute?
+
+  @@map("orders")
+}
+
+model Payment {
+  id           String        @id @default(cuid())
+  orderId      String        @unique
+  userId       String
+  amount       Int
+  status       PaymentStatus @default(PENDING)
+  paymongoRef  String?
+  failedAt     DateTime?
+  cancelledAt  DateTime?
+  cancelReason CancelReason?
+  retryCount   Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@map("payments")
+}
+
+model Dispute {
+  id         String        @id @default(cuid())
+  orderId    String        @unique
+  raisedBy   String
+  reason     String
+  status     DisputeStatus @default(OPEN)
+  resolvedBy String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@map("disputes")
+}
+
+model ItemNotification {
+  id        String   @id @default(cuid())
+  itemId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  item ShopItem @relation(fields: [itemId], references: [id])
+  user User     @relation(fields: [userId], references: [id])
+
+  @@unique([itemId, userId])
+  @@map("item_notifications")
+}
