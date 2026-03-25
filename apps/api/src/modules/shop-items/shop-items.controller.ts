@@ -1,0 +1,82 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
+import { ShopItemsService } from './shop-items.service';
+import { CreateShopItemDto } from './dto/create-shop-item.dto';
+import { UpdateShopItemDto } from './dto/update-shop-item.dto';
+import { ReorderQueueDto } from './dto/reorder-queue.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ShopItemType, UserRole } from '@prisma/client';
+
+interface AuthUser {
+  id: string;
+  role: UserRole;
+}
+
+@Controller('shop-items')
+@UseGuards(JwtAuthGuard)
+export class ShopItemsController {
+  constructor(private readonly shopItemsService: ShopItemsService) {}
+
+  // Seller creates a new shop item
+  @Post()
+  createItem(@CurrentUser() user: AuthUser, @Body() dto: CreateShopItemDto) {
+    return this.shopItemsService.createItem(user.id, dto);
+  }
+
+  // Get a seller's shop — public access
+  @Get('seller/:sellerId')
+  getSellerShop(
+    @Param('sellerId') sellerId: string,
+    @Query('type') type?: ShopItemType,
+  ) {
+    return this.shopItemsService.getSellerShop(sellerId, type);
+  }
+
+  // Get single item
+  @Get(':id')
+  getItemById(@Param('id') id: string) {
+    return this.shopItemsService.getItemById(id);
+  }
+
+  // Seller updates their item
+  @Patch(':id')
+  updateItem(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateShopItemDto,
+  ) {
+    return this.shopItemsService.updateItem(user.id, id, dto);
+  }
+
+  // Seller removes item from shop
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  deleteItem(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.shopItemsService.deleteItem(user.id, id);
+  }
+
+  // Seller reorders auction queue
+  @Patch('queue/reorder')
+  reorderQueue(@CurrentUser() user: AuthUser, @Body() dto: ReorderQueueDto) {
+    return this.shopItemsService.reorderQueue(user.id, dto);
+  }
+
+  // Toggle bell notification on item
+  @Post(':id/notify')
+  @HttpCode(HttpStatus.OK)
+  toggleNotification(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.shopItemsService.toggleNotification(user.id, id);
+  }
+}
