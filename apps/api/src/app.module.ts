@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppConfigModule } from './config/config.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
@@ -11,9 +12,11 @@ import { BiddingModule } from './modules/bidding/bidding.module';
 import { OffersModule } from './modules/offers/offers.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { SchedulerModule } from './modules/scheduler/scheduler.module';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     AppConfigModule,
     PrismaModule,
     RedisModule,
@@ -26,6 +29,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
     OffersModule,
     OrdersModule,
     PaymentsModule,
+    SchedulerModule,
   ],
 })
 export class AppModule {}
