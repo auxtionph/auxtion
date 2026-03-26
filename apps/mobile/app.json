@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "Auxtion",
+    "slug": "auxtion",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "auxtion",
+    "newArchEnabled": false,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1E2A3A"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.auxtionph.auxtion",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1E2A3A"
+      },
+      "package": "com.auxtionph.auxtion"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-image",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#1A56DB"
+        }
+      ],
+      "expo-video",
+      "expo-audio"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "f3e82850-1d6f-4dfc-9af4-b8ab3d5fb87b"
+      }
+    },
+    "owner": "jcalma"
+  }
+}
