@@ -3,7 +3,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
@@ -29,11 +28,11 @@ export default function RegisterScreen() {
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const update = (key: string, value: string) =>
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm(prev => ({ ...prev, [key]: value }));
 
   const validate = () => {
     const e: Record<string, string> = {};
-    if (!form.displayName) e.displayName = 'Display name is required';
+    if (!form.displayName.trim()) e.displayName = 'Display name is required';
     if (!form.email) e.email = 'Email is required';
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Enter a valid email';
     if (!form.password) e.password = 'Password is required';
@@ -61,105 +60,122 @@ export default function RegisterScreen() {
       router.replace('/(main)');
     } catch (error: unknown) {
       const err = error as { response?: { data?: { message?: string } } };
-      Alert.alert('Registration Failed', err.response?.data?.message ?? 'Something went wrong');
+      Alert.alert(
+        'Registration Failed',
+        err.response?.data?.message ?? 'Something went wrong',
+      );
     } finally {
       setLoading(false);
     }
   };
 
+  const fields = [
+    {
+      key: 'displayName',
+      label: 'Display Name',
+      placeholder: 'Juan dela Cruz',
+      autoCapitalize: 'words' as const,
+      secure: false,
+    },
+    {
+      key: 'email',
+      label: 'Email',
+      placeholder: 'you@email.com',
+      autoCapitalize: 'none' as const,
+      keyboardType: 'email-address' as const,
+      secure: false,
+    },
+    {
+      key: 'password',
+      label: 'Password',
+      placeholder: '••••••••',
+      autoCapitalize: 'none' as const,
+      secure: true,
+    },
+    {
+      key: 'confirmPassword',
+      label: 'Confirm Password',
+      placeholder: '••••••••',
+      autoCapitalize: 'none' as const,
+      secure: true,
+    },
+  ];
+
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      className="flex-1 bg-[#1E2A3A]"
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled">
-        <TouchableOpacity style={styles.back} onPress={() => router.back()}>
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
+      <ScrollView
+        contentContainerStyle={{ flexGrow: 1 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View className="flex-1 px-6 pt-16 pb-10">
 
-        <Text style={styles.title}>Create Account</Text>
-        <Text style={styles.subtitle}>Join Auxtion and start bidding</Text>
+          {/* Back Button */}
+          <TouchableOpacity className="mb-8" onPress={() => router.back()}>
+            <Text className="text-[#1A56DB] text-base">← Back to Login</Text>
+          </TouchableOpacity>
 
-        <View style={styles.form}>
-          {[
-            { key: 'displayName', label: 'Display Name', placeholder: 'Juan dela Cruz' },
-            { key: 'email', label: 'Email', placeholder: 'you@email.com', keyboard: 'email-address' as const },
-            { key: 'password', label: 'Password', placeholder: '••••••••', secure: true },
-            { key: 'confirmPassword', label: 'Confirm Password', placeholder: '••••••••', secure: true },
-          ].map(({ key, label, placeholder, keyboard, secure }) => (
-            <View key={key} style={styles.field}>
-              <Text style={styles.label}>{label}</Text>
+          {/* Header */}
+          <Text className="text-4xl font-bold text-white mb-1">
+            Create Account
+          </Text>
+          <Text className="text-sm text-gray-500 mb-8">
+            Join Auxtion and start bidding
+          </Text>
+
+          {/* Fields */}
+          {fields.map(({ key, label, placeholder, autoCapitalize, keyboardType, secure }) => (
+            <View key={key} className="mb-4">
+              <Text className="text-sm font-semibold text-gray-300 mb-1">
+                {label}
+              </Text>
               <TextInput
-                style={[styles.input, errors[key] ? styles.inputError : null]}
+                className={`bg-gray-900 border rounded-xl px-4 py-4 text-white text-base ${
+                  errors[key] ? 'border-red-500' : 'border-gray-700'
+                }`}
                 placeholder={placeholder}
                 placeholderTextColor="#4B5563"
-                keyboardType={keyboard ?? 'default'}
-                autoCapitalize={key === 'email' ? 'none' : 'words'}
+                autoCapitalize={autoCapitalize}
+                keyboardType={keyboardType ?? 'default'}
                 autoCorrect={false}
                 secureTextEntry={secure}
                 value={form[key as keyof typeof form]}
-                onChangeText={(v) => update(key, v)}
+                onChangeText={v => update(key, v)}
               />
-              {errors[key] ? <Text style={styles.error}>{errors[key]}</Text> : null}
+              {errors[key] ? (
+                <Text className="text-red-500 text-xs mt-1">{errors[key]}</Text>
+              ) : null}
             </View>
           ))}
 
+          {/* Submit Button */}
           <TouchableOpacity
-            style={[styles.button, loading ? styles.buttonDisabled : null]}
+            className={`bg-[#1A56DB] rounded-xl py-4 items-center mt-4 ${loading ? 'opacity-60' : ''}`}
             onPress={() => void handleRegister()}
             disabled={loading}
           >
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.buttonText}>Create Account</Text>
+              <Text className="text-white font-bold text-base">
+                Create Account
+              </Text>
             )}
           </TouchableOpacity>
-        </View>
 
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>Already have an account? </Text>
-          <TouchableOpacity onPress={() => router.push('/(auth)/login')}>
-            <Text style={styles.footerLink}>Sign In</Text>
-          </TouchableOpacity>
+          {/* Login Link */}
+          <View className="flex-row justify-center mt-6">
+            <Text className="text-gray-500 text-sm">Already have an account? </Text>
+            <TouchableOpacity onPress={() => router.replace('/(auth)/login')}>
+              <Text className="text-[#1A56DB] text-sm font-semibold">Sign In</Text>
+            </TouchableOpacity>
+          </View>
+
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#1E2A3A' },
-  inner: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 60, paddingBottom: 40 },
-  back: { marginBottom: 24 },
-  backText: { fontSize: 16, color: '#1A56DB' },
-  title: { fontSize: 28, fontWeight: 'bold', color: '#FFFFFF', marginBottom: 4 },
-  subtitle: { fontSize: 14, color: '#6B7280', marginBottom: 32 },
-  form: { gap: 16 },
-  field: { gap: 6 },
-  label: { fontSize: 14, fontWeight: '600', color: '#D1D5DB' },
-  input: {
-    backgroundColor: '#111827',
-    borderWidth: 1,
-    borderColor: '#374151',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: '#FFFFFF',
-  },
-  inputError: { borderColor: '#DC2626' },
-  error: { fontSize: 12, color: '#DC2626' },
-  button: {
-    backgroundColor: '#1A56DB',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  buttonDisabled: { opacity: 0.6 },
-  buttonText: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
-  footer: { flexDirection: 'row', justifyContent: 'center', marginTop: 32 },
-  footerText: { fontSize: 14, color: '#6B7280' },
-  footerLink: { fontSize: 14, color: '#1A56DB', fontWeight: '600' },
-});
