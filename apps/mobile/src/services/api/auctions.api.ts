@@ -23,6 +23,7 @@ export interface AuctionFeedItem {
     displayName: string;
     avatarUrl?: string;
     sellerTier: string;
+    totalSales: number;
   };
   shopItems: {
     id: string;
