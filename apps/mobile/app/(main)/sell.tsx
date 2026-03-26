@@ -72,7 +72,7 @@ export default function SellScreen() {
 
         <TouchableOpacity
           className="bg-[#1A56DB] rounded-2xl py-5 items-center mt-4"
-          onPress={() => router.push('/(main)/sell')}
+          onPress={() => router.push('/seller-application')}
         >
           <Text className="text-white font-bold text-base">Apply to Sell</Text>
           <Text className="text-blue-200 text-xs mt-1">
