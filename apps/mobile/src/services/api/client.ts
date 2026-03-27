@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 
 const API_BASE_URL = __DEV__
   ? 'http://192.168.100.206:3000/api/v1'
-  : 'https://api.auxtion.ph/api/v1';
+  : 'https://auxtion-production.up.railway.app/api/v1';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
