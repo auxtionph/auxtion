@@ -35,6 +35,13 @@
       "expo-secure-store",
       "expo-image",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Auxtion to access your camera for live streaming.",
+          "microphonePermission": "Allow Auxtion to access your microphone for live streaming."
+        }
+      ],
+      [
         "expo-notifications",
         {
           "icon": "./assets/icon.png",

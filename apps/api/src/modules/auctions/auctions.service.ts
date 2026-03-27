@@ -8,10 +8,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAuctionDto } from './dto/create-auction.dto';
 import { UpdateAuctionDto } from './dto/update-auction.dto';
 import { AuctionStatus, ShopItemStatus, UserRole } from '@prisma/client';
+import { StreamingService } from '../streaming/streaming.service';
 
 @Injectable()
 export class AuctionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly streamingService: StreamingService,
+  ) {}
 
   // ── Create Auction ─────────────────────────────────────────────────────────
 
@@ -168,7 +172,6 @@ export class AuctionsService {
     const auction = await this.prisma.auction.findUnique({
       where: { id: auctionId },
     });
-
     if (!auction) throw new NotFoundException('Auction not found');
     if (auction.sellerId !== sellerId) {
       throw new ForbiddenException('You do not own this auction');
@@ -177,9 +180,17 @@ export class AuctionsService {
       throw new BadRequestException('Auction is not in scheduled status');
     }
 
+    // Create a 100ms room for this auction
+    const roomId = await this.streamingService.createRoom(
+      auctionId,
+      auction.title,
+    );
     return this.prisma.auction.update({
       where: { id: auctionId },
-      data: { status: AuctionStatus.LIVE },
+      data: {
+        status: AuctionStatus.LIVE,
+        streamUrl: roomId,
+      },
     });
   }
 
