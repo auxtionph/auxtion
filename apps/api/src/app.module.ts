@@ -13,6 +13,7 @@ import { OffersModule } from './modules/offers/offers.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { SchedulerModule } from './modules/scheduler/scheduler.module';
+import { StreamingModule } from './modules/streaming/streaming.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { SchedulerModule } from './modules/scheduler/scheduler.module';
     OrdersModule,
     PaymentsModule,
     SchedulerModule,
+    StreamingModule,
   ],
 })
 export class AppModule {}

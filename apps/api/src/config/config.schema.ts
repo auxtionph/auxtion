@@ -8,6 +8,7 @@ export function validateConfig(config: Record<string, unknown>) {
     'PAYMONGO_WEBHOOK_SECRET',
     'HMS_APP_ACCESS_KEY',
     'HMS_APP_SECRET',
+    'HMS_TEMPLATE_ID',
   ];
 
   for (const key of required) {
@@ -38,5 +39,6 @@ export function validateConfig(config: Record<string, unknown>) {
     PAYMONGO_WEBHOOK_SECRET: config['PAYMONGO_WEBHOOK_SECRET'] as string,
     HMS_APP_ACCESS_KEY: config['HMS_APP_ACCESS_KEY'] as string,
     HMS_APP_SECRET: config['HMS_APP_SECRET'] as string,
+    HMS_TEMPLATE_ID: config['HMS_TEMPLATE_ID'] as string,
   };
 }
