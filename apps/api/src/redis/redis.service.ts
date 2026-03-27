@@ -15,10 +15,20 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly configService: ConfigService) {}
 
   onModuleInit() {
-    this.client = new Redis({
-      host: this.configService.get<string>('REDIS_HOST'),
-      port: this.configService.get<number>('REDIS_PORT'),
-    });
+    const redisUrl = this.configService.get<string>('REDIS_URL');
+
+    if (redisUrl) {
+      // Railway provides a full URL
+      this.client = new Redis(redisUrl, {
+        tls: redisUrl.startsWith('rediss://') ? {} : undefined,
+      });
+    } else {
+      // Local dev uses host/port
+      this.client = new Redis({
+        host: this.configService.get<string>('REDIS_HOST') ?? 'localhost',
+        port: this.configService.get<number>('REDIS_PORT') ?? 6379,
+      });
+    }
 
     this.client.on('connect', () => {
       this.logger.log('Redis connected');

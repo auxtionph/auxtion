@@ -1,7 +1,6 @@
 export function validateConfig(config: Record<string, unknown>) {
   const required = [
     'DATABASE_URL',
-    'REDIS_HOST',
     'JWT_SECRET',
     'JWT_REFRESH_SECRET',
     'PAYMONGO_SECRET_KEY',
@@ -17,11 +16,17 @@ export function validateConfig(config: Record<string, unknown>) {
     }
   }
 
+  // Either REDIS_URL or REDIS_HOST must be provided
+  if (!config['REDIS_URL'] && !config['REDIS_HOST']) {
+    throw new Error('Either REDIS_URL or REDIS_HOST must be provided');
+  }
+
   return {
     NODE_ENV: config['NODE_ENV'] ?? 'development',
     PORT: Number(config['PORT']) || 3000,
     DATABASE_URL: config['DATABASE_URL'] as string,
-    REDIS_HOST: config['REDIS_HOST'] as string,
+    REDIS_URL: config['REDIS_URL'] as string | undefined,
+    REDIS_HOST: config['REDIS_HOST'] as string | undefined,
     REDIS_PORT: Number(config['REDIS_PORT']) || 6379,
     JWT_SECRET: config['JWT_SECRET'] as string,
     JWT_EXPIRES_IN: (config['JWT_EXPIRES_IN'] as string) ?? '15m',
