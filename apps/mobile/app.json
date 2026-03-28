@@ -17,7 +17,9 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.auxtionph.auxtion",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSMicrophoneUsageDescription": "Allow Auxtion to access your microphone for live streaming.",
+        "NSCameraUsageDescription": "Allow Auxtion to access your camera for live streaming."
       }
     },
     "android": {
@@ -49,7 +51,15 @@
         }
       ],
       "expo-video",
-      "expo-audio"
+      "expo-audio",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.1"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
