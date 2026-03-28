@@ -13,13 +13,13 @@ import {
 import React from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { HMSVideoViewMode } from '@100mslive/react-native-hms';
 import { auctionsApi, AuctionDetail } from '../../../src/services/api/auctions.api';
 import { useAuctionSocket } from '../../../src/hooks/useSocket';
 import { useAuthStore } from '../../../src/stores/auth.store';
 import { useHMS } from '../../../src/hooks/useHMS';
 import { formatPHP } from '@auxtion/utils';
 import { Dimensions } from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -69,21 +69,11 @@ interface ItemEndedData {
   winner: { userId: string; displayName: string; amount: number } | null;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { HMSView } = require('@100mslive/react-native-hms') as {
-  HMSView: React.ComponentType<{
-    id: string;
-    trackId: string;
-    mirror?: boolean;
-    scaleType?: string;
-    style?: object;
-  }>;
-};
-
 export default function LiveAuctionRoom() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuthStore();
+  const [permission, requestPermission] = useCameraPermissions();
 
   const [auction, setAuction] = useState<AuctionDetail | null>(null);
   const [currentItem, setCurrentItem] = useState<CurrentItem | null>(null);
@@ -115,15 +105,11 @@ export default function LiveAuctionRoom() {
   const hmsRole = isSeller ? 'broadcaster' : 'viewer-realtime';
 
   // Only initialize HMS when we have the auction and streamUrl
-  const hms = useHMS(
-    auction?.streamUrl
-      ? {
-          roomId: auction.streamUrl,
-          userName: user?.displayName ?? 'User',
-          role: hmsRole,
-        }
-      : null as never,
-  );
+  const hms = useHMS({
+    roomId: auction?.streamUrl ?? null,
+    userName: user?.displayName ?? 'User',
+    role: hmsRole,
+  });
 
   const { placeBid, sendChat } = useAuctionSocket({
     auctionId: id,
@@ -204,31 +190,24 @@ export default function LiveAuctionRoom() {
 
   return (
     <View className="flex-1 bg-black">
-
       {/* ── Full Screen Video ── */}
       <View className="absolute inset-0">
-        {auction?.streamUrl && hms?.broadcasterPeer?.videoTrack ? (
-          <HMSView
-            id={`broadcaster-${hms.broadcasterPeer.id}`}
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            mirror={false}
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            trackId={hms.broadcasterPeer.videoTrack.trackId as string}
-            scaleType={HMSVideoViewMode.ASPECT_FILL}
-            style={{ flex: 1 }}
-          />
-        ) : isSeller && hms?.localPeer?.videoTrack ? (
-          <HMSView
-            id={`local-${hms.localPeer.id}`}
-            mirror={true}
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-            trackId={hms.localPeer.videoTrack.trackId as string}
-            scaleType={HMSVideoViewMode.ASPECT_FILL}
-            style={{ flex: 1 }}
-          />
+        {isSeller && hms.isJoined ? (
+          permission?.granted ? (
+            <CameraView style={{ flex: 1 }} facing="front" />
+          ) : (
+            <View className="flex-1 bg-gray-900 items-center justify-center">
+              <TouchableOpacity
+                className="bg-[#1A56DB] px-6 py-3 rounded-2xl"
+                onPress={() => void requestPermission()}
+              >
+                <Text className="text-white font-bold">Enable Camera</Text>
+              </TouchableOpacity>
+            </View>
+          )
         ) : (
           <View className="flex-1 bg-gray-900 items-center justify-center">
-            {hms?.isLoading ? (
+            {hms.isLoading ? (
               <>
                 <ActivityIndicator size="large" color="#1A56DB" />
                 <Text className="text-gray-400 text-sm mt-3">Connecting to stream...</Text>
@@ -237,7 +216,7 @@ export default function LiveAuctionRoom() {
               <>
                 <Text className="text-6xl">📺</Text>
                 <Text className="text-gray-500 text-sm mt-2">
-                  {hms?.error ?? 'Waiting for stream...'}
+                  {hms.error ?? 'Waiting for stream...'}
                 </Text>
               </>
             )}

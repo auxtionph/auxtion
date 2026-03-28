@@ -17,7 +17,7 @@ interface HMSPeerInfo {
 }
 
 interface UseHMSOptions {
-  roomId: string;
+  roomId: string | null;
   userName: string;
   role: 'broadcaster' | 'viewer-realtime';
 }
@@ -33,11 +33,17 @@ export const useHMS = ({ roomId, userName, role }: UseHMSOptions) => {
   const [isCameraOff, setIsCameraOff] = useState(false);
 
   useEffect(() => {
+    if (!roomId) {
+      setIsLoading(false);
+      return;
+    }
     void initialize();
     return () => {
       void cleanup();
     };
   }, [roomId]);
+
+  
 
   const initialize = async () => {
     try {
@@ -53,23 +59,28 @@ export const useHMS = ({ roomId, userName, role }: UseHMSOptions) => {
       hmsRef.current = hms;
 
       // Listeners
-      hms.addEventListener(
+    hms.addEventListener(
         HMSUpdateListenerActions.ON_JOIN,
         () => {
-          setIsJoined(true);
-          setIsLoading(false);
-          updatePeers(hms);
+            setIsJoined(true);
+            setIsLoading(false);
+            void updatePeers(hms);
+            // Debug
+            console.log('HMS joined successfully');
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+            const room = hms.getRoom();
+            console.log('Local peer:', JSON.stringify(room));
         },
-      );
+    );
 
       hms.addEventListener(
         HMSUpdateListenerActions.ON_PEER_UPDATE,
-        () => updatePeers(hms),
+        () => void updatePeers(hms),
       );
 
       hms.addEventListener(
         HMSUpdateListenerActions.ON_TRACK_UPDATE,
-        () => updatePeers(hms),
+        () => void updatePeers(hms),
       );
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -89,45 +100,29 @@ export const useHMS = ({ roomId, userName, role }: UseHMSOptions) => {
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const updatePeers = (hms: any) => {
+  const updatePeers = async (hms: any) => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const room = hms.getRoom();
-      if (!room) return;
-      const allPeers: HMSPeerInfo[] = [];
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      if (room.localPeer) {
+        const localPeer = await hms.getLocalPeer();
+        const allPeers: HMSPeerInfo[] = [];
+
+        if (localPeer) {
         allPeers.push({
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          id: room.localPeer.peerID,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          name: room.localPeer.name,
-          isLocal: true,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          videoTrack: room.localPeer.videoTrack ? { trackId: room.localPeer.videoTrack.trackId } : null,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          audioTrack: room.localPeer.audioTrack ? { trackId: room.localPeer.audioTrack.trackId } : null ,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+            id: localPeer.peerID,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+            name: localPeer.name,
+            isLocal: true,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+            videoTrack: localPeer.localVideo ? { trackId: localPeer.localVideo.trackId } : null,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+            audioTrack: localPeer.localAudio ? { trackId: localPeer.localAudio.trackId } : null,
         });
-      }
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-      room.peers?.forEach((peer: HMSPeerInfo) => {
-        allPeers.push({
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-          id: (peer as any).peerID,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          name: peer.name,
-          isLocal: false,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          videoTrack: peer.videoTrack,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          audioTrack: peer.audioTrack,
-        });
-      });
-      setPeers(allPeers);
-    } catch {
-      // ignore
-    }
-  };
+        }
+        setPeers(allPeers);
+        } catch (e) {
+            console.log('updatePeers error:', e);
+        }
+    };
 
   const toggleMute = useCallback(async () => {
     try {
