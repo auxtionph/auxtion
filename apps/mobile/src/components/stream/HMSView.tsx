@@ -15,11 +15,12 @@ interface HMSViewProps {
   id: string;
   mirror?: boolean;
   scaleType?: string;
+  setZOrderMediaOverlay?: boolean;
+  autoSimulcast?: boolean;
   style?: ViewStyle;
-  isLocal?: boolean;
 }
 
-export const HMSView = ({ trackId, id, mirror = false, scaleType = 'ASPECT_FILL', style, isLocal = false }: HMSViewProps) => {
+export const HMSView = ({ trackId, id, mirror = false, scaleType = 'ASPECT_FILL', setZOrderMediaOverlay = false, autoSimulcast = true, style }: HMSViewProps) => {
   if (!HMSNativeView) return null;
   return (
     <HMSNativeView
@@ -27,7 +28,8 @@ export const HMSView = ({ trackId, id, mirror = false, scaleType = 'ASPECT_FILL'
       id={id}
       mirror={mirror}
       scaleType={scaleType}
-      setZOrderMediaOverlay={isLocal}
+      setZOrderMediaOverlay={setZOrderMediaOverlay}
+      autoSimulcast={autoSimulcast}
       style={style}
     />
   );

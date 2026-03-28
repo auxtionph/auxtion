@@ -24,7 +24,7 @@ export default function SellScreen() {
       await apiClient.patch(`/auctions/${auctionId}/go-live`);
 
       // Navigate directly to live room as broadcaster
-      router.push(`/auction/${auctionId}/live`);
+      router.push(`/auction/${auctionId}/live?role=broadcaster`);
     } catch {
       Alert.alert('Error', 'Failed to start live auction. Please try again.');
     } finally {

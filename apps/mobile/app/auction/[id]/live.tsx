@@ -70,7 +70,7 @@ interface ItemEndedData {
 }
 
 export default function LiveAuctionRoom() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, role: routeRole } = useLocalSearchParams<{ id: string; role?: string }>();
   const router = useRouter();
 
   const [auction, setAuction] = useState<AuctionDetail | null>(null);
@@ -150,7 +150,8 @@ export default function LiveAuctionRoom() {
   });
 
   const { user } = useAuthStore();
-  const isSeller = auction?.seller.id === user?.id;
+  const isSellerImmediate = routeRole === 'broadcaster';
+  const isSeller = auction ? auction.seller.id === user?.id : isSellerImmediate;
   // With this — only pass roomId after auction is loaded:
   const [roomId, setRoomId] = useState<string | null>(null);
 
@@ -217,7 +218,7 @@ export default function LiveAuctionRoom() {
     <View className="flex-1 bg-black">
 
       {/* ── Full Screen Video Background ── */}
-      <View className="absolute inset-0 bg-gray-900 items-center justify-center">
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#111827' }}>
         {hms.isLoading ? (
           <View className="flex-1 items-center justify-center">
             <ActivityIndicator size="large" color="#1A56DB" />
@@ -229,7 +230,7 @@ export default function LiveAuctionRoom() {
               trackId={hms.localPeer.videoTrackId}
               id={hms.localPeer.id}
               mirror={true}
-              isLocal={true}
+              setZOrderMediaOverlay={true}
               style={{ flex: 1 }}
             />
           ) : !isSeller && hms.broadcasterPeer?.videoTrackId ? (
@@ -242,7 +243,7 @@ export default function LiveAuctionRoom() {
           ) : (
             <View className="flex-1 items-center justify-center">
               <Text className="text-6xl">{isSeller ? '🔴' : '📺'}</Text>
-              <Text className="text-white font-bold text-lg mt-3">
+              <Text className="text-gray-600 text-sm mt-2">
                 {isSeller ? 'You are live' : 'Watching live'}
               </Text>
             </View>
