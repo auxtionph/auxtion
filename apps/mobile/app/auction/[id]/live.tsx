@@ -18,6 +18,8 @@ import { useAuctionSocket } from '../../../src/hooks/useSocket';
 import { formatPHP } from '@auxtion/utils';
 import { useAuthStore } from '../../../src/stores/auth.store';
 import { useHMS } from '../../../src/hooks/useHMS';
+import { apiClient } from '../../../src/services/api/client';
+import { HMSView } from '../../../src/components/stream/HMSView';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -149,11 +151,45 @@ export default function LiveAuctionRoom() {
 
   const { user } = useAuthStore();
   const isSeller = auction?.seller.id === user?.id;
+  // With this — only pass roomId after auction is loaded:
+  const [roomId, setRoomId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (auction?.streamUrl && !roomId) {
+      setRoomId(auction.streamUrl);
+    }
+  }, [auction?.streamUrl]);
+
   const hms = useHMS({
-    roomId: auction?.streamUrl ?? null,
+    roomId,
     userName: user?.displayName ?? 'User',
     role: isSeller ? 'broadcaster' : 'viewer-realtime',
   });
+    const handleLeave = async () => {
+    if (isSeller) {
+      Alert.alert(
+        'End Live?',
+        'Are you sure you want to end your live auction?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'End Live',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await apiClient.patch(`/auctions/${id}/end`);
+              } catch { /* ignore */ }
+              await hms.leave();
+              router.back();
+            },
+          },
+        ],
+      );
+    } else {
+      await hms.leave();
+      router.back();
+    }
+  };
 
   const handleBid = () => {
     if (!currentItem) return;
@@ -188,12 +224,29 @@ export default function LiveAuctionRoom() {
             <Text className="text-gray-400 text-sm mt-3">Connecting to stream...</Text>
           </View>
         ) : hms.isJoined ? (
-          <View className="flex-1 items-center justify-center">
-            <Text className="text-6xl">🔴</Text>
-            <Text className="text-white font-bold text-lg mt-3">
-              {isSeller ? 'You are live' : 'Watching live'}
-            </Text>
-          </View>
+          isSeller && hms.localPeer?.videoTrackId ? (
+            <HMSView
+              trackId={hms.localPeer.videoTrackId}
+              id={hms.localPeer.id}
+              mirror={true}
+              isLocal={true}
+              style={{ flex: 1 }}
+            />
+          ) : !isSeller && hms.broadcasterPeer?.videoTrackId ? (
+            <HMSView
+              trackId={hms.broadcasterPeer.videoTrackId}
+              id={hms.broadcasterPeer.id}
+              mirror={false}
+              style={{ flex: 1 }}
+            />
+          ) : (
+            <View className="flex-1 items-center justify-center">
+              <Text className="text-6xl">{isSeller ? '🔴' : '📺'}</Text>
+              <Text className="text-white font-bold text-lg mt-3">
+                {isSeller ? 'You are live' : 'Watching live'}
+              </Text>
+            </View>
+          )
         ) : (
           <View className="flex-1 items-center justify-center">
             <Text className="text-8xl">📺</Text>
@@ -234,7 +287,7 @@ export default function LiveAuctionRoom() {
         {/* Close button */}
         <TouchableOpacity
           className="bg-black/50 rounded-full w-9 h-9 items-center justify-center"
-          onPress={async () => { await hms.leave(); router.back(); }}
+          onPress={() => void handleLeave()}
         >
           <Text className="text-white text-base font-bold">✕</Text>
         </TouchableOpacity>

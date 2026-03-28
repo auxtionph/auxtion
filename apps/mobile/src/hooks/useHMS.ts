@@ -42,6 +42,62 @@ export const useHMS = ({ roomId, userName, role }: UseHMSOptions) => {
     };
   }, [roomId]);
 
+  const fetchPeers = async () => {
+    if (!hmsRef.current) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+      const localPeer = await hmsRef.current.getLocalPeer();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+      const remotePeers = await hmsRef.current.getRemotePeers();
+      const allPeers: HMSPeerInfo[] = [];
+
+      if (localPeer) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        const videoTrackId = localPeer.localVideo?.trackId
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          ? String(localPeer.localVideo.trackId)
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          : localPeer.videoTrack?.trackId
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            ? String(localPeer.videoTrack.trackId)
+            : null;
+        allPeers.push({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          id: String(localPeer.peerID),
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          name: String(localPeer.name),
+          isLocal: true,
+          videoTrackId,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          audioTrackId: localPeer.localAudio?.trackId ? String(localPeer.localAudio.trackId) : null,
+        });
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+      if (Array.isArray(remotePeers)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        remotePeers.forEach((peer: any) => {
+          allPeers.push({
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            id: String(peer.peerID),
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            name: String(peer.name),
+            isLocal: false,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            videoTrackId: peer.videoTrack?.trackId ? String(peer.videoTrack.trackId) : null,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+            audioTrackId: peer.audioTrack?.trackId ? String(peer.audioTrack.trackId) : null,
+          });
+        });
+      }
+
+      console.log('Peers fetched:', JSON.stringify(allPeers));
+      setPeers(allPeers);
+    } catch (e) {
+      console.log('fetchPeers error:', e);
+    }
+  };
+
   const initialize = async (rid: string) => {
     try {
       const response = await apiClient.post('/streaming/token', { roomId: rid, role });
@@ -51,16 +107,26 @@ export const useHMS = ({ roomId, userName, role }: UseHMSOptions) => {
       hmsRef.current = hms;
 
       hms.addEventListener(HMSUpdateListenerActions.ON_JOIN, () => {
+        console.log('HMS ON_JOIN');
         setIsJoined(true);
         setIsLoading(false);
         void fetchPeers();
       });
 
-      hms.addEventListener(HMSUpdateListenerActions.ON_PEER_UPDATE, () => void fetchPeers());
-      hms.addEventListener(HMSUpdateListenerActions.ON_TRACK_UPDATE, () => void fetchPeers());
+      hms.addEventListener(HMSUpdateListenerActions.ON_PEER_UPDATE, () => {
+        console.log('HMS ON_PEER_UPDATE');
+        void fetchPeers();
+      });
+
+      hms.addEventListener(HMSUpdateListenerActions.ON_TRACK_UPDATE, () => {
+        console.log('HMS ON_TRACK_UPDATE');
+        void fetchPeers();
+      });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       hms.addEventListener(HMSUpdateListenerActions.ON_ERROR, (data: any) => {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        console.log('HMS ON_ERROR:', data);
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         setError(String(data?.error?.message ?? 'Stream error'));
         setIsLoading(false);
@@ -75,38 +141,12 @@ export const useHMS = ({ roomId, userName, role }: UseHMSOptions) => {
     }
   };
 
-  const fetchPeers = async () => {
-    if (!hmsRef.current) return;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const localPeer = await hmsRef.current.getLocalPeer();
-      const allPeers: HMSPeerInfo[] = [];
-
-      if (localPeer) {
-        allPeers.push({
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          id: String(localPeer.peerID),
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          name: String(localPeer.name),
-          isLocal: true,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          videoTrackId: localPeer.localVideo?.trackId ? String(localPeer.localVideo.trackId) : null,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          audioTrackId: localPeer.localAudio?.trackId ? String(localPeer.localAudio.trackId) : null,
-        });
-      }
-      setPeers(allPeers);
-    } catch (e) {
-      console.log('fetchPeers error:', e);
-    }
-  };
-
   const toggleMute = useCallback(async () => {
     try {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const audioTrack = await hmsRef.current?.getLocalPeer();
+      const peer = await hmsRef.current?.getLocalPeer();
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      await audioTrack?.localAudio?.setMute(!isMuted);
+      await peer?.localAudio?.setMute(!isMuted);
       setIsMuted(prev => !prev);
     } catch { /* ignore */ }
   }, [isMuted]);
