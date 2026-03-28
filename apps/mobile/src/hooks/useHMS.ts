@@ -10,10 +10,8 @@ interface HMSPeerInfo {
   id: string;
   name: string;
   isLocal: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  videoTrack: { trackId: string } | null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  audioTrack: { trackId: string } | null;
+  videoTrackId: string | null;
+  audioTrackId: string | null;
 }
 
 interface UseHMSOptions {
@@ -25,63 +23,41 @@ interface UseHMSOptions {
 export const useHMS = ({ roomId, userName, role }: UseHMSOptions) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const hmsRef = useRef<any>(null);
+  const initializedRef = useRef(false);
   const [peers, setPeers] = useState<HMSPeerInfo[]>([]);
   const [isJoined, setIsJoined] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
 
   useEffect(() => {
-    if (!roomId) {
-      setIsLoading(false);
-      return;
-    }
-    void initialize();
+    if (!roomId || initializedRef.current) return;
+    initializedRef.current = true;
+    setIsLoading(true);
+    void initialize(roomId);
     return () => {
       void cleanup();
+      initializedRef.current = false;
     };
   }, [roomId]);
 
-  
-
-  const initialize = async () => {
+  const initialize = async (rid: string) => {
     try {
-      // Get auth token from our backend
-      const response = await apiClient.post('/streaming/token', {
-        roomId,
-        role,
-      });
+      const response = await apiClient.post('/streaming/token', { roomId: rid, role });
       const { token } = response.data.data as { token: string };
 
-      // Build HMS instance
       const hms = await HMSSDK.build();
       hmsRef.current = hms;
 
-      // Listeners
-    hms.addEventListener(
-        HMSUpdateListenerActions.ON_JOIN,
-        () => {
-            setIsJoined(true);
-            setIsLoading(false);
-            void updatePeers(hms);
-            // Debug
-            console.log('HMS joined successfully');
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-            const room = hms.getRoom();
-            console.log('Local peer:', JSON.stringify(room));
-        },
-    );
+      hms.addEventListener(HMSUpdateListenerActions.ON_JOIN, () => {
+        setIsJoined(true);
+        setIsLoading(false);
+        void fetchPeers();
+      });
 
-      hms.addEventListener(
-        HMSUpdateListenerActions.ON_PEER_UPDATE,
-        () => void updatePeers(hms),
-      );
-
-      hms.addEventListener(
-        HMSUpdateListenerActions.ON_TRACK_UPDATE,
-        () => void updatePeers(hms),
-      );
+      hms.addEventListener(HMSUpdateListenerActions.ON_PEER_UPDATE, () => void fetchPeers());
+      hms.addEventListener(HMSUpdateListenerActions.ON_TRACK_UPDATE, () => void fetchPeers());
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       hms.addEventListener(HMSUpdateListenerActions.ON_ERROR, (data: any) => {
@@ -90,44 +66,47 @@ export const useHMS = ({ roomId, userName, role }: UseHMSOptions) => {
         setIsLoading(false);
       });
 
-      // Join the room
       const config = new HMSConfig({ authToken: token, username: userName });
       await hms.join(config);
-    } catch {
+    } catch (e) {
+      console.log('HMS init error:', e);
       setError('Failed to connect to stream');
       setIsLoading(false);
     }
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const updatePeers = async (hms: any) => {
+  const fetchPeers = async () => {
+    if (!hmsRef.current) return;
     try {
-        const localPeer = await hms.getLocalPeer();
-        const allPeers: HMSPeerInfo[] = [];
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+      const localPeer = await hmsRef.current.getLocalPeer();
+      const allPeers: HMSPeerInfo[] = [];
 
-        if (localPeer) {
+      if (localPeer) {
         allPeers.push({
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-            id: localPeer.peerID,
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-            name: localPeer.name,
-            isLocal: true,
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-            videoTrack: localPeer.localVideo ? { trackId: localPeer.localVideo.trackId } : null,
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-            audioTrack: localPeer.localAudio ? { trackId: localPeer.localAudio.trackId } : null,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          id: String(localPeer.peerID),
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          name: String(localPeer.name),
+          isLocal: true,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          videoTrackId: localPeer.localVideo?.trackId ? String(localPeer.localVideo.trackId) : null,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+          audioTrackId: localPeer.localAudio?.trackId ? String(localPeer.localAudio.trackId) : null,
         });
-        }
-        setPeers(allPeers);
-        } catch (e) {
-            console.log('updatePeers error:', e);
-        }
-    };
+      }
+      setPeers(allPeers);
+    } catch (e) {
+      console.log('fetchPeers error:', e);
+    }
+  };
 
   const toggleMute = useCallback(async () => {
     try {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      await hmsRef.current?.localPeer?.localAudioTrack()?.setMute(!isMuted);
+      const audioTrack = await hmsRef.current?.getLocalPeer();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      await audioTrack?.localAudio?.setMute(!isMuted);
       setIsMuted(prev => !prev);
     } catch { /* ignore */ }
   }, [isMuted]);
@@ -135,7 +114,9 @@ export const useHMS = ({ roomId, userName, role }: UseHMSOptions) => {
   const toggleCamera = useCallback(async () => {
     try {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      await hmsRef.current?.localPeer?.localVideoTrack()?.setMute(!isCameraOff);
+      const peer = await hmsRef.current?.getLocalPeer();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      await peer?.localVideo?.setMute(!isCameraOff);
       setIsCameraOff(prev => !prev);
     } catch { /* ignore */ }
   }, [isCameraOff]);
@@ -152,13 +133,13 @@ export const useHMS = ({ roomId, userName, role }: UseHMSOptions) => {
     } catch { /* ignore */ }
   };
 
-  const broadcasterPeer = peers.find(p => !p.isLocal);
   const localPeer = peers.find(p => p.isLocal);
+  const broadcasterPeer = peers.find(p => !p.isLocal);
 
   return {
     peers,
-    broadcasterPeer,
     localPeer,
+    broadcasterPeer,
     isJoined,
     isLoading,
     error,

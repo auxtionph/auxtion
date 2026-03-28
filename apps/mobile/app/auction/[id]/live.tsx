@@ -8,18 +8,16 @@ import {
   ScrollView,
   Modal,
   Image,
+  Dimensions,
   ActivityIndicator,
 } from 'react-native';
-import React from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { auctionsApi, AuctionDetail } from '../../../src/services/api/auctions.api';
 import { useAuctionSocket } from '../../../src/hooks/useSocket';
+import { formatPHP } from '@auxtion/utils';
 import { useAuthStore } from '../../../src/stores/auth.store';
 import { useHMS } from '../../../src/hooks/useHMS';
-import { formatPHP } from '@auxtion/utils';
-import { Dimensions } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -72,8 +70,6 @@ interface ItemEndedData {
 export default function LiveAuctionRoom() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { user } = useAuthStore();
-  const [permission, requestPermission] = useCameraPermissions();
 
   const [auction, setAuction] = useState<AuctionDetail | null>(null);
   const [currentItem, setCurrentItem] = useState<CurrentItem | null>(null);
@@ -82,6 +78,7 @@ export default function LiveAuctionRoom() {
   const [viewerCount, setViewerCount] = useState(0);
   const [showShop, setShowShop] = useState(false);
   const [shopTab, setShopTab] = useState<'bidding' | 'sold'>('bidding');
+
   const chatRef = useRef<FlatList>(null);
 
   useEffect(() => {
@@ -99,17 +96,6 @@ export default function LiveAuctionRoom() {
       }
     });
   }, [id]);
-
-  // Determine role — seller is broadcaster, buyer is viewer
-  const isSeller = auction?.seller.id === user?.id;
-  const hmsRole = isSeller ? 'broadcaster' : 'viewer-realtime';
-
-  // Only initialize HMS when we have the auction and streamUrl
-  const hms = useHMS({
-    roomId: auction?.streamUrl ?? null,
-    userName: user?.displayName ?? 'User',
-    role: hmsRole,
-  });
 
   const { placeBid, sendChat } = useAuctionSocket({
     auctionId: id,
@@ -161,6 +147,14 @@ export default function LiveAuctionRoom() {
     }, []),
   });
 
+  const { user } = useAuthStore();
+  const isSeller = auction?.seller.id === user?.id;
+  const hms = useHMS({
+    roomId: auction?.streamUrl ?? null,
+    userName: user?.displayName ?? 'User',
+    role: isSeller ? 'broadcaster' : 'viewer-realtime',
+  });
+
   const handleBid = () => {
     if (!currentItem) return;
     const nextBid = currentItem.currentPrice + 10000;
@@ -180,46 +174,32 @@ export default function LiveAuctionRoom() {
     setChatInput('');
   };
 
-  const handleLeave = async () => {
-    if (hms?.leave) await hms.leave();
-    router.back();
-  };
-
   const biddingItems = auction?.shopItems.filter(i => i.status === 'QUEUED' || i.status === 'LIVE') ?? [];
   const soldItems = auction?.shopItems.filter(i => i.status === 'SOLD') ?? [];
 
   return (
     <View className="flex-1 bg-black">
-      {/* ── Full Screen Video ── */}
-      <View className="absolute inset-0">
-        {isSeller && hms.isJoined ? (
-          permission?.granted ? (
-            <CameraView style={{ flex: 1 }} facing="front" />
-          ) : (
-            <View className="flex-1 bg-gray-900 items-center justify-center">
-              <TouchableOpacity
-                className="bg-[#1A56DB] px-6 py-3 rounded-2xl"
-                onPress={() => void requestPermission()}
-              >
-                <Text className="text-white font-bold">Enable Camera</Text>
-              </TouchableOpacity>
-            </View>
-          )
+
+      {/* ── Full Screen Video Background ── */}
+      <View className="absolute inset-0 bg-gray-900 items-center justify-center">
+        {hms.isLoading ? (
+          <View className="flex-1 items-center justify-center">
+            <ActivityIndicator size="large" color="#1A56DB" />
+            <Text className="text-gray-400 text-sm mt-3">Connecting to stream...</Text>
+          </View>
+        ) : hms.isJoined ? (
+          <View className="flex-1 items-center justify-center">
+            <Text className="text-6xl">🔴</Text>
+            <Text className="text-white font-bold text-lg mt-3">
+              {isSeller ? 'You are live' : 'Watching live'}
+            </Text>
+          </View>
         ) : (
-          <View className="flex-1 bg-gray-900 items-center justify-center">
-            {hms.isLoading ? (
-              <>
-                <ActivityIndicator size="large" color="#1A56DB" />
-                <Text className="text-gray-400 text-sm mt-3">Connecting to stream...</Text>
-              </>
-            ) : (
-              <>
-                <Text className="text-6xl">📺</Text>
-                <Text className="text-gray-500 text-sm mt-2">
-                  {hms.error ?? 'Waiting for stream...'}
-                </Text>
-              </>
-            )}
+          <View className="flex-1 items-center justify-center">
+            <Text className="text-8xl">📺</Text>
+            <Text className="text-gray-600 text-sm mt-2">
+              {hms.error ?? 'Connecting...'}
+            </Text>
           </View>
         )}
       </View>
@@ -227,6 +207,7 @@ export default function LiveAuctionRoom() {
       {/* ── Top Overlay ── */}
       <View className="absolute top-0 left-0 right-0 pt-14 px-4 flex-row items-center justify-between">
         <View className="flex-row items-center gap-2">
+          {/* Seller avatar + name */}
           <View className="flex-row items-center gap-2 bg-black/50 rounded-full px-3 py-1.5">
             <View className="w-6 h-6 rounded-full bg-[#1A56DB] items-center justify-center">
               <Text className="text-white text-xs font-bold">
@@ -237,44 +218,36 @@ export default function LiveAuctionRoom() {
               {auction?.seller.displayName}
             </Text>
           </View>
+          {/* LIVE badge */}
           <View className="bg-red-600 rounded-full px-3 py-1.5 flex-row items-center gap-1">
             <View className="w-1.5 h-1.5 rounded-full bg-white" />
             <Text className="text-white text-xs font-bold">LIVE</Text>
           </View>
+          {/* Viewer count */}
           {viewerCount > 0 && (
             <View className="bg-black/50 rounded-full px-3 py-1.5">
               <Text className="text-white text-xs">👁 {viewerCount}</Text>
             </View>
           )}
         </View>
-        <View className="flex-row gap-2">
-          {isSeller && (
-            <>
-              <TouchableOpacity
-                className="bg-black/50 rounded-full w-9 h-9 items-center justify-center"
-                onPress={() => void hms?.toggleMute()}
-              >
-                <Text>{hms?.isMuted ? '🔇' : '🎤'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                className="bg-black/50 rounded-full w-9 h-9 items-center justify-center"
-                onPress={() => void hms?.toggleCamera()}
-              >
-                <Text>{hms?.isCameraOff ? '📵' : '📷'}</Text>
-              </TouchableOpacity>
-            </>
-          )}
-          <TouchableOpacity
-            className="bg-black/50 rounded-full w-9 h-9 items-center justify-center"
-            onPress={() => void handleLeave()}
-          >
-            <Text className="text-white font-bold">✕</Text>
-          </TouchableOpacity>
-        </View>
+
+        {/* Close button */}
+        <TouchableOpacity
+          className="bg-black/50 rounded-full w-9 h-9 items-center justify-center"
+          onPress={async () => { await hms.leave(); router.back(); }}
+        >
+          <Text className="text-white text-base font-bold">✕</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* ── Chat Messages ── */}
-      <View className="absolute left-0 right-0" style={{ bottom: currentItem ? 200 : 160, height: 220 }}>
+      {/* ── Chat Messages (middle overlay) ── */}
+      <View
+        className="absolute left-0 right-0"
+        style={{
+          bottom: currentItem ? 200 : 160,
+          height: 220,
+        }}
+      >
         <FlatList
           ref={chatRef}
           data={chatMessages.slice(-20)}
@@ -285,7 +258,9 @@ export default function LiveAuctionRoom() {
           renderItem={({ item }) => (
             <View className="mb-1.5 flex-row gap-2 items-start">
               <View className="bg-black/60 rounded-2xl px-3 py-1.5 flex-row gap-1.5 items-center flex-shrink">
-                <Text className="text-[#1A56DB] text-xs font-bold">{item.displayName}</Text>
+                <Text className="text-[#1A56DB] text-xs font-bold">
+                  {item.displayName}
+                </Text>
                 <Text className="text-white text-xs flex-shrink">{item.message}</Text>
               </View>
             </View>
@@ -299,23 +274,32 @@ export default function LiveAuctionRoom() {
           <View className="bg-black/70 rounded-2xl px-4 py-3 flex-row items-center justify-between">
             <View className="flex-row items-center gap-3 flex-1">
               {currentItem.photos[0] && (
-                <Image source={{ uri: currentItem.photos[0] }} className="w-10 h-10 rounded-xl" resizeMode="cover" />
+                <Image
+                  source={{ uri: currentItem.photos[0] }}
+                  className="w-10 h-10 rounded-xl"
+                  resizeMode="cover"
+                />
               )}
               <View className="flex-1">
-                <Text className="text-white text-sm font-semibold" numberOfLines={1}>{currentItem.title}</Text>
+                <Text className="text-white text-sm font-semibold" numberOfLines={1}>
+                  {currentItem.title}
+                </Text>
                 <Text className="text-gray-400 text-xs">
                   {currentItem.totalBids} bid{currentItem.totalBids !== 1 ? 's' : ''}
                   {currentItem.highestBidderName ? ` · ${currentItem.highestBidderName} leading` : ''}
                 </Text>
               </View>
             </View>
-            <Text className="text-[#F59E0B] font-bold text-base">{formatPHP(currentItem.currentPrice)}</Text>
+            <Text className="text-[#F59E0B] font-bold text-base">
+              {formatPHP(currentItem.currentPrice)}
+            </Text>
           </View>
         </View>
       )}
 
       {/* ── Bottom Controls ── */}
       <View className="absolute bottom-0 left-0 right-0 px-4 pb-10 pt-3">
+        {/* Chat input row */}
         <View className="flex-row items-center gap-2 mb-3">
           <TextInput
             className="flex-1 bg-black/60 border border-gray-700 rounded-full px-4 py-2.5 text-white text-sm"
@@ -326,48 +310,82 @@ export default function LiveAuctionRoom() {
             onSubmitEditing={handleSendChat}
             returnKeyType="send"
           />
-          <TouchableOpacity className="w-10 h-10 bg-black/60 border border-gray-700 rounded-full items-center justify-center" onPress={handleSendChat}>
-            <Text className="text-white">→</Text>
+          <TouchableOpacity
+            className="w-10 h-10 bg-black/60 border border-gray-700 rounded-full items-center justify-center"
+            onPress={handleSendChat}
+          >
+            <Text className="text-white text-base">→</Text>
           </TouchableOpacity>
-          <TouchableOpacity className="w-10 h-10 bg-black/60 border border-gray-700 rounded-full items-center justify-center" onPress={() => setShowShop(true)}>
-            <Text>🛍️</Text>
+          <TouchableOpacity
+            className="w-10 h-10 bg-black/60 border border-gray-700 rounded-full items-center justify-center"
+            onPress={() => setShowShop(true)}
+          >
+            <Text className="text-base">🛍️</Text>
           </TouchableOpacity>
         </View>
 
-        {!isSeller && (currentItem ? (
-          <TouchableOpacity className="bg-[#1A56DB] rounded-2xl py-4 items-center" onPress={handleBid}>
-            <Text className="text-white font-bold text-lg">🔨 Bid {formatPHP(currentItem.currentPrice + 10000)}</Text>
-            <Text className="text-blue-200 text-xs mt-0.5">Current: {formatPHP(currentItem.currentPrice)}</Text>
+        {/* Bid Button */}
+        {currentItem ? (
+          <TouchableOpacity
+            className="bg-[#1A56DB] rounded-2xl py-4 items-center"
+            onPress={handleBid}
+            activeOpacity={0.85}
+          >
+            <Text className="text-white font-bold text-lg">
+              🔨 Bid {formatPHP(currentItem.currentPrice + 10000)}
+            </Text>
+            <Text className="text-blue-200 text-xs mt-0.5">
+              Current price: {formatPHP(currentItem.currentPrice)}
+            </Text>
           </TouchableOpacity>
         ) : (
           <View className="bg-black/60 border border-gray-700 rounded-2xl py-4 items-center">
             <Text className="text-gray-500 font-semibold">Waiting for next item...</Text>
           </View>
-        ))}
+        )}
       </View>
 
-      {/* ── Shop Drawer ── */}
-      <Modal visible={showShop} animationType="slide" transparent onRequestClose={() => setShowShop(false)}>
-        <TouchableOpacity className="flex-1" activeOpacity={1} onPress={() => setShowShop(false)} />
+      {/* ── Shop Drawer Modal ── */}
+      <Modal
+        visible={showShop}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowShop(false)}
+      >
+        <TouchableOpacity
+          className="flex-1"
+          activeOpacity={1}
+          onPress={() => setShowShop(false)}
+        />
         <View className="bg-gray-900 rounded-t-3xl border-t border-gray-800" style={{ maxHeight: '65%' }}>
           <View className="items-center pt-3 pb-2">
             <View className="w-10 h-1 rounded-full bg-gray-700" />
           </View>
           <Text className="text-white font-bold text-lg px-6 mb-4">Shop</Text>
+
           <View className="flex-row px-6 mb-4 gap-2">
             {(['bidding', 'sold'] as const).map(tab => (
-              <TouchableOpacity key={tab} className={`px-4 py-2 rounded-full ${shopTab === tab ? 'bg-[#1A56DB]' : 'bg-gray-800'}`} onPress={() => setShopTab(tab)}>
+              <TouchableOpacity
+                key={tab}
+                className={`px-4 py-2 rounded-full ${shopTab === tab ? 'bg-[#1A56DB]' : 'bg-gray-800'}`}
+                onPress={() => setShopTab(tab)}
+              >
                 <Text className={`text-sm font-semibold ${shopTab === tab ? 'text-white' : 'text-gray-400'}`}>
                   {tab === 'bidding' ? '🔨 For Bidding' : '✅ Sold'}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
+
           <ScrollView className="px-6 pb-10">
             {(shopTab === 'bidding' ? biddingItems : soldItems).map(item => (
               <View key={item.id} className="flex-row items-center gap-3 bg-gray-800 rounded-xl p-3 mb-2">
                 <View className="w-14 h-14 rounded-xl bg-gray-700 overflow-hidden items-center justify-center">
-                  {item.photos[0] ? <Image source={{ uri: item.photos[0] }} className="w-full h-full" resizeMode="cover" /> : <Text className="text-2xl">📦</Text>}
+                  {item.photos[0] ? (
+                    <Image source={{ uri: item.photos[0] }} className="w-full h-full" resizeMode="cover" />
+                  ) : (
+                    <Text className="text-2xl">📦</Text>
+                  )}
                 </View>
                 <View className="flex-1">
                   <Text className="text-white text-sm font-semibold" numberOfLines={1}>{item.title}</Text>
@@ -382,7 +400,9 @@ export default function LiveAuctionRoom() {
             ))}
             {(shopTab === 'bidding' ? biddingItems : soldItems).length === 0 && (
               <View className="items-center py-8">
-                <Text className="text-gray-600 text-sm">{shopTab === 'bidding' ? 'No items queued' : 'No items sold yet'}</Text>
+                <Text className="text-gray-600 text-sm">
+                  {shopTab === 'bidding' ? 'No items queued' : 'No items sold yet'}
+                </Text>
               </View>
             )}
           </ScrollView>

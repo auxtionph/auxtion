@@ -1,11 +1,36 @@
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useState } from 'react';
 import { useAuthStore } from '../../src/stores/auth.store';
+import { apiClient } from '../../src/services/api/client';
 
 export default function SellScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
   const isSeller = user?.role === 'SELLER';
+  const [loading, setLoading] = useState(false);
+
+  const handleGoLive = async () => {
+    setLoading(true);
+    try {
+      // Create auction
+      const auctionRes = await apiClient.post('/auctions', {
+        title: `${user?.displayName ?? 'Seller'}'s Live Auction`,
+        startTime: new Date().toISOString(),
+      });
+      const auctionId = (auctionRes.data.data as { id: string }).id;
+
+      // Go live — creates 100ms room
+      await apiClient.patch(`/auctions/${auctionId}/go-live`);
+
+      // Navigate directly to live room as broadcaster
+      router.push(`/auction/${auctionId}/live`);
+    } catch {
+      Alert.alert('Error', 'Failed to start live auction. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (isSeller) {
     return (
@@ -16,8 +41,9 @@ export default function SellScreen() {
         </Text>
 
         <TouchableOpacity
-          className="bg-[#1A56DB] rounded-2xl p-6 mb-4 flex-row items-center gap-4"
-          onPress={() => router.push('/auction/create')}
+          className={`bg-[#1A56DB] rounded-2xl p-6 mb-4 flex-row items-center gap-4 ${loading ? 'opacity-60' : ''}`}
+          onPress={() => void handleGoLive()}
+          disabled={loading}
         >
           <Text className="text-4xl">🔴</Text>
           <View className="flex-1">
@@ -26,7 +52,11 @@ export default function SellScreen() {
               Start a live auction stream
             </Text>
           </View>
-          <Text className="text-white text-xl">→</Text>
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text className="text-white text-xl">→</Text>
+          )}
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -53,8 +83,6 @@ export default function SellScreen() {
         <Text className="text-gray-500 text-sm mb-8">
           Apply to sell on Auxtion and reach thousands of buyers
         </Text>
-
-        {/* Benefits */}
         {[
           { icon: '🔴', title: 'Go Live & Sell', desc: 'Host live auction streams and sell items in real-time' },
           { icon: '💰', title: 'Earn Money', desc: 'Get paid directly to your GCash or bank account' },
@@ -69,7 +97,6 @@ export default function SellScreen() {
             </View>
           </View>
         ))}
-
         <TouchableOpacity
           className="bg-[#1A56DB] rounded-2xl py-5 items-center mt-4"
           onPress={() => router.push('/seller-application')}
