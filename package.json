@@ -14,5 +14,8 @@
   "devDependencies": {
     "turbo": "latest",
     "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "react-dom": "^19.2.4"
   }
 }
