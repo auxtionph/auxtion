@@ -208,7 +208,7 @@ export default function LiveAuctionRoom() {
 
   const handleSendChat = () => {
     if (!chatInput.trim()) return;
-    sendChat(chatInput.trim());
+    sendChat(chatInput.trim(), user?.id, user?.displayName);
     setChatInput('');
   };
 

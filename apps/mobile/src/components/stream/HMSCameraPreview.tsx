@@ -12,7 +12,7 @@ interface Props {
   style?: ViewStyle;
 }
 
-export const HMSCameraPreview = ({ style }: Props) => {
+export const HMSCameraPreview = ({style} : Props) => {
   if (!HMSCameraPreviewNative) {
     return (
       <View style={[{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#111827' }, style]}>
