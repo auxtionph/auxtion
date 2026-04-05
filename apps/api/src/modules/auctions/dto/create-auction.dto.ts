@@ -4,8 +4,8 @@ export class CreateAuctionDto {
   @IsString()
   @MinLength(2)
   @MaxLength(100)
-  title: string;
+  title!: string;
 
   @IsDateString()
-  startTime: string;
+  startTime!: string;
 }
