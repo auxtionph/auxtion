@@ -37,7 +37,7 @@ export class BiddingGateway
   implements OnGatewayConnection, OnGatewayDisconnect
 {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   private readonly logger = new Logger(BiddingGateway.name);
 
@@ -155,6 +155,7 @@ export class BiddingGateway
     @MessageBody() payload: StartItemPayload & { sellerId: string },
   ) {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const item = await this.biddingService.startItemBidding(
         payload.sellerId,
         payload.auctionId,
@@ -163,13 +164,18 @@ export class BiddingGateway
 
       // Broadcast to all viewers that a new item is being auctioned
       this.server.to(`auction:${payload.auctionId}`).emit('item-started', {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         itemId: item.id,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         title: item.title,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         startingPrice: item.price,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
         photos: item.photos,
         timestamp: Date.now(),
       });
 
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       return { success: true, item };
     } catch (error) {
       const message =
@@ -228,6 +234,14 @@ export class BiddingGateway
       userId: payload.userId,
       displayName: payload.displayName,
       message: payload.message,
+      timestamp: Date.now(),
+    });
+  }
+
+  @SubscribeMessage('end-auction')
+  handleEndAuction(@MessageBody() payload: { auctionId: string }) {
+    this.server.to(`auction:${payload.auctionId}`).emit('auction-ended', {
+      auctionId: payload.auctionId,
       timestamp: Date.now(),
     });
   }

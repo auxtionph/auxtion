@@ -42,6 +42,7 @@ interface UseSocketOptions {
   onItemStarted?: (data: ItemStarted) => void;
   onItemEnded?: (data: ItemEnded) => void;
   onViewerCount?: (data: { count: number }) => void;
+  onAuctionEnded?: (data: { auctionId: string; timestamp: number }) => void;
 }
 
 export const useAuctionSocket = ({
@@ -53,6 +54,7 @@ export const useAuctionSocket = ({
   onItemStarted,
   onItemEnded,
   onViewerCount,
+  onAuctionEnded,
 }: UseSocketOptions) => {
   const socketRef = useRef<Socket | null>(null);
 
@@ -83,6 +85,7 @@ export const useAuctionSocket = ({
     if (onItemStarted) socket.on(SOCKET_EVENTS.ITEM_STARTED, onItemStarted);
     if (onItemEnded) socket.on(SOCKET_EVENTS.ITEM_ENDED, onItemEnded);
     if (onViewerCount) socket.on(SOCKET_EVENTS.VIEWER_COUNT, onViewerCount);
+    if (onAuctionEnded) socket.on(SOCKET_EVENTS.AUCTION_ENDED, onAuctionEnded);
   };
 
   const placeBid = useCallback((itemId: string, amount: number) => {
@@ -93,5 +96,9 @@ export const useAuctionSocket = ({
     socketRef.current?.emit(SOCKET_EVENTS.CHAT_MESSAGE, { auctionId, message, userId, displayName });
   }, [auctionId]);
 
-  return { placeBid, sendChat };
+  const endAuction = useCallback(() => {
+    socketRef.current?.emit(SOCKET_EVENTS.END_AUCTION, { auctionId });
+  }, [auctionId]);
+
+  return { placeBid, sendChat, endAuction };
 };

@@ -18,9 +18,10 @@ interface UseHMSOptions {
   roomId: string | null;
   userName: string;
   role: 'broadcaster' | 'viewer-realtime';
+  onSellerLeft?: () => void;
 }
 
-export const useHMS = ({ roomId, userName, role }: UseHMSOptions) => {
+export const useHMS = ({ roomId, userName, role, onSellerLeft }: UseHMSOptions) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const hmsRef = useRef<any>(null);
   const initializedRef = useRef(false);
@@ -115,7 +116,9 @@ export const useHMS = ({ roomId, userName, role }: UseHMSOptions) => {
 
       hms.addEventListener(HMSUpdateListenerActions.ON_PEER_UPDATE, () => {
         console.log('HMS ON_PEER_UPDATE');
-        void fetchPeers();
+        void fetchPeers().then(() => {
+          // handled after fetchPeers updates state
+        });
       });
 
       hms.addEventListener(HMSUpdateListenerActions.ON_TRACK_UPDATE, () => {

@@ -6,6 +6,7 @@ export const SOCKET_EVENTS = {
   START_ITEM:     'start-item',
   END_ITEM:       'end-item',
   CHAT_MESSAGE:   'chat-message',
+  END_AUCTION:    'end-auction',
 
   // Server → Client
   BID_UPDATE:     'bid-update',
@@ -16,4 +17,5 @@ export const SOCKET_EVENTS = {
   VIEWER_COUNT:   'viewer-count',
   CHAT_RECEIVED:  'chat-message',
   BID_STATE:      'bid-state',
+  AUCTION_ENDED:  'auction-ended',
 } as const;

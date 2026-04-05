@@ -80,6 +80,7 @@ export default function LiveAuctionRoom() {
   const [chatInput, setChatInput] = useState('');
   const [viewerCount, setViewerCount] = useState(0);
   const [showShop, setShowShop] = useState(false);
+  const [auctionEnded, setAuctionEnded] = useState(false);
   const [shopTab, setShopTab] = useState<'bidding' | 'sold'>('bidding');
 
   const chatRef = useRef<FlatList>(null);
@@ -100,7 +101,7 @@ export default function LiveAuctionRoom() {
     });
   }, [id]);
 
-  const { placeBid, sendChat } = useAuctionSocket({
+  const { placeBid, sendChat, endAuction } = useAuctionSocket({
     auctionId: id,
     onBidUpdate: useCallback((data: BidUpdateData) => {
       setCurrentItem(prev => prev ? {
@@ -148,6 +149,9 @@ export default function LiveAuctionRoom() {
     onViewerCount: useCallback((data: { count: number }) => {
       setViewerCount(data.count);
     }, []),
+    onAuctionEnded: useCallback(() => {
+      setAuctionEnded(true);
+    }, []),
   });
 
   const { user } = useAuthStore();
@@ -180,6 +184,7 @@ export default function LiveAuctionRoom() {
             onPress: async () => {
               try {
                 await apiClient.patch(`/auctions/${id}/end`);
+                endAuction();
               } catch { /* ignore */ }
               await hms.leave();
               router.back();
@@ -192,6 +197,19 @@ export default function LiveAuctionRoom() {
       router.back();
     }
   };
+
+
+  // Detect when seller leaves the HMS room (viewer side)
+  const prevBroadcasterRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isSeller) return;
+    const currentId = hms.broadcasterPeer?.id ?? null;
+    if (prevBroadcasterRef.current && !currentId) {
+      // Seller was present, now gone
+      setAuctionEnded(true);
+    }
+    prevBroadcasterRef.current = currentId;
+  }, [hms.broadcasterPeer?.id, isSeller]);
 
   const handleBid = () => {
     if (!currentItem) return;
