@@ -20,6 +20,7 @@ import { useAuthStore } from '../../../src/stores/auth.store';
 import { useHMS } from '../../../src/hooks/useHMS';
 import { apiClient } from '../../../src/services/api/client';
 import { HMSView } from '../../../src/components/stream/HMSView';
+import { HMSCameraPreview } from '../../../src/components/stream/HMSCameraPreview';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -219,41 +220,24 @@ export default function LiveAuctionRoom() {
 
       {/* ── Full Screen Video Background ── */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#111827' }}>
-        {hms.isLoading ? (
-          <View className="flex-1 items-center justify-center">
+        {isSeller ? (
+          <HMSCameraPreview style={{ flex: 1 }} />
+        ) : !hms.isJoined ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
             <ActivityIndicator size="large" color="#1A56DB" />
-            <Text className="text-gray-400 text-sm mt-3">Connecting to stream...</Text>
+            <Text style={{ color: '#9CA3AF', fontSize: 14, marginTop: 12 }}>Connecting to stream...</Text>
           </View>
-        ) : hms.isJoined ? (
-          isSeller && hms.localPeer?.videoTrackId ? (
-            <HMSView
-              trackId={hms.localPeer.videoTrackId}
-              id={hms.localPeer.id}
-              mirror={true}
-              setZOrderMediaOverlay={true}
-              style={{ flex: 1 }}
-            />
-          ) : !isSeller && hms.broadcasterPeer?.videoTrackId ? (
-            <HMSView
-              trackId={hms.broadcasterPeer.videoTrackId}
-              id={hms.broadcasterPeer.id}
-              mirror={false}
-              style={{ flex: 1 }}
-            />
-          ) : (
-            <View className="flex-1 items-center justify-center">
-              <Text className="text-6xl">{isSeller ? '🔴' : '📺'}</Text>
-              <Text className="text-gray-600 text-sm mt-2">
-                {isSeller ? 'You are live' : 'Watching live'}
-              </Text>
-            </View>
-          )
+        ) : hms.broadcasterPeer?.videoTrackId ? (
+          <HMSView
+            trackId={hms.broadcasterPeer.videoTrackId}
+            id="12345"
+            mirror={false}
+            style={{ flex: 1 }}
+          />
         ) : (
-          <View className="flex-1 items-center justify-center">
-            <Text className="text-8xl">📺</Text>
-            <Text className="text-gray-600 text-sm mt-2">
-              {hms.error ?? 'Connecting...'}
-            </Text>
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 64 }}>📺</Text>
+            <Text style={{ color: '#4B5563', fontSize: 14, marginTop: 8 }}>Watching live</Text>
           </View>
         )}
       </View>
