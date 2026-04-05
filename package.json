@@ -16,8 +16,6 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "expo-image": "^55.0.7-canary-20260328-2049187",
-    "expo-router": "^55.0.9-canary-20260328-2049187",
     "react-dom": "^19.2.4"
   }
 }
