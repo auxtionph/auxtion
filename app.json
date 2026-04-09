@@ -4,6 +4,9 @@
       "eas": {
         "projectId": "f3e82850-1d6f-4dfc-9af4-b8ab3d5fb87b"
       }
+    },
+    "ios": {
+      "bundleIdentifier": "com.jcalma.auxtion"
     }
   }
 }
