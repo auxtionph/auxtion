@@ -189,7 +189,7 @@ export default function LiveAuctionRoom() {
                 endAuction();
               } catch { /* ignore */ }
               await hms.leave();
-              router.back();
+              router.replace('/(main)');
             },
           },
         ],
