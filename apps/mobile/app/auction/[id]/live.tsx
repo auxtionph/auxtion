@@ -20,6 +20,7 @@ import { useAuthStore } from '../../../src/stores/auth.store';
 import { useHMS } from '../../../src/hooks/useHMS';
 import { apiClient } from '../../../src/services/api/client';
 import { HMSView } from '../../../src/components/stream/HMSView';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { HMSCameraPreview } from '../../../src/components/stream/HMSCameraPreview';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -241,7 +242,10 @@ export default function LiveAuctionRoom() {
       {/* ── Full Screen Video Background ── */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#111827' }}>
         {isSeller ? (
-          <HMSCameraPreview style={{ flex: 1 }} />
+          <CameraView
+            style={{ flex: 1 }}
+            facing="front"
+          />
         ) : !hms.isJoined ? (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
             <ActivityIndicator size="large" color="#1A56DB" />

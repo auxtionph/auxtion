@@ -54,6 +54,7 @@ export const useHMS = ({ roomId, userName, role, onSellerLeft }: UseHMSOptions) 
 
       if (localPeer) {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        console.log('localPeer.localVideo muted:', localPeer.localVideo?.isMute, 'trackId:', localPeer.localVideo?.trackId);
         const videoTrackId = localPeer.localVideo?.trackId
           // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           ? String(localPeer.localVideo.trackId)
@@ -107,10 +108,23 @@ export const useHMS = ({ roomId, userName, role, onSellerLeft }: UseHMSOptions) 
       const hms = await HMSSDK.build();
       hmsRef.current = hms;
 
-      hms.addEventListener(HMSUpdateListenerActions.ON_JOIN, () => {
+      hms.addEventListener(HMSUpdateListenerActions.ON_JOIN, async () => {
         console.log('HMS ON_JOIN');
         setIsJoined(true);
         setIsLoading(false);
+        // For broadcaster, ensure video is unmuted
+        if (role === 'broadcaster') {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const lp = await hms.getLocalPeer() as any;
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+            if (lp?.localVideo) {
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+              await lp.localVideo.setMute(false);
+              console.log('Local video unmuted');
+            }
+          } catch (e) { console.log('unmute error:', e); }
+        }
         void fetchPeers();
       });
 
