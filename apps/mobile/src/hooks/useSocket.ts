@@ -85,7 +85,7 @@ export const useAuctionSocket = ({
     if (onItemStarted) socket.on(SOCKET_EVENTS.ITEM_STARTED, onItemStarted);
     if (onItemEnded) socket.on(SOCKET_EVENTS.ITEM_ENDED, onItemEnded);
     if (onViewerCount) socket.on(SOCKET_EVENTS.VIEWER_COUNT, onViewerCount);
-    if (onAuctionEnded) socket.on(SOCKET_EVENTS.AUCTION_ENDED, onAuctionEnded);
+    socket.on(SOCKET_EVENTS.AUCTION_ENDED, (data) => { console.log('AUCTION_ENDED received:', JSON.stringify(data)); if (onAuctionEnded) onAuctionEnded(data); });
   };
 
   const placeBid = useCallback((itemId: string, amount: number) => {

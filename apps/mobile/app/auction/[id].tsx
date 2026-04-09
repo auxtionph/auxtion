@@ -6,8 +6,8 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { useEffect, useState, useCallback } from 'react';
 import { auctionsApi, AuctionDetail } from '../../src/services/api/auctions.api';
 import { formatPHP } from '@auxtion/utils';
 
@@ -21,6 +21,10 @@ export default function AuctionDetailScreen() {
   useEffect(() => {
     void fetchAuction();
   }, [id]);
+
+  useFocusEffect(useCallback(() => {
+    void fetchAuction();
+  }, [id]));
 
   const fetchAuction = async () => {
     try {

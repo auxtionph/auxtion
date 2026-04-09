@@ -150,7 +150,9 @@ export default function LiveAuctionRoom() {
       setViewerCount(data.count);
     }, []),
     onAuctionEnded: useCallback(() => {
+      console.log('onAuctionEnded callback fired!');
       setAuctionEnded(true);
+      setTimeout(() => router.replace('/(main)'), 3000);
     }, []),
   });
 
@@ -464,6 +466,24 @@ export default function LiveAuctionRoom() {
           </ScrollView>
         </View>
       </Modal>
+      {/* ── Auction Ended Overlay (viewers only) ── */}
+      {auctionEnded && !isSeller && (
+        <View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.88)',
+          alignItems: 'center', justifyContent: 'center',
+          zIndex: 999,
+        }}>
+          <Text style={{ fontSize: 64, marginBottom: 16 }}>📺</Text>
+          <Text style={{ color: '#FFFFFF', fontSize: 24, fontWeight: 'bold', marginBottom: 8 }}>
+            Live has ended
+          </Text>
+          <Text style={{ color: '#9CA3AF', fontSize: 14, marginBottom: 32, textAlign: 'center', paddingHorizontal: 40 }}>
+            Thanks for watching! The seller has ended the live auction.
+          </Text>
+          <Text style={{ color: '#6B7280', fontSize: 12 }}>Redirecting you back...</Text>
+        </View>
+      )}
     </View>
   );
 }
