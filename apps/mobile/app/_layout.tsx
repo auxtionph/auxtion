@@ -4,6 +4,13 @@ import { StatusBar } from 'expo-status-bar';
 import * as SecureStore from 'expo-secure-store';
 import { useAuthStore } from '../src/stores/auth.store';
 import { apiClient } from '../src/services/api/client';
+import { LogBox } from 'react-native';
+
+// Suppress HMS SDK internal warning — cosmetic only, does not affect functionality
+LogBox.ignoreLogs([
+  'Invalid prop `style` supplied to `React.Fragment`',
+  'setupPIP',  // suppress the HMS PIP warning too
+]);                                                    
 
 export default function RootLayout() {
   const { setAuth, clearAuth, setLoading } = useAuthStore();

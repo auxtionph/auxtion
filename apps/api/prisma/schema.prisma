@@ -163,6 +163,7 @@ model Auction {
   seller    User       @relation(fields: [sellerId], references: [id])
   shopItems ShopItem[]
   bids      Bid[]
+  chatMessages AuctionChatMessage[]
 
   @@map("auctions")
 }
@@ -300,4 +301,19 @@ model ItemNotification {
 
   @@unique([itemId, userId])
   @@map("item_notifications")
+}
+
+model AuctionChatMessage {
+  id          String   @id @default(cuid())
+  auctionId   String
+  userId      String
+  displayName String
+  message     String
+  timestamp   BigInt
+  createdAt   DateTime @default(now())
+
+  auction Auction @relation(fields: [auctionId], references: [id])
+
+  @@index([auctionId, createdAt])
+  @@map("auction_chat_messages")
 }

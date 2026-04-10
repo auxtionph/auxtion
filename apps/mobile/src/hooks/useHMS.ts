@@ -3,6 +3,9 @@ import {
   HMSSDK,
   HMSConfig,
   HMSUpdateListenerActions,
+  HMSTrackType,
+  HMSTrackUpdate,
+  HMSPeerUpdate,
 } from '@100mslive/react-native-hms';
 import { apiClient } from '../services/api/client';
 
@@ -22,137 +25,225 @@ interface UseHMSOptions {
 }
 
 export const useHMS = ({ roomId, userName, role, onSellerLeft }: UseHMSOptions) => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const hmsRef = useRef<any>(null);
+  const hmsRef = useRef<HMSSDK | null>(null);
   const initializedRef = useRef(false);
+  const trackMapRef = useRef<Record<string, string>>({});
+
   const [peers, setPeers] = useState<HMSPeerInfo[]>([]);
   const [isJoined, setIsJoined] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  // ✅ FIX #2: trackMap as state so components re-render when tracks arrive
+  const [trackMap, setTrackMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!roomId || initializedRef.current) return;
     initializedRef.current = true;
     setIsLoading(true);
     void initialize(roomId);
+
     return () => {
       void cleanup();
       initializedRef.current = false;
     };
   }, [roomId]);
 
-  const fetchPeers = async () => {
+  const buildPeerList = useCallback(async () => {
     if (!hmsRef.current) return;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
       const localPeer = await hmsRef.current.getLocalPeer();
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
       const remotePeers = await hmsRef.current.getRemotePeers();
       const allPeers: HMSPeerInfo[] = [];
 
       if (localPeer) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        console.log('localPeer.localVideo muted:', localPeer.localVideo?.isMute, 'trackId:', localPeer.localVideo?.trackId);
-        const videoTrackId = localPeer.localVideo?.trackId
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          ? String(localPeer.localVideo.trackId)
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          : localPeer.videoTrack?.trackId
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-            ? String(localPeer.videoTrack.trackId)
-            : null;
+        // ✅ CORRECT: localVideoTrack() is a method, not a property
+        const localVideoTrack = localPeer.localVideoTrack();
+        const localAudioTrack = localPeer.localAudioTrack();
+
+        const videoTrackId = localVideoTrack?.trackId
+          ? String(localVideoTrack.trackId)
+          : null;
+
+        console.log('[HMS] Local peer video:', {
+          trackId: videoTrackId,
+          isMute: localVideoTrack?.isMute,
+        });
+
         allPeers.push({
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           id: String(localPeer.peerID),
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
           name: String(localPeer.name),
           isLocal: true,
           videoTrackId,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-          audioTrackId: localPeer.localAudio?.trackId ? String(localPeer.localAudio.trackId) : null,
+          audioTrackId: localAudioTrack?.trackId
+            ? String(localAudioTrack.trackId)
+            : null,
         });
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
       if (Array.isArray(remotePeers)) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        remotePeers.forEach((peer: any) => {
+        remotePeers.forEach((peer) => {
+          // ✅ FIX #2: Use trackMapRef (populated by ON_TRACK_UPDATE) for remote video
+          const mappedTrackId = trackMapRef.current[String(peer.peerID)] ?? null;
+
+          console.log('[HMS] Remote peer:', {
+            name: peer.name,
+            peerID: peer.peerID,
+            mappedTrackId,
+            trackMapSnapshot: { ...trackMapRef.current },
+          });
+
           allPeers.push({
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
             id: String(peer.peerID),
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
             name: String(peer.name),
             isLocal: false,
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-            videoTrackId: peer.videoTrack?.trackId ? String(peer.videoTrack.trackId) : null,
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-            audioTrackId: peer.audioTrack?.trackId ? String(peer.audioTrack.trackId) : null,
+            videoTrackId: mappedTrackId,
+            audioTrackId: peer.audioTrack?.trackId
+              ? String(peer.audioTrack.trackId)
+              : null,
           });
         });
       }
 
-      console.log('Peers fetched:', JSON.stringify(allPeers));
+      console.log('[HMS] Peers updated:', allPeers.map(p => ({
+        name: p.name,
+        isLocal: p.isLocal,
+        videoTrackId: p.videoTrackId,
+      })));
+
       setPeers(allPeers);
     } catch (e) {
-      console.log('fetchPeers error:', e);
+      console.warn('[HMS] buildPeerList error:', e);
     }
-  };
+  }, []);
 
   const initialize = async (rid: string) => {
     try {
-      const response = await apiClient.post('/streaming/token', { roomId: rid, role });
+      const response = await apiClient.post('/streaming/token', {
+        roomId: rid,
+        role,
+      });
       const { token } = response.data.data as { token: string };
 
       const hms = await HMSSDK.build();
       hmsRef.current = hms;
 
+      // ─── ON_JOIN ────────────────────────────────────────────────
       hms.addEventListener(HMSUpdateListenerActions.ON_JOIN, async () => {
-        console.log('HMS ON_JOIN');
+        console.log('[HMS] ON_JOIN — role:', role);
         setIsJoined(true);
         setIsLoading(false);
-        // For broadcaster, ensure video is unmuted
+
+        // ✅ CORRECT: Use localVideoTrack() method (not .localVideo property)
         if (role === 'broadcaster') {
           try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const lp = await hms.getLocalPeer() as any;
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-            if (lp?.localVideo) {
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-              await lp.localVideo.setMute(false);
-              console.log('Local video unmuted');
+            const lp = await hms.getLocalPeer();
+            const videoTrack = lp.localVideoTrack();   // ← method call, not property
+            const audioTrack = lp.localAudioTrack();   // ← method call, not property
+
+            if (videoTrack) {
+              videoTrack.setMute(false);               // ← on the track object, not hms instance
+              console.log('[HMS] Broadcaster video unmuted, trackId:', videoTrack.trackId);
             }
-          } catch (e) { console.log('unmute error:', e); }
+            if (audioTrack) {
+              audioTrack.setMute(false);
+              console.log('[HMS] Broadcaster audio unmuted');
+            }
+          } catch (e) {
+            console.warn('[HMS] Failed to unmute broadcaster tracks:', e);
+          }
         }
-        void fetchPeers();
+
+        await buildPeerList();
       });
 
-      hms.addEventListener(HMSUpdateListenerActions.ON_PEER_UPDATE, () => {
-        console.log('HMS ON_PEER_UPDATE');
-        void fetchPeers().then(() => {
-          // handled after fetchPeers updates state
-        });
-      });
+      // ─── ON_PEER_UPDATE ─────────────────────────────────────────
+      hms.addEventListener(
+        HMSUpdateListenerActions.ON_PEER_UPDATE,
+        (data: { peer: unknown; type: HMSPeerUpdate }) => {
+          console.log('[HMS] ON_PEER_UPDATE type:', data.type);
 
-      hms.addEventListener(HMSUpdateListenerActions.ON_TRACK_UPDATE, () => {
-        console.log('HMS ON_TRACK_UPDATE');
-        void fetchPeers();
-      });
+          // Detect seller leaving
+          if (
+            data.type === HMSPeerUpdate.PEER_LEFT &&
+            role === 'viewer-realtime'
+          ) {
+            onSellerLeft?.();
+          }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      hms.addEventListener(HMSUpdateListenerActions.ON_ERROR, (data: any) => {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        console.log('HMS ON_ERROR:', data);
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        setError(String(data?.error?.message ?? 'Stream error'));
-        setIsLoading(false);
-      });
+          void buildPeerList();
+        },
+      );
+
+      // ─── ON_TRACK_UPDATE ────────────────────────────────────────
+      hms.addEventListener(
+        HMSUpdateListenerActions.ON_TRACK_UPDATE,
+        (data: {
+          peer: { peerID: string; name: string };
+          track: {
+            trackId: string;
+            type: HMSTrackType;
+            isMute: boolean;
+            trackDescription?: string;
+          };
+          type: HMSTrackUpdate;
+        }) => {
+          const { peer, track, type: updateType } = data;
+
+          console.log('[HMS] ON_TRACK_UPDATE', {
+            peerName: peer?.name,
+            peerId: peer?.peerID,
+            trackId: track?.trackId,
+            // ✅ FIX #1: Use track.type (HMSTrackType enum), NOT trackDescription string
+            trackType: track?.type,
+            isMute: track?.isMute,
+            updateType,
+          });
+
+          // ✅ FIX #1: Check by HMSTrackType enum — reliable, not string matching
+          const isVideoTrack = track?.type === HMSTrackType.VIDEO;
+          const isAdded = updateType === HMSTrackUpdate.TRACK_ADDED;
+          const isUnmuted = updateType === HMSTrackUpdate.TRACK_UNMUTED;
+
+          if (isVideoTrack && peer?.peerID && track?.trackId) {
+            if (isAdded || isUnmuted) {
+              console.log('[HMS] ✅ Storing video trackId:', {
+                peerName: peer.name,
+                peerId: peer.peerID,
+                trackId: track.trackId,
+              });
+              // Update ref (sync) + state (triggers re-render)
+              trackMapRef.current[peer.peerID] = track.trackId;
+              setTrackMap(prev => ({
+                ...prev,
+                [peer.peerID]: track.trackId,
+              }));
+            }
+
+            if (updateType === HMSTrackUpdate.TRACK_MUTED) {
+              console.log('[HMS] ⚠️ Video track muted for peer:', peer.name);
+            }
+          }
+
+          void buildPeerList();
+        },
+      );
+
+      // ─── ON_ERROR ───────────────────────────────────────────────
+      hms.addEventListener(
+        HMSUpdateListenerActions.ON_ERROR,
+        (data: { error?: { message?: string; code?: number } }) => {
+          console.error('[HMS] ON_ERROR:', data?.error);
+          setError(String(data?.error?.message ?? 'Stream error'));
+          setIsLoading(false);
+        },
+      );
 
       const config = new HMSConfig({ authToken: token, username: userName });
       await hms.join(config);
     } catch (e) {
-      console.log('HMS init error:', e);
+      console.error('[HMS] init error:', e);
       setError('Failed to connect to stream');
       setIsLoading(false);
     }
@@ -160,38 +251,56 @@ export const useHMS = ({ roomId, userName, role, onSellerLeft }: UseHMSOptions) 
 
   const toggleMute = useCallback(async () => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const peer = await hmsRef.current?.getLocalPeer();
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      await peer?.localAudio?.setMute(!isMuted);
-      setIsMuted(prev => !prev);
-    } catch { /* ignore */ }
+      const lp = await hmsRef.current?.getLocalPeer();
+      const audioTrack = lp?.localAudioTrack();
+      if (audioTrack) {
+        audioTrack.setMute(!isMuted);
+        setIsMuted(prev => !prev);
+      }
+    } catch (e) {
+      console.warn('[HMS] toggleMute error:', e);
+    }
   }, [isMuted]);
 
   const toggleCamera = useCallback(async () => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-      const peer = await hmsRef.current?.getLocalPeer();
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      await peer?.localVideo?.setMute(!isCameraOff);
-      setIsCameraOff(prev => !prev);
-    } catch { /* ignore */ }
+      const lp = await hmsRef.current?.getLocalPeer();
+      const videoTrack = lp?.localVideoTrack();
+      if (videoTrack) {
+        videoTrack.setMute(!isCameraOff);
+        setIsCameraOff(prev => !prev);
+      }
+    } catch (e) {
+      console.warn('[HMS] toggleCamera error:', e);
+    }
   }, [isCameraOff]);
+
+  const switchCamera = useCallback(async () => {
+    try {
+      const lp = await hmsRef.current?.getLocalPeer();
+      const videoTrack = lp?.localVideoTrack();
+      if (videoTrack) {
+        videoTrack.switchCamera();  // HMS SDK built-in — no params needed
+      }
+    } catch (e) {
+      console.warn('[HMS] switchCamera error:', e);
+    }
+  }, []);
 
   const cleanup = async () => {
     try {
       if (hmsRef.current) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
         await hmsRef.current.leave();
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
         await hmsRef.current.destroy();
         hmsRef.current = null;
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      console.warn('[HMS] cleanup error:', e);
+    }
   };
 
-  const localPeer = peers.find(p => p.isLocal);
-  const broadcasterPeer = peers.find(p => !p.isLocal);
+  const localPeer = peers.find(p => p.isLocal) ?? null;
+  const broadcasterPeer = peers.find(p => !p.isLocal) ?? null;
 
   return {
     peers,
@@ -202,8 +311,11 @@ export const useHMS = ({ roomId, userName, role, onSellerLeft }: UseHMSOptions) 
     error,
     isMuted,
     isCameraOff,
+    trackMap,      // ← expose state version for components
+    hmsInstance: hmsRef.current,
     toggleMute,
     toggleCamera,
+    switchCamera,
     leave: cleanup,
   };
 };

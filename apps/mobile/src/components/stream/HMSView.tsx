@@ -1,36 +1,43 @@
+// src/components/stream/HMSView.tsx
 import React from 'react';
-import { ViewStyle } from 'react-native';
+import { View, Text, ViewStyle } from 'react-native';
+import { HMSVideoViewMode } from '@100mslive/react-native-hms';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let HMSNativeView: React.ComponentType<any>;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-  HMSNativeView = require('@100mslive/react-native-hms/lib/commonjs/classes/HmsView').HmsViewComponent;
-} catch {
-  HMSNativeView = () => null;
-}
-
-interface HMSViewProps {
-  trackId: string;
-  id: string;
+interface Props {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  hmsInstance: any;
+  trackId: string | null | undefined;
   mirror?: boolean;
-  scaleType?: string;
-  setZOrderMediaOverlay?: boolean;
-  autoSimulcast?: boolean;
   style?: ViewStyle;
 }
 
-export const HMSView = ({ trackId, id, mirror = false, scaleType = 'ASPECT_FILL', setZOrderMediaOverlay = false, autoSimulcast = true, style }: HMSViewProps) => {
-  if (!HMSNativeView) return null;
+export const HMSVideoView = ({ hmsInstance, trackId, mirror = false, style }: Props) => {
+  if (!trackId || !hmsInstance) {
+    return (
+      <View
+        style={[
+          { flex: 1, backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center' },
+          style,
+        ]}
+      >
+        <Text style={{ color: '#6B7280', fontSize: 13 }}>Waiting for video...</Text>
+      </View>
+    );
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+  const HmsView = hmsInstance.HmsView;
+
+  // ✅ Wrap in View — HmsView renders a Fragment internally and cannot
+  //    accept style directly, which causes the React.Fragment style warning
   return (
-    <HMSNativeView
-      trackId={trackId}
-      id={id}
-      mirror={mirror}
-      scaleType={scaleType}
-      setZOrderMediaOverlay={setZOrderMediaOverlay}
-      autoSimulcast={autoSimulcast}
-      style={style}
-    />
+    <View style={[{ flex: 1 }, style]}>
+      <HmsView
+        trackId={trackId}
+        mirror={mirror}
+        scaleType={HMSVideoViewMode.ASPECT_FILL}
+        style={{ flex: 1 }}
+      />
+    </View>
   );
 };

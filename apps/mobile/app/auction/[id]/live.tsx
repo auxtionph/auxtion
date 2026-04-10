@@ -10,6 +10,8 @@ import {
   Image,
   Dimensions,
   ActivityIndicator,
+  Keyboard,
+  Platform,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -19,9 +21,7 @@ import { formatPHP } from '@auxtion/utils';
 import { useAuthStore } from '../../../src/stores/auth.store';
 import { useHMS } from '../../../src/hooks/useHMS';
 import { apiClient } from '../../../src/services/api/client';
-import { HMSView } from '../../../src/components/stream/HMSView';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import { HMSCameraPreview } from '../../../src/components/stream/HMSCameraPreview';
+import { HMSVideoView } from '../../../src/components/stream/HMSView';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -83,8 +83,17 @@ export default function LiveAuctionRoom() {
   const [showShop, setShowShop] = useState(false);
   const [auctionEnded, setAuctionEnded] = useState(false);
   const [shopTab, setShopTab] = useState<'bidding' | 'sold'>('bidding');
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const chatRef = useRef<FlatList>(null);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEvent, e => setKeyboardHeight(e.endCoordinates.height));
+    const hide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
 
   useEffect(() => {
     void auctionsApi.getById(id).then(data => {
@@ -150,31 +159,40 @@ export default function LiveAuctionRoom() {
     onViewerCount: useCallback((data: { count: number }) => {
       setViewerCount(data.count);
     }, []),
+    onChatHistory: useCallback((messages) => {
+      setChatMessages(messages.map(m => ({
+        id: `hist-${m.timestamp}-${m.userId}`,
+        userId: m.userId,
+        displayName: m.displayName,
+        message: m.message,
+        timestamp: m.timestamp,
+      })));
+    }, []),
     onAuctionEnded: useCallback(() => {
       console.log('onAuctionEnded callback fired!');
       setAuctionEnded(true);
       setTimeout(() => router.replace('/(main)'), 3000);
-    }, []),
+    }, [router]),
   });
 
   const { user } = useAuthStore();
   const isSellerImmediate = routeRole === 'broadcaster';
   const isSeller = auction ? auction.seller.id === user?.id : isSellerImmediate;
-  // With this — only pass roomId after auction is loaded:
-  const [roomId, setRoomId] = useState<string | null>(null);
 
+  const [roomId, setRoomId] = useState<string | null>(null);
   useEffect(() => {
     if (auction?.streamUrl && !roomId) {
       setRoomId(auction.streamUrl);
     }
-  }, [auction?.streamUrl]);
+  }, [auction?.streamUrl, roomId]);
 
   const hms = useHMS({
     roomId,
     userName: user?.displayName ?? 'User',
     role: isSeller ? 'broadcaster' : 'viewer-realtime',
   });
-    const handleLeave = async () => {
+
+  const handleLeave = async () => {
     if (isSeller) {
       Alert.alert(
         'End Live?',
@@ -201,14 +219,11 @@ export default function LiveAuctionRoom() {
     }
   };
 
-
-  // Detect when seller leaves the HMS room (viewer side)
   const prevBroadcasterRef = useRef<string | null>(null);
   useEffect(() => {
     if (isSeller) return;
     const currentId = hms.broadcasterPeer?.id ?? null;
     if (prevBroadcasterRef.current && !currentId) {
-      // Seller was present, now gone
       setAuctionEnded(true);
     }
     prevBroadcasterRef.current = currentId;
@@ -236,94 +251,237 @@ export default function LiveAuctionRoom() {
   const biddingItems = auction?.shopItems.filter(i => i.status === 'QUEUED' || i.status === 'LIVE') ?? [];
   const soldItems = auction?.shopItems.filter(i => i.status === 'SOLD') ?? [];
 
+  const sellerTrackId = hms.localPeer?.videoTrackId ?? null;
+  const viewerTrackId = hms.broadcasterPeer?.id
+    ? (hms.trackMap[hms.broadcasterPeer.id] ?? null)
+    : null;
+
+  const renderVideoBackground = () => {
+    if (isSeller) {
+      if (!hms.isJoined || !hms.hmsInstance) {
+        return (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <ActivityIndicator size="large" color="#1A56DB" />
+            <Text style={{ color: '#9CA3AF', fontSize: 14, marginTop: 12 }}>Starting camera...</Text>
+          </View>
+        );
+      }
+      return (
+        <HMSVideoView
+          hmsInstance={hms.hmsInstance}
+          trackId={sellerTrackId}
+          mirror={true}
+          style={{ flex: 1 }}
+        />
+      );
+    }
+
+    if (!hms.isJoined) {
+      return (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color="#1A56DB" />
+          <Text style={{ color: '#9CA3AF', fontSize: 14, marginTop: 12 }}>Connecting to stream...</Text>
+        </View>
+      );
+    }
+
+    if (viewerTrackId) {
+      return (
+        <HMSVideoView
+          hmsInstance={hms.hmsInstance}
+          trackId={viewerTrackId}
+          mirror={false}
+          style={{ flex: 1 }}
+        />
+      );
+    }
+
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 64 }}>📺</Text>
+        <Text style={{ color: '#4B5563', fontSize: 14, marginTop: 8 }}>Watching live</Text>
+      </View>
+    );
+  };
+
+  // Right-side controls shift up when item bar is visible
+  const rightControlsBottom = currentItem ? 230 : 190;
+
   return (
-    <View className="flex-1 bg-black">
+    <View style={{ flex: 1, backgroundColor: '#000' }}>
 
       {/* ── Full Screen Video Background ── */}
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#111827' }}>
-        {isSeller ? (
-          <CameraView
-            style={{ flex: 1 }}
-            facing="front"
-          />
-        ) : !hms.isJoined ? (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <ActivityIndicator size="large" color="#1A56DB" />
-            <Text style={{ color: '#9CA3AF', fontSize: 14, marginTop: 12 }}>Connecting to stream...</Text>
-          </View>
-        ) : hms.broadcasterPeer?.videoTrackId ? (
-          <HMSView
-            trackId={hms.broadcasterPeer.videoTrackId}
-            id="12345"
-            mirror={false}
-            style={{ flex: 1 }}
-          />
-        ) : (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 64 }}>📺</Text>
-            <Text style={{ color: '#4B5563', fontSize: 14, marginTop: 8 }}>Watching live</Text>
-          </View>
-        )}
+        {renderVideoBackground()}
       </View>
 
-      {/* ── Top Overlay ── */}
-      <View className="absolute top-0 left-0 right-0 pt-14 px-4 flex-row items-center justify-between">
-        <View className="flex-row items-center gap-2">
-          {/* Seller avatar + name */}
-          <View className="flex-row items-center gap-2 bg-black/50 rounded-full px-3 py-1.5">
-            <View className="w-6 h-6 rounded-full bg-[#1A56DB] items-center justify-center">
-              <Text className="text-white text-xs font-bold">
+      {/* ── Top Bar: seller info + close ── */}
+      <View style={{
+        position: 'absolute', top: 0, left: 0, right: 0,
+        paddingTop: 56, paddingHorizontal: 16,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      }}>
+        {/* Left: avatar + LIVE + viewers */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 }}>
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+            backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999,
+            paddingHorizontal: 10, paddingVertical: 6,
+          }}>
+            <View style={{
+              width: 24, height: 24, borderRadius: 12,
+              backgroundColor: '#1A56DB', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
                 {auction?.seller.displayName.charAt(0).toUpperCase()}
               </Text>
             </View>
-            <Text className="text-white text-xs font-semibold">
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }} numberOfLines={1}>
               {auction?.seller.displayName}
             </Text>
           </View>
-          {/* LIVE badge */}
-          <View className="bg-red-600 rounded-full px-3 py-1.5 flex-row items-center gap-1">
-            <View className="w-1.5 h-1.5 rounded-full bg-white" />
-            <Text className="text-white text-xs font-bold">LIVE</Text>
+
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 4,
+            backgroundColor: '#DC2626', borderRadius: 999,
+            paddingHorizontal: 10, paddingVertical: 6,
+          }}>
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' }} />
+            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>LIVE</Text>
           </View>
-          {/* Viewer count */}
+
           {viewerCount > 0 && (
-            <View className="bg-black/50 rounded-full px-3 py-1.5">
-              <Text className="text-white text-xs">👁 {viewerCount}</Text>
+            <View style={{
+              backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999,
+              paddingHorizontal: 10, paddingVertical: 6,
+            }}>
+              <Text style={{ color: '#fff', fontSize: 11 }}>👁 {viewerCount}</Text>
             </View>
           )}
         </View>
 
-        {/* Close button */}
+        {/* Right: close only — seller controls moved to right side panel */}
         <TouchableOpacity
-          className="bg-black/50 rounded-full w-9 h-9 items-center justify-center"
+          style={{
+            backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999,
+            width: 36, height: 36, alignItems: 'center', justifyContent: 'center',
+          }}
           onPress={() => void handleLeave()}
         >
-          <Text className="text-white text-base font-bold">✕</Text>
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>✕</Text>
         </TouchableOpacity>
       </View>
 
-      {/* ── Chat Messages (middle overlay) ── */}
-      <View
-        className="absolute left-0 right-0"
-        style={{
-          bottom: currentItem ? 200 : 160,
-          height: 220,
-        }}
-      >
+      {/* ── Right Side Seller Controls (Whatnot-style vertical stack) ── */}
+      {isSeller && hms.isJoined && (
+        <View style={{
+          position: 'absolute',
+          right: 12,
+          bottom: rightControlsBottom + keyboardHeight,
+          alignItems: 'center',
+          gap: 20,
+        }}>
+
+          {/* Mute */}
+          <TouchableOpacity
+            style={{ alignItems: 'center', gap: 4 }}
+            onPress={() => void hms.toggleMute()}
+            activeOpacity={0.75}
+          >
+            <View style={{
+              width: 44, height: 44, borderRadius: 22,
+              backgroundColor: hms.isMuted ? 'rgba(220,38,38,0.85)' : 'rgba(0,0,0,0.60)',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ fontSize: 20 }}>{hms.isMuted ? '🔇' : '🎙️'}</Text>
+            </View>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>
+              {hms.isMuted ? 'Unmute' : 'Mute'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Camera */}
+          <TouchableOpacity
+            style={{ alignItems: 'center', gap: 4 }}
+            onPress={() => void hms.toggleCamera()}
+            activeOpacity={0.75}
+          >
+            <View style={{
+              width: 44, height: 44, borderRadius: 22,
+              backgroundColor: hms.isCameraOff ? 'rgba(220,38,38,0.85)' : 'rgba(0,0,0,0.60)',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ fontSize: 20 }}>{hms.isCameraOff ? '📵' : '📹'}</Text>
+            </View>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>
+              {hms.isCameraOff ? 'Start' : 'Stop'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Flip */}
+          <TouchableOpacity
+            style={{ alignItems: 'center', gap: 4 }}
+            onPress={() => void hms.switchCamera()}
+            activeOpacity={0.75}
+          >
+            <View style={{
+              width: 44, height: 44, borderRadius: 22,
+              backgroundColor: 'rgba(0,0,0,0.60)',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ fontSize: 20 }}>🔄</Text>
+            </View>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>Flip</Text>
+          </TouchableOpacity>
+
+          {/* Shop */}
+          <TouchableOpacity
+            style={{ alignItems: 'center', gap: 4 }}
+            onPress={() => setShowShop(true)}
+            activeOpacity={0.75}
+          >
+            <View style={{
+              width: 44, height: 44, borderRadius: 22,
+              backgroundColor: 'rgba(0,0,0,0.60)',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ fontSize: 20 }}>🛍️</Text>
+            </View>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>Shop</Text>
+          </TouchableOpacity>
+
+        </View>
+      )}
+
+      {/* ── Chat Messages ── */}
+      <View style={{
+        position: 'absolute',
+        left: 0,
+        // Indent right to avoid overlapping seller controls
+        right: isSeller ? 68 : 0,
+        bottom: (currentItem ? 200 : 160) + keyboardHeight,
+        height: 220,
+      }}>
         <FlatList
           ref={chatRef}
           data={chatMessages.slice(-20)}
           keyExtractor={item => item.id}
-          className="px-4"
+          style={{ paddingHorizontal: 16 }}
           contentContainerStyle={{ justifyContent: 'flex-end', flexGrow: 1 }}
           onContentSizeChange={() => chatRef.current?.scrollToEnd({ animated: true })}
           renderItem={({ item }) => (
-            <View className="mb-1.5 flex-row gap-2 items-start">
-              <View className="bg-black/60 rounded-2xl px-3 py-1.5 flex-row gap-1.5 items-center flex-shrink">
-                <Text className="text-[#1A56DB] text-xs font-bold">
+            <View style={{ marginBottom: 6, flexDirection: 'row' }}>
+              <View style={{
+                backgroundColor: 'rgba(0,0,0,0.60)', borderRadius: 18,
+                paddingHorizontal: 12, paddingVertical: 6,
+                flexDirection: 'row', gap: 6, alignItems: 'center', flexShrink: 1,
+              }}>
+                <Text style={{ color: '#1A56DB', fontSize: 11, fontWeight: '700' }}>
                   {item.displayName}
                 </Text>
-                <Text className="text-white text-xs flex-shrink">{item.message}</Text>
+                <Text style={{ color: '#fff', fontSize: 11, flexShrink: 1 }}>
+                  {item.message}
+                </Text>
               </View>
             </View>
           )}
@@ -332,27 +490,31 @@ export default function LiveAuctionRoom() {
 
       {/* ── Current Item Bar ── */}
       {currentItem && (
-        <View className="absolute left-4 right-4" style={{ bottom: 152 }}>
-          <View className="bg-black/70 rounded-2xl px-4 py-3 flex-row items-center justify-between">
-            <View className="flex-row items-center gap-3 flex-1">
+       <View style={{ position: 'absolute', left: 16, right: 16, bottom: 152 + keyboardHeight }}>
+          <View style={{
+            backgroundColor: 'rgba(0,0,0,0.70)', borderRadius: 16,
+            paddingHorizontal: 16, paddingVertical: 12,
+            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
               {currentItem.photos[0] && (
                 <Image
                   source={{ uri: currentItem.photos[0] }}
-                  className="w-10 h-10 rounded-xl"
+                  style={{ width: 40, height: 40, borderRadius: 10 }}
                   resizeMode="cover"
                 />
               )}
-              <View className="flex-1">
-                <Text className="text-white text-sm font-semibold" numberOfLines={1}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
                   {currentItem.title}
                 </Text>
-                <Text className="text-gray-400 text-xs">
+                <Text style={{ color: '#9CA3AF', fontSize: 11 }}>
                   {currentItem.totalBids} bid{currentItem.totalBids !== 1 ? 's' : ''}
                   {currentItem.highestBidderName ? ` · ${currentItem.highestBidderName} leading` : ''}
                 </Text>
               </View>
             </View>
-            <Text className="text-[#F59E0B] font-bold text-base">
+            <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 15 }}>
               {formatPHP(currentItem.currentPrice)}
             </Text>
           </View>
@@ -360,11 +522,19 @@ export default function LiveAuctionRoom() {
       )}
 
       {/* ── Bottom Controls ── */}
-      <View className="absolute bottom-0 left-0 right-0 px-4 pb-10 pt-3">
+      <View style={{
+        position: 'absolute', bottom: keyboardHeight, left: 0, right: 0,
+        paddingHorizontal: 16, paddingBottom: keyboardHeight > 0 ? 12 : 40, paddingTop: 12,
+      }}>
         {/* Chat input row */}
-        <View className="flex-row items-center gap-2 mb-3">
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <TextInput
-            className="flex-1 bg-black/60 border border-gray-700 rounded-full px-4 py-2.5 text-white text-sm"
+            style={{
+              flex: 1, backgroundColor: 'rgba(0,0,0,0.60)',
+              borderWidth: 1, borderColor: '#374151', borderRadius: 999,
+              paddingHorizontal: 16, paddingVertical: 10,
+              color: '#fff', fontSize: 13,
+            }}
             placeholder="Say something..."
             placeholderTextColor="#6B7280"
             value={chatInput}
@@ -373,96 +543,153 @@ export default function LiveAuctionRoom() {
             returnKeyType="send"
           />
           <TouchableOpacity
-            className="w-10 h-10 bg-black/60 border border-gray-700 rounded-full items-center justify-center"
+            style={{
+              width: 40, height: 40, borderRadius: 20,
+              backgroundColor: 'rgba(0,0,0,0.60)', borderWidth: 1, borderColor: '#374151',
+              alignItems: 'center', justifyContent: 'center',
+            }}
             onPress={handleSendChat}
           >
-            <Text className="text-white text-base">→</Text>
+            <Text style={{ color: '#fff', fontSize: 16 }}>→</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            className="w-10 h-10 bg-black/60 border border-gray-700 rounded-full items-center justify-center"
-            onPress={() => setShowShop(true)}
-          >
-            <Text className="text-base">🛍️</Text>
-          </TouchableOpacity>
+
+          {/* Shop button — viewers only; seller has it in right panel */}
+          {!isSeller && (
+            <TouchableOpacity
+              style={{
+                width: 40, height: 40, borderRadius: 20,
+                backgroundColor: 'rgba(0,0,0,0.60)', borderWidth: 1, borderColor: '#374151',
+                alignItems: 'center', justifyContent: 'center',
+              }}
+              onPress={() => setShowShop(true)}
+            >
+              <Text style={{ fontSize: 18 }}>🛍️</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        {/* Bid Button */}
-        {currentItem ? (
+        {/* Bid button — viewers only */}
+        {!isSeller && (
+          currentItem ? (
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#1A56DB', borderRadius: 16,
+                paddingVertical: 16, alignItems: 'center',
+              }}
+              onPress={handleBid}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17 }}>
+                🔨 Bid {formatPHP(currentItem.currentPrice + 10000)}
+              </Text>
+              <Text style={{ color: '#BFDBFE', fontSize: 11, marginTop: 2 }}>
+                Current price: {formatPHP(currentItem.currentPrice)}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={{
+              backgroundColor: 'rgba(0,0,0,0.60)', borderWidth: 1, borderColor: '#374151',
+              borderRadius: 16, paddingVertical: 16, alignItems: 'center',
+            }}>
+              <Text style={{ color: '#6B7280', fontWeight: '600' }}>Waiting for next item...</Text>
+            </View>
+          )
+        )}
+
+        {/* Seller bottom: end live button */}
+        {isSeller && (
           <TouchableOpacity
-            className="bg-[#1A56DB] rounded-2xl py-4 items-center"
-            onPress={handleBid}
+            style={{
+              backgroundColor: 'rgba(220,38,38,0.15)',
+              borderWidth: 1, borderColor: '#DC2626',
+              borderRadius: 16, paddingVertical: 14, alignItems: 'center',
+            }}
+            onPress={() => void handleLeave()}
             activeOpacity={0.85}
           >
-            <Text className="text-white font-bold text-lg">
-              🔨 Bid {formatPHP(currentItem.currentPrice + 10000)}
-            </Text>
-            <Text className="text-blue-200 text-xs mt-0.5">
-              Current price: {formatPHP(currentItem.currentPrice)}
+            <Text style={{ color: '#F87171', fontWeight: '700', fontSize: 15 }}>
+              End Live
             </Text>
           </TouchableOpacity>
-        ) : (
-          <View className="bg-black/60 border border-gray-700 rounded-2xl py-4 items-center">
-            <Text className="text-gray-500 font-semibold">Waiting for next item...</Text>
-          </View>
         )}
       </View>
 
-      {/* ── Shop Drawer Modal ── */}
+      {/* ── Shop Drawer ── */}
       <Modal
         visible={showShop}
         animationType="slide"
         transparent
         onRequestClose={() => setShowShop(false)}
       >
-        <TouchableOpacity
-          className="flex-1"
-          activeOpacity={1}
-          onPress={() => setShowShop(false)}
-        />
-        <View className="bg-gray-900 rounded-t-3xl border-t border-gray-800" style={{ maxHeight: '65%' }}>
-          <View className="items-center pt-3 pb-2">
-            <View className="w-10 h-1 rounded-full bg-gray-700" />
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowShop(false)} />
+        <View style={{
+          backgroundColor: '#111827',
+          borderTopLeftRadius: 24, borderTopRightRadius: 24,
+          borderTopWidth: 1, borderColor: '#1F2937',
+          maxHeight: '65%',
+        }}>
+          <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 8 }}>
+            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: '#374151' }} />
           </View>
-          <Text className="text-white font-bold text-lg px-6 mb-4">Shop</Text>
-
-          <View className="flex-row px-6 mb-4 gap-2">
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17, paddingHorizontal: 24, marginBottom: 16 }}>
+            Shop
+          </Text>
+          <View style={{ flexDirection: 'row', paddingHorizontal: 24, marginBottom: 16, gap: 8 }}>
             {(['bidding', 'sold'] as const).map(tab => (
               <TouchableOpacity
                 key={tab}
-                className={`px-4 py-2 rounded-full ${shopTab === tab ? 'bg-[#1A56DB]' : 'bg-gray-800'}`}
+                style={{
+                  paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999,
+                  backgroundColor: shopTab === tab ? '#1A56DB' : '#1F2937',
+                }}
                 onPress={() => setShopTab(tab)}
               >
-                <Text className={`text-sm font-semibold ${shopTab === tab ? 'text-white' : 'text-gray-400'}`}>
+                <Text style={{
+                  fontSize: 13, fontWeight: '600',
+                  color: shopTab === tab ? '#fff' : '#9CA3AF',
+                }}>
                   {tab === 'bidding' ? '🔨 For Bidding' : '✅ Sold'}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
-
-          <ScrollView className="px-6 pb-10">
+          <ScrollView style={{ paddingHorizontal: 24, marginBottom: 32 }}>
             {(shopTab === 'bidding' ? biddingItems : soldItems).map(item => (
-              <View key={item.id} className="flex-row items-center gap-3 bg-gray-800 rounded-xl p-3 mb-2">
-                <View className="w-14 h-14 rounded-xl bg-gray-700 overflow-hidden items-center justify-center">
+              <View key={item.id} style={{
+                flexDirection: 'row', alignItems: 'center', gap: 12,
+                backgroundColor: '#1F2937', borderRadius: 12,
+                padding: 12, marginBottom: 8,
+              }}>
+                <View style={{
+                  width: 56, height: 56, borderRadius: 10,
+                  backgroundColor: '#374151', overflow: 'hidden',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
                   {item.photos[0] ? (
-                    <Image source={{ uri: item.photos[0] }} className="w-full h-full" resizeMode="cover" />
+                    <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                   ) : (
-                    <Text className="text-2xl">📦</Text>
+                    <Text style={{ fontSize: 24 }}>📦</Text>
                   )}
                 </View>
-                <View className="flex-1">
-                  <Text className="text-white text-sm font-semibold" numberOfLines={1}>{item.title}</Text>
-                  <Text className="text-[#F59E0B] text-xs">{formatPHP(item.price)}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                  <Text style={{ color: '#F59E0B', fontSize: 12 }}>{formatPHP(item.price)}</Text>
                 </View>
                 {item.status === 'LIVE' && (
-                  <View className="bg-red-600 rounded-full px-2 py-0.5">
-                    <Text className="text-white text-xs font-bold">NOW</Text>
+                  <View style={{
+                    backgroundColor: '#DC2626', borderRadius: 999,
+                    paddingHorizontal: 8, paddingVertical: 2,
+                  }}>
+                    <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>NOW</Text>
                   </View>
                 )}
               </View>
             ))}
             {(shopTab === 'bidding' ? biddingItems : soldItems).length === 0 && (
-              <View className="items-center py-8">
-                <Text className="text-gray-600 text-sm">
+              <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                <Text style={{ color: '#4B5563', fontSize: 13 }}>
                   {shopTab === 'bidding' ? 'No items queued' : 'No items sold yet'}
                 </Text>
               </View>
@@ -470,7 +697,8 @@ export default function LiveAuctionRoom() {
           </ScrollView>
         </View>
       </Modal>
-      {/* ── Auction Ended Overlay (viewers only) ── */}
+
+      {/* ── Auction Ended Overlay ── */}
       {auctionEnded && !isSeller && (
         <View style={{
           position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
@@ -479,7 +707,7 @@ export default function LiveAuctionRoom() {
           zIndex: 999,
         }}>
           <Text style={{ fontSize: 64, marginBottom: 16 }}>📺</Text>
-          <Text style={{ color: '#FFFFFF', fontSize: 24, fontWeight: 'bold', marginBottom: 8 }}>
+          <Text style={{ color: '#fff', fontSize: 24, fontWeight: '700', marginBottom: 8 }}>
             Live has ended
           </Text>
           <Text style={{ color: '#9CA3AF', fontSize: 14, marginBottom: 32, textAlign: 'center', paddingHorizontal: 40 }}>

@@ -11,6 +11,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { BiddingService } from './bidding.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 interface PlaceBidPayload {
   auctionId: string;
@@ -28,9 +29,7 @@ interface StartItemPayload {
 }
 
 @WebSocketGateway({
-  cors: {
-    origin: '*',
-  },
+  cors: { origin: '*' },
   namespace: 'auctions',
 })
 export class BiddingGateway
@@ -40,13 +39,14 @@ export class BiddingGateway
   server!: Server;
 
   private readonly logger = new Logger(BiddingGateway.name);
-
-  // Track viewer counts per auction
   private viewerCounts = new Map<string, number>();
 
-  constructor(private readonly biddingService: BiddingService) {}
+  constructor(
+    private readonly biddingService: BiddingService,
+    private readonly prisma: PrismaService,
+  ) {}
 
-  // ── Connection Handling ────────────────────────────────────────────────────
+  // ── Connection ─────────────────────────────────────────────────────────────
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
@@ -54,8 +54,6 @@ export class BiddingGateway
 
   handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
-
-    // Decrement viewer count for all rooms this client was in
     client.rooms.forEach((room) => {
       if (room.startsWith('auction:')) {
         const auctionId = room.replace('auction:', '');
@@ -65,7 +63,7 @@ export class BiddingGateway
     });
   }
 
-  // ── Join Auction Room ──────────────────────────────────────────────────────
+  // ── Join ───────────────────────────────────────────────────────────────────
 
   @SubscribeMessage('join-auction')
   async handleJoinAuction(
@@ -83,15 +81,33 @@ export class BiddingGateway
       const bidState = await this.biddingService.getBidState(payload.auctionId);
       client.emit('bid-state', bidState);
     } catch {
-      // No active item yet — that's fine
+      // No active item yet
+    }
+
+    // ✅ Send last 100 chat messages to this client only (not broadcast)
+    const history = await this.prisma.auctionChatMessage.findMany({
+      where: { auctionId: payload.auctionId },
+      orderBy: { createdAt: 'asc' },
+      take: 100,
+    });
+
+    if (history.length > 0) {
+      client.emit(
+        'chat-history',
+        history.map((m) => ({
+          userId: m.userId,
+          displayName: m.displayName,
+          message: m.message,
+          timestamp: Number(m.timestamp),
+        })),
+      );
     }
 
     this.logger.log(`Client ${client.id} joined auction ${payload.auctionId}`);
-
     return { event: 'joined', room };
   }
 
-  // ── Leave Auction Room ─────────────────────────────────────────────────────
+  // ── Leave ──────────────────────────────────────────────────────────────────
 
   @SubscribeMessage('leave-auction')
   async handleLeaveAuction(
@@ -100,10 +116,8 @@ export class BiddingGateway
   ) {
     const room = `auction:${payload.auctionId}`;
     await client.leave(room);
-
     this.decrementViewers(payload.auctionId);
     this.broadcastViewerCount(payload.auctionId);
-
     return { event: 'left', room };
   }
 
@@ -122,7 +136,6 @@ export class BiddingGateway
         payload.amount,
       );
 
-      // Broadcast bid update to ALL clients in the auction room
       this.server.to(`auction:${payload.auctionId}`).emit('bid-update', {
         itemId: result.itemId,
         currentPrice: result.amount,
@@ -132,7 +145,6 @@ export class BiddingGateway
         timestamp: result.timestamp,
       });
 
-      // Confirm to the bidder
       client.emit('bid-confirmed', {
         success: true,
         amount: result.amount,
@@ -147,7 +159,7 @@ export class BiddingGateway
     }
   }
 
-  // ── Host: Start Item Bidding ───────────────────────────────────────────────
+  // ── Start Item ─────────────────────────────────────────────────────────────
 
   @SubscribeMessage('start-item')
   async handleStartItem(
@@ -162,15 +174,14 @@ export class BiddingGateway
         payload.itemId,
       );
 
-      // Broadcast to all viewers that a new item is being auctioned
       this.server.to(`auction:${payload.auctionId}`).emit('item-started', {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         itemId: item.id,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         title: item.title,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         startingPrice: item.price,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         photos: item.photos,
         timestamp: Date.now(),
       });
@@ -185,13 +196,12 @@ export class BiddingGateway
     }
   }
 
-  // ── Host: End Item Bidding ─────────────────────────────────────────────────
+  // ── End Item ───────────────────────────────────────────────────────────────
 
   @SubscribeMessage('end-item')
   async handleEndItem(
     @ConnectedSocket() client: Socket,
-    @MessageBody()
-    payload: StartItemPayload & { sellerId: string },
+    @MessageBody() payload: StartItemPayload & { sellerId: string },
   ) {
     try {
       const result = await this.biddingService.endItemBidding(
@@ -200,7 +210,6 @@ export class BiddingGateway
         payload.itemId,
       );
 
-      // Broadcast winner to all viewers
       this.server.to(`auction:${payload.auctionId}`).emit('item-ended', {
         itemId: payload.itemId,
         winner: result.winner,
@@ -216,10 +225,10 @@ export class BiddingGateway
     }
   }
 
-  // ── Chat Message ───────────────────────────────────────────────────────────
+  // ── Chat ───────────────────────────────────────────────────────────────────
 
   @SubscribeMessage('chat-message')
-  handleChatMessage(
+  async handleChatMessage(
     @ConnectedSocket() client: Socket,
     @MessageBody()
     payload: {
@@ -229,14 +238,28 @@ export class BiddingGateway
       message: string;
     },
   ) {
-    // Broadcast chat to all in the room
+    const timestamp = Date.now();
+
+    // ✅ Persist via Prisma before broadcasting
+    await this.prisma.auctionChatMessage.create({
+      data: {
+        auctionId: payload.auctionId,
+        userId: payload.userId,
+        displayName: payload.displayName,
+        message: payload.message,
+        timestamp: BigInt(timestamp),
+      },
+    });
+
     this.server.to(`auction:${payload.auctionId}`).emit('chat-message', {
       userId: payload.userId,
       displayName: payload.displayName,
       message: payload.message,
-      timestamp: Date.now(),
+      timestamp,
     });
   }
+
+  // ── End Auction ────────────────────────────────────────────────────────────
 
   @SubscribeMessage('end-auction')
   handleEndAuction(@MessageBody() payload: { auctionId: string }) {
@@ -246,7 +269,7 @@ export class BiddingGateway
     });
   }
 
-  // ── Viewer Count Helpers ───────────────────────────────────────────────────
+  // ── Viewer Count ───────────────────────────────────────────────────────────
 
   private incrementViewers(auctionId: string) {
     const current = this.viewerCounts.get(auctionId) ?? 0;

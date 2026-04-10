@@ -39,6 +39,8 @@ interface UseSocketOptions {
   onBidConfirmed?: (data: BidUpdate) => void;
   onBidError?: (error: { message: string }) => void;
   onChatMessage?: (data: ChatMessage) => void;
+  // ✅ Fired once on join with full message history (last 100 messages)
+  onChatHistory?: (messages: ChatMessage[]) => void;
   onItemStarted?: (data: ItemStarted) => void;
   onItemEnded?: (data: ItemEnded) => void;
   onViewerCount?: (data: { count: number }) => void;
@@ -51,6 +53,7 @@ export const useAuctionSocket = ({
   onBidConfirmed,
   onBidError,
   onChatMessage,
+  onChatHistory,
   onItemStarted,
   onItemEnded,
   onViewerCount,
@@ -74,10 +77,8 @@ export const useAuctionSocket = ({
     const socket = getSocket();
     socketRef.current = socket;
 
-    // Join auction room
     socket.emit(SOCKET_EVENTS.JOIN_AUCTION, { auctionId, token });
 
-    // Listeners
     if (onBidUpdate) socket.on(SOCKET_EVENTS.BID_UPDATE, onBidUpdate);
     if (onBidConfirmed) socket.on(SOCKET_EVENTS.BID_CONFIRMED, onBidConfirmed);
     if (onBidError) socket.on(SOCKET_EVENTS.BID_ERROR, onBidError);
@@ -85,7 +86,19 @@ export const useAuctionSocket = ({
     if (onItemStarted) socket.on(SOCKET_EVENTS.ITEM_STARTED, onItemStarted);
     if (onItemEnded) socket.on(SOCKET_EVENTS.ITEM_ENDED, onItemEnded);
     if (onViewerCount) socket.on(SOCKET_EVENTS.VIEWER_COUNT, onViewerCount);
-    socket.on(SOCKET_EVENTS.AUCTION_ENDED, (data) => { console.log('AUCTION_ENDED received:', JSON.stringify(data)); if (onAuctionEnded) onAuctionEnded(data); });
+
+    // ✅ One-time history payload — server sends this only to the joining client
+    if (onChatHistory) {
+      socket.on('chat-history', (messages: ChatMessage[]) => {
+        console.log(`[Socket] chat-history: ${messages.length} messages`);
+        onChatHistory(messages);
+      });
+    }
+
+    socket.on(SOCKET_EVENTS.AUCTION_ENDED, (data) => {
+      console.log('AUCTION_ENDED received:', JSON.stringify(data));
+      if (onAuctionEnded) onAuctionEnded(data);
+    });
   };
 
   const placeBid = useCallback((itemId: string, amount: number) => {
