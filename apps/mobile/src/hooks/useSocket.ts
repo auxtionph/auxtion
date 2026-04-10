@@ -33,18 +33,32 @@ interface ItemEnded {
   winner: { userId: string; displayName: string; amount: number } | null;
 }
 
+export interface TimerUpdate {
+  itemId: string;
+  remaining: number;
+  isCounterbid: boolean;
+}
+
+export interface TimerStarted {
+  itemId: string;
+  remaining: number;
+  counterbidSeconds: number;
+}
+
 interface UseSocketOptions {
   auctionId: string;
   onBidUpdate?: (data: BidUpdate) => void;
   onBidConfirmed?: (data: BidUpdate) => void;
   onBidError?: (error: { message: string }) => void;
   onChatMessage?: (data: ChatMessage) => void;
-  // ✅ Fired once on join with full message history (last 100 messages)
   onChatHistory?: (messages: ChatMessage[]) => void;
   onItemStarted?: (data: ItemStarted) => void;
   onItemEnded?: (data: ItemEnded) => void;
   onViewerCount?: (data: { count: number }) => void;
   onAuctionEnded?: (data: { auctionId: string; timestamp: number }) => void;
+  onTimerStarted?: (data: TimerStarted) => void;
+  onTimerUpdate?: (data: TimerUpdate) => void;
+  onTimerEnded?: (data: { itemId: string }) => void;
 }
 
 export const useAuctionSocket = ({
@@ -58,6 +72,9 @@ export const useAuctionSocket = ({
   onItemEnded,
   onViewerCount,
   onAuctionEnded,
+  onTimerStarted,
+  onTimerUpdate,
+  onTimerEnded,
 }: UseSocketOptions) => {
   const socketRef = useRef<Socket | null>(null);
 
@@ -77,7 +94,6 @@ export const useAuctionSocket = ({
     const socket = getSocket();
     socketRef.current = socket;
 
-    // ✅ Clear any existing listeners to prevent duplicates on re-render
     socket.off(SOCKET_EVENTS.BID_UPDATE);
     socket.off(SOCKET_EVENTS.BID_CONFIRMED);
     socket.off(SOCKET_EVENTS.BID_ERROR);
@@ -87,6 +103,9 @@ export const useAuctionSocket = ({
     socket.off(SOCKET_EVENTS.VIEWER_COUNT);
     socket.off('chat-history');
     socket.off(SOCKET_EVENTS.AUCTION_ENDED);
+    socket.off(SOCKET_EVENTS.TIMER_STARTED);
+    socket.off(SOCKET_EVENTS.TIMER_UPDATE);
+    socket.off(SOCKET_EVENTS.TIMER_ENDED);
 
     socket.emit(SOCKET_EVENTS.JOIN_AUCTION, { auctionId, token });
 
@@ -97,8 +116,10 @@ export const useAuctionSocket = ({
     if (onItemStarted) socket.on(SOCKET_EVENTS.ITEM_STARTED, onItemStarted);
     if (onItemEnded) socket.on(SOCKET_EVENTS.ITEM_ENDED, onItemEnded);
     if (onViewerCount) socket.on(SOCKET_EVENTS.VIEWER_COUNT, onViewerCount);
+    if (onTimerStarted) socket.on(SOCKET_EVENTS.TIMER_STARTED, onTimerStarted);
+    if (onTimerUpdate) socket.on(SOCKET_EVENTS.TIMER_UPDATE, onTimerUpdate);
+    if (onTimerEnded) socket.on(SOCKET_EVENTS.TIMER_ENDED, onTimerEnded);
 
-    // ✅ One-time history payload — server sends this only to the joining client
     if (onChatHistory) {
       socket.on('chat-history', (messages: ChatMessage[]) => {
         console.log(`[Socket] chat-history: ${messages.length} messages`);
@@ -124,5 +145,20 @@ export const useAuctionSocket = ({
     socketRef.current?.emit(SOCKET_EVENTS.END_AUCTION, { auctionId });
   }, [auctionId]);
 
-  return { placeBid, sendChat, endAuction };
+  const startItemTimer = useCallback((
+    itemId: string,
+    sellerId: string,
+    startSeconds: number,
+    counterbidSeconds: number,
+  ) => {
+    socketRef.current?.emit(SOCKET_EVENTS.START_ITEM_TIMER, {
+      auctionId,
+      itemId,
+      sellerId,
+      startSeconds,
+      counterbidSeconds,
+    });
+  }, [auctionId]);
+
+  return { placeBid, sendChat, endAuction, startItemTimer };
 };

@@ -28,6 +28,21 @@ interface StartItemPayload {
   itemId: string;
 }
 
+interface StartItemTimerPayload {
+  auctionId: string;
+  itemId: string;
+  sellerId: string;
+  startSeconds: number;
+  counterbidSeconds: number;
+}
+
+interface TimerState {
+  remaining: number;
+  counterbidSeconds: number;
+  auctionId: string;
+  itemId: string;
+}
+
 @WebSocketGateway({
   cors: { origin: '*' },
   namespace: 'auctions',
@@ -40,6 +55,8 @@ export class BiddingGateway
 
   private readonly logger = new Logger(BiddingGateway.name);
   private viewerCounts = new Map<string, number>();
+  private activeTimers = new Map<string, NodeJS.Timeout>();
+  private timerState = new Map<string, TimerState>();
 
   constructor(
     private readonly biddingService: BiddingService,
@@ -84,7 +101,19 @@ export class BiddingGateway
       // No active item yet
     }
 
-    // ✅ Send last 100 chat messages to this client only (not broadcast)
+    // ✅ Send active timer state to late joiners
+    const activeItem = [...this.timerState.values()].find(
+      (s) => s.auctionId === payload.auctionId,
+    );
+    if (activeItem) {
+      client.emit('timer-started', {
+        itemId: activeItem.itemId,
+        remaining: activeItem.remaining,
+        counterbidSeconds: activeItem.counterbidSeconds,
+      });
+    }
+
+    // ✅ Send last 100 chat messages to this client only
     const history = await this.prisma.auctionChatMessage.findMany({
       where: { auctionId: payload.auctionId },
       orderBy: { createdAt: 'asc' },
@@ -121,6 +150,69 @@ export class BiddingGateway
     return { event: 'left', room };
   }
 
+  // ── Start Item Timer ───────────────────────────────────────────────────────
+
+  @SubscribeMessage('start-item-timer')
+  async handleStartItemTimer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: StartItemTimerPayload,
+  ) {
+    const { auctionId, itemId, sellerId, startSeconds, counterbidSeconds } =
+      payload;
+
+    // Validate seller owns auction
+    const auction = await this.prisma.auction.findUnique({
+      where: { id: auctionId },
+    });
+    if (!auction || auction.sellerId !== sellerId) {
+      client.emit('error', { message: 'Unauthorized' });
+      return;
+    }
+
+    // Clear any existing timer for this item
+    this.clearTimer(itemId);
+
+    // Start item bidding in DB
+    await this.biddingService.startItemBidding(sellerId, auctionId, itemId);
+
+    // Get item details for broadcast
+    const item = await this.prisma.shopItem.findUnique({
+      where: { id: itemId },
+    });
+    if (!item) return;
+
+    // Set timer state
+    this.timerState.set(itemId, {
+      remaining: startSeconds,
+      counterbidSeconds,
+      auctionId,
+      itemId,
+    });
+
+    // Broadcast item started
+    this.server.to(`auction:${auctionId}`).emit('item-started', {
+      itemId: item.id,
+      title: item.title,
+      currentPrice: item.price,
+      photos: item.photos,
+      timestamp: Date.now(),
+    });
+
+    // Broadcast timer started
+    this.server.to(`auction:${auctionId}`).emit('timer-started', {
+      itemId,
+      remaining: startSeconds,
+      counterbidSeconds,
+    });
+
+    // Start countdown
+    this.startCountdown(auctionId, itemId);
+
+    this.logger.log(
+      `Timer started: item ${itemId} — ${startSeconds}s (counterbid: ${counterbidSeconds}s)`,
+    );
+  }
+
   // ── Place Bid ──────────────────────────────────────────────────────────────
 
   @SubscribeMessage('place-bid')
@@ -136,11 +228,35 @@ export class BiddingGateway
         payload.amount,
       );
 
+      // ✅ Counterbid reset — if bid placed within counterbid window, reset timer
+      const state = this.timerState.get(payload.itemId);
+      if (state && state.remaining <= state.counterbidSeconds) {
+        this.logger.log(
+          `Counterbid! Resetting timer to ${state.counterbidSeconds}s`,
+        );
+
+        // Clear current tick
+        const existing = this.activeTimers.get(payload.itemId);
+        if (existing) clearTimeout(existing);
+
+        state.remaining = state.counterbidSeconds;
+
+        this.server.to(`auction:${payload.auctionId}`).emit('timer-update', {
+          itemId: payload.itemId,
+          remaining: state.counterbidSeconds,
+          isCounterbid: true,
+        });
+
+        // Restart countdown from reset value
+        this.startCountdown(payload.auctionId, payload.itemId);
+      }
+
       this.server.to(`auction:${payload.auctionId}`).emit('bid-update', {
+        auctionId: payload.auctionId,
         itemId: result.itemId,
-        currentPrice: result.amount,
-        highestBidderId: result.bidderId,
-        highestBidderName: result.bidderName,
+        bidderId: result.bidderId,
+        bidderName: result.bidderName,
+        amount: result.amount,
         totalBids: result.totalBids,
         timestamp: result.timestamp,
       });
@@ -159,7 +275,7 @@ export class BiddingGateway
     }
   }
 
-  // ── Start Item ─────────────────────────────────────────────────────────────
+  // ── Start Item (legacy — no timer) ─────────────────────────────────────────
 
   @SubscribeMessage('start-item')
   async handleStartItem(
@@ -204,6 +320,8 @@ export class BiddingGateway
     @MessageBody() payload: StartItemPayload & { sellerId: string },
   ) {
     try {
+      this.clearTimer(payload.itemId);
+
       const result = await this.biddingService.endItemBidding(
         payload.sellerId,
         payload.auctionId,
@@ -240,7 +358,6 @@ export class BiddingGateway
   ) {
     const timestamp = Date.now();
 
-    // ✅ Persist via Prisma before broadcasting
     await this.prisma.auctionChatMessage.create({
       data: {
         auctionId: payload.auctionId,
@@ -263,10 +380,87 @@ export class BiddingGateway
 
   @SubscribeMessage('end-auction')
   handleEndAuction(@MessageBody() payload: { auctionId: string }) {
+    // Clear all timers for this auction
+    this.timerState.forEach((state, itemId) => {
+      if (state.auctionId === payload.auctionId) {
+        this.clearTimer(itemId);
+      }
+    });
+
     this.server.to(`auction:${payload.auctionId}`).emit('auction-ended', {
       auctionId: payload.auctionId,
       timestamp: Date.now(),
     });
+  }
+
+  // ── Timer Internals ────────────────────────────────────────────────────────
+
+  private startCountdown(auctionId: string, itemId: string) {
+    const tick = () => {
+      const state = this.timerState.get(itemId);
+      if (!state) return;
+
+      state.remaining -= 1;
+
+      this.server.to(`auction:${auctionId}`).emit('timer-update', {
+        itemId,
+        remaining: state.remaining,
+        isCounterbid: false,
+      });
+
+      if (state.remaining <= 0) {
+        this.clearTimer(itemId);
+        void this.handleTimerExpired(auctionId, itemId);
+      } else {
+        const timeout = setTimeout(tick, 1000);
+        this.activeTimers.set(itemId, timeout);
+      }
+    };
+
+    const timeout = setTimeout(tick, 1000);
+    this.activeTimers.set(itemId, timeout);
+  }
+
+  private async handleTimerExpired(auctionId: string, itemId: string) {
+    this.logger.log(`Timer expired — auto-selling item ${itemId}`);
+    try {
+      const auction = await this.prisma.auction.findUnique({
+        where: { id: auctionId },
+      });
+      if (!auction) return;
+
+      const result = await this.biddingService.endItemBidding(
+        auction.sellerId,
+        auctionId,
+        itemId,
+      );
+
+      this.server.to(`auction:${auctionId}`).emit('timer-ended', {
+        itemId,
+        timestamp: Date.now(),
+      });
+
+      this.server.to(`auction:${auctionId}`).emit('item-ended', {
+        itemId,
+        winner: result.winner,
+        timestamp: Date.now(),
+      });
+
+      this.logger.log(
+        `Item ${itemId} auto-sold to ${result.winner?.displayName ?? 'no winner'}`,
+      );
+    } catch (e) {
+      this.logger.error(`Auto-end failed for item ${itemId}:`, e);
+    }
+  }
+
+  private clearTimer(itemId: string) {
+    const existing = this.activeTimers.get(itemId);
+    if (existing) {
+      clearTimeout(existing);
+      this.activeTimers.delete(itemId);
+    }
+    this.timerState.delete(itemId);
   }
 
   // ── Viewer Count ───────────────────────────────────────────────────────────

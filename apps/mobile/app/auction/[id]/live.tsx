@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   Keyboard,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -83,6 +84,14 @@ export default function LiveAuctionRoom() {
   const [auctionEnded, setAuctionEnded] = useState(false);
   const [shopTab, setShopTab] = useState<'bidding' | 'sold'>('bidding');
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [timerRemaining, setTimerRemaining] = useState<number | null>(null);
+  const [counterbidSeconds, setCounterbidSeconds] = useState(5);
+  const [showStartItem, setShowStartItem] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<{ id: string; title: string; price: number } | null>(null);
+  const [startSeconds, setStartSeconds] = useState(30);
+  const [startCounterbid, setStartCounterbid] = useState(5);
+  const [customStartSeconds, setCustomStartSeconds] = useState(false);
+  const [customCounterbid, setCustomCounterbid] = useState(false);
 
   const chatRef = useRef<FlatList>(null);
 
@@ -110,7 +119,7 @@ export default function LiveAuctionRoom() {
     });
   }, [id]);
 
-  const { placeBid, sendChat, endAuction } = useAuctionSocket({
+  const { placeBid, sendChat, endAuction, startItemTimer } = useAuctionSocket({
     auctionId: id,
     onBidUpdate: useCallback((data: BidUpdateData) => {
       setCurrentItem(prev => prev ? {
@@ -172,6 +181,17 @@ export default function LiveAuctionRoom() {
       setAuctionEnded(true);
       setTimeout(() => router.replace('/(main)'), 3000);
     }, [router]),
+
+    onTimerStarted: useCallback((data: { itemId: string; remaining: number; counterbidSeconds: number }) => {
+      setTimerRemaining(data.remaining);
+      setCounterbidSeconds(data.counterbidSeconds);
+    }, []),
+    onTimerUpdate: useCallback((data: { itemId: string; remaining: number; isCounterbid: boolean }) => {
+      setTimerRemaining(data.remaining);
+    }, []),
+    onTimerEnded: useCallback((_data: { itemId: string }) => {
+      setTimerRemaining(null);
+    }, []),
   });
 
   const { user } = useAuthStore();
@@ -513,9 +533,19 @@ export default function LiveAuctionRoom() {
                 </Text>
               </View>
             </View>
-            <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 15 }}>
-              {formatPHP(currentItem.currentPrice)}
-            </Text>
+            <View style={{ alignItems: 'flex-end', gap: 4 }}>
+              <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 15 }}>
+                {formatPHP(currentItem.currentPrice)}
+              </Text>
+              {timerRemaining !== null && (
+                <View style={{
+                  backgroundColor: timerRemaining <= counterbidSeconds ? '#DC2626' : '#1A56DB',
+                  borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, minWidth: 48, alignItems: 'center',
+                }}>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>{timerRemaining}s</Text>
+                </View>
+              )}
+            </View>
           </View>
         </View>
       )}
@@ -654,11 +684,22 @@ export default function LiveAuctionRoom() {
           </View>
           <ScrollView style={{ paddingHorizontal: 24, marginBottom: 32 }}>
             {(shopTab === 'bidding' ? biddingItems : soldItems).map(item => (
-              <View key={item.id} style={{
-                flexDirection: 'row', alignItems: 'center', gap: 12,
-                backgroundColor: '#1F2937', borderRadius: 12,
-                padding: 12, marginBottom: 8,
-              }}>
+             <TouchableOpacity
+                  key={item.id}
+                  activeOpacity={isSeller && item.status !== 'LIVE' ? 0.7 : 1}
+                  onPress={() => {
+                    if (isSeller && item.status !== 'LIVE') {
+                      setSelectedItem({ id: item.id, title: item.title, price: item.price });
+                      setShowStartItem(true);
+                      setShowShop(false);
+                    }
+                  }}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', gap: 12,
+                    backgroundColor: '#1F2937', borderRadius: 12,
+                    padding: 12, marginBottom: 8,
+                  }}
+                >
                 <View style={{
                   width: 56, height: 56, borderRadius: 10,
                   backgroundColor: '#374151', overflow: 'hidden',
@@ -684,7 +725,7 @@ export default function LiveAuctionRoom() {
                     <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>NOW</Text>
                   </View>
                 )}
-              </View>
+              </TouchableOpacity>
             ))}
             {(shopTab === 'bidding' ? biddingItems : soldItems).length === 0 && (
               <View style={{ alignItems: 'center', paddingVertical: 32 }}>
@@ -695,6 +736,90 @@ export default function LiveAuctionRoom() {
             )}
           </ScrollView>
         </View>
+      </Modal>
+
+      {/* ── Start Item Modal (seller only) ── */}
+      <Modal visible={showStartItem} transparent animationType="slide" onRequestClose={() => setShowStartItem(false)}>
+      <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowStartItem(false)} />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView
+          style={{ backgroundColor: '#111827', borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
+          contentContainerStyle={{ padding: 24, paddingBottom: 48 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 4 }}>Start Bidding</Text>
+          <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 24 }} numberOfLines={1}>{selectedItem?.title}</Text>
+
+          <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8 }}>START TIME (seconds)</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            {[5, 10, 15, 30, 60].map(s => (
+              <TouchableOpacity
+                key={s}
+                style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: startSeconds === s && !customStartSeconds ? '#1A56DB' : '#1F2937' }}
+                onPress={() => { setStartSeconds(s); setCustomStartSeconds(false); }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '600' }}>{s}s</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: customStartSeconds ? '#1A56DB' : '#1F2937' }}
+              onPress={() => setCustomStartSeconds(true)}
+            >
+              <Text style={{ color: '#fff', fontWeight: '600' }}>Custom</Text>
+            </TouchableOpacity>
+          </View>
+          {customStartSeconds && (
+            <TextInput
+              style={{ backgroundColor: '#1F2937', borderRadius: 10, padding: 12, color: '#fff', fontSize: 15, marginBottom: 12 }}
+              placeholder="Enter seconds..."
+              placeholderTextColor="#4B5563"
+              keyboardType="numeric"
+              onChangeText={t => setStartSeconds(parseInt(t) || 30)}
+            />
+          )}
+
+          <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8 }}>COUNTERBID WINDOW (seconds)</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            {[3, 5, 7, 10, 15].map(s => (
+              <TouchableOpacity
+                key={s}
+                style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: startCounterbid === s && !customCounterbid ? '#F59E0B' : '#1F2937' }}
+                onPress={() => { setStartCounterbid(s); setCustomCounterbid(false); }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '600' }}>{s}s</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: customCounterbid ? '#F59E0B' : '#1F2937' }}
+              onPress={() => setCustomCounterbid(true)}
+            >
+              <Text style={{ color: '#fff', fontWeight: '600' }}>Custom</Text>
+            </TouchableOpacity>
+          </View>
+          {customCounterbid && (
+            <TextInput
+              style={{ backgroundColor: '#1F2937', borderRadius: 10, padding: 12, color: '#fff', fontSize: 15, marginBottom: 20 }}
+              placeholder="Enter seconds..."
+              placeholderTextColor="#4B5563"
+              keyboardType="numeric"
+              onChangeText={t => setStartCounterbid(parseInt(t) || 5)}
+            />
+          )}
+
+          <TouchableOpacity
+            style={{ backgroundColor: '#DC2626', borderRadius: 14, paddingVertical: 16, alignItems: 'center' }}
+            onPress={() => {
+              if (!selectedItem || !user?.id) return;
+              console.log('[Timer] Starting timer for item:', selectedItem.id, 'seller:', user.id);
+              startItemTimer(selectedItem.id, user.id, startSeconds, startCounterbid);
+              setShowStartItem(false);
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>🔨 Start Bidding — {startSeconds}s</Text>
+            <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>Counterbid resets at {startCounterbid}s</Text>
+          </TouchableOpacity>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── Auction Ended Overlay ── */}
