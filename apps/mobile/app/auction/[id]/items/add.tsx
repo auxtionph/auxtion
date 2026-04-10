@@ -25,7 +25,7 @@ export default function AddItemScreen() {
   const [saving, setSaving] = useState(false);
 
   const price = parseInt(priceInput.replace(/[^0-9]/g, ''), 10) || 0;
-  const isValid = title.trim().length > 0 && price >= 1 && description.trim().length >= 10;
+  const isValid = title.trim().length > 0 && price >= 1;
 
   const handleSave = async () => {
     if (!isValid) return;
@@ -35,7 +35,7 @@ export default function AddItemScreen() {
         // Step 1: Create item (no auctionId in DTO — backend doesn't accept it on create)
         const newItem = await shopItemsApi.create({
         title: title.trim(),
-        description: description.trim(),
+        description: description.trim().length >= 10 ? description.trim() : `${title.trim()} - auction item`,
         photos: [],
         price,
         type: 'AUCTION',
