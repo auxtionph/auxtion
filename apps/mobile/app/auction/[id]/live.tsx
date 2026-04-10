@@ -20,7 +20,6 @@ import { useAuctionSocket } from '../../../src/hooks/useSocket';
 import { formatPHP } from '@auxtion/utils';
 import { useAuthStore } from '../../../src/stores/auth.store';
 import { useHMS } from '../../../src/hooks/useHMS';
-import { apiClient } from '../../../src/services/api/client';
 import { HMSVideoView } from '../../../src/components/stream/HMSView';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -159,8 +158,8 @@ export default function LiveAuctionRoom() {
     onViewerCount: useCallback((data: { count: number }) => {
       setViewerCount(data.count);
     }, []),
-    onChatHistory: useCallback((messages) => {
-      setChatMessages(messages.map(m => ({
+    onChatHistory: useCallback((messages: Array<{ userId: string; displayName: string; message: string; timestamp: number }>) => {
+      setChatMessages(messages.map((m: { userId: string; displayName: string; message: string; timestamp: number }) => ({
         id: `hist-${m.timestamp}-${m.userId}`,
         userId: m.userId,
         displayName: m.displayName,
@@ -204,7 +203,7 @@ export default function LiveAuctionRoom() {
             style: 'destructive',
             onPress: async () => {
               try {
-                await apiClient.patch(`/auctions/${id}/end`);
+                await auctionsApi.end(id);
                 endAuction();
               } catch { /* ignore */ }
               await hms.leave();

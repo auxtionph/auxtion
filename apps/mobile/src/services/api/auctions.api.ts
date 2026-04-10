@@ -10,6 +10,17 @@ export const auctionsApi = {
     const response = await apiClient.get(`/auctions/${id}`);
     return response.data.data as AuctionDetail;
   },
+
+  // ✅ Added
+  goLive: async (id: string) => {
+    const response = await apiClient.patch(`/auctions/${id}/go-live`);
+    return response.data.data as AuctionDetail;
+  },
+
+  end: async (id: string) => {
+    const response = await apiClient.patch(`/auctions/${id}/end`);
+    return response.data.data as AuctionDetail;
+  },
 };
 
 export interface AuctionFeedItem {
