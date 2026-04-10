@@ -77,6 +77,17 @@ export const useAuctionSocket = ({
     const socket = getSocket();
     socketRef.current = socket;
 
+    // ✅ Clear any existing listeners to prevent duplicates on re-render
+    socket.off(SOCKET_EVENTS.BID_UPDATE);
+    socket.off(SOCKET_EVENTS.BID_CONFIRMED);
+    socket.off(SOCKET_EVENTS.BID_ERROR);
+    socket.off(SOCKET_EVENTS.CHAT_RECEIVED);
+    socket.off(SOCKET_EVENTS.ITEM_STARTED);
+    socket.off(SOCKET_EVENTS.ITEM_ENDED);
+    socket.off(SOCKET_EVENTS.VIEWER_COUNT);
+    socket.off('chat-history');
+    socket.off(SOCKET_EVENTS.AUCTION_ENDED);
+
     socket.emit(SOCKET_EVENTS.JOIN_AUCTION, { auctionId, token });
 
     if (onBidUpdate) socket.on(SOCKET_EVENTS.BID_UPDATE, onBidUpdate);
