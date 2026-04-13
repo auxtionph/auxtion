@@ -179,7 +179,7 @@ export default function AuctionDetailScreen() {
                 backgroundColor: '#111827', borderRadius: 16, padding: 16,
                 borderWidth: 1, borderColor: '#1F2937', marginBottom: 24,
               }}
-              onPress={() => router.push(`/seller/${auction.seller.id}` as never)}
+              onPress={() => router.push(`/user/${auction.seller.id}` as never)}
               activeOpacity={0.8}
             >
             <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#1A56DB', alignItems: 'center', justifyContent: 'center' }}>

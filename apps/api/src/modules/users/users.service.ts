@@ -77,10 +77,8 @@ export class UsersService {
 
   async searchUsers(search: string) {
     if (!search?.trim()) return [];
-
     return this.prisma.user.findMany({
       where: {
-        role: 'SELLER',
         displayName: {
           contains: search,
           mode: 'insensitive',

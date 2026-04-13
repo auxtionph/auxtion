@@ -92,7 +92,7 @@ export default function ExploreScreen() {
         .map(u => ({
           type: 'seller' as const,
           label: u.displayName,
-          sublabel: `${u.totalSales} sales`,
+          sublabel: u.sellerTier !== 'NEW' ? `Seller · ${u.totalSales} sales` : 'Buyer',
           id: u.id,
           avatarUrl: u.avatarUrl,
         }));
@@ -204,8 +204,8 @@ export default function ExploreScreen() {
                 borderColor: '#1F2937',
               }}
               onPress={() => {
-                if (s.type === 'seller' && s.id) {
-                  router.push(`/seller/${s.id}`);
+               if (s.type === 'seller' && s.id) {
+                router.push(`/user/${s.id}`);
                   setSuggestions([]);
                 } else {
                   setSearch(s.label);
@@ -329,7 +329,7 @@ export default function ExploreScreen() {
                   color: activeTab === tab ? '#fff' : '#6B7280',
                   fontWeight: activeTab === tab ? '700' : '500', fontSize: 14,
                 }}>
-                  {tab === 'shows' ? `Shows (${auctions.length})` : `Sellers (${users.length})`}
+                  {tab === 'shows' ? `Shows (${auctions.length})` : `Users (${users.length})`}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -420,7 +420,7 @@ export default function ExploreScreen() {
                     paddingVertical: 14, paddingHorizontal: 4,
                     borderBottomWidth: 1, borderColor: '#1F2937',
                   }}
-                  onPress={() => router.push(`/seller/${item.id}`)}
+                  onPress={() => router.push(`/user/${item.id}`)}
                   activeOpacity={0.8}
                 >
                   <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#1A56DB', alignItems: 'center', justifyContent: 'center' }}>
