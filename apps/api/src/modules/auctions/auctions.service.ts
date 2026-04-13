@@ -167,7 +167,6 @@ export class AuctionsService {
   }
 
   // ── Go Live ────────────────────────────────────────────────────────────────
-
   async goLive(sellerId: string, auctionId: string) {
     const auction = await this.prisma.auction.findUnique({
       where: { id: auctionId },
@@ -180,16 +179,56 @@ export class AuctionsService {
       throw new BadRequestException('Auction is not in scheduled status');
     }
 
-    // Create a 100ms room for this auction
+    const now = new Date();
+    const scheduledTime = new Date(auction.startTime);
+    const MAX_DELAY_MS = 45 * 60 * 1000; // 45 minutes
+
+    // Past cancellation window — cancel and reject
+    if (now.getTime() > scheduledTime.getTime() + MAX_DELAY_MS) {
+      await this.prisma.auction.update({
+        where: { id: auctionId },
+        data: { status: AuctionStatus.CANCELLED },
+      });
+      throw new BadRequestException(
+        'This auction exceeded the 45-minute delay window and has been cancelled.',
+      );
+    }
+
+    // Calculate delay (0 if on time or early)
+    const delayMs = Math.max(0, now.getTime() - scheduledTime.getTime());
+
+    // If late, shift all subsequent SCHEDULED auctions by same delay
+    if (delayMs > 0) {
+      const subsequentAuctions = await this.prisma.auction.findMany({
+        where: {
+          sellerId,
+          status: AuctionStatus.SCHEDULED,
+          startTime: { gt: scheduledTime },
+          id: { not: auctionId },
+        },
+        orderBy: { startTime: 'asc' },
+      });
+
+      for (const next of subsequentAuctions) {
+        const newStartTime = new Date(next.startTime.getTime() + delayMs);
+        await this.prisma.auction.update({
+          where: { id: next.id },
+          data: { startTime: newStartTime },
+        });
+      }
+    }
+
     const roomId = await this.streamingService.createRoom(
       auctionId,
       auction.title,
     );
+
     return this.prisma.auction.update({
       where: { id: auctionId },
       data: {
         status: AuctionStatus.LIVE,
         streamUrl: roomId,
+        actualStartTime: now,
       },
     });
   }

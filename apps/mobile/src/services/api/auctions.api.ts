@@ -21,6 +21,11 @@ export const auctionsApi = {
     const response = await apiClient.patch(`/auctions/${id}/end`);
     return response.data.data as AuctionDetail;
   },
+
+  create: async (data: { title: string; startTime: string }) => {
+    const response = await apiClient.post('/auctions', data);
+    return response.data.data as AuctionDetail;
+  },
 };
 
 export interface AuctionFeedItem {

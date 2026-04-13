@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { AuctionStatus } from '@prisma/client';
 import { OrdersService } from '../orders/orders.service';
 import { OffersService } from '../offers/offers.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class SchedulerService {
@@ -10,12 +12,8 @@ export class SchedulerService {
   constructor(
     private readonly ordersService: OrdersService,
     private readonly offersService: OffersService,
+    private readonly prisma: PrismaService,
   ) {}
-
-  // ── Auto-Confirm Deliveries ────────────────────────────────────────────────
-  // Runs every hour
-  // Finds SHIPPED orders where autoConfirmAt has passed
-  // Updates status to DELIVERED and starts payout timer
 
   @Cron(CronExpression.EVERY_HOUR)
   async autoConfirmDeliveries() {
@@ -24,11 +22,6 @@ export class SchedulerService {
     this.logger.log(`Auto-confirmed ${result.confirmed} deliveries`);
   }
 
-  // ── Auto-Release Payouts ───────────────────────────────────────────────────
-  // Runs every hour
-  // Finds DELIVERED orders where payoutReleaseAt has passed
-  // Releases payout to seller and increments their totalSales
-
   @Cron(CronExpression.EVERY_HOUR)
   async autoReleasePayouts() {
     this.logger.log('Running auto-release payouts job...');
@@ -36,15 +29,39 @@ export class SchedulerService {
     this.logger.log(`Released ${result.released} payouts`);
   }
 
-  // ── Expire Offers ──────────────────────────────────────────────────────────
-  // Runs every hour
-  // Finds PENDING offers where expiresAt has passed
-  // Updates status to EXPIRED
-
   @Cron(CronExpression.EVERY_HOUR)
   async expireOffers() {
     this.logger.log('Running expire offers job...');
     const result = await this.offersService.expireOffers();
     this.logger.log(`Expired ${result.expired} offers`);
+  }
+
+  // ── Auto-Cancel Overdue Auctions ───────────────────────────────────────────
+  // Runs every minute
+  // SCHEDULED auctions past startTime + 45min → CANCELLED
+  // Does NOT shift subsequent sets (seller no-showed)
+
+  @Cron('* * * * *')
+  async autoCancelOverdueAuctions() {
+    const cutoff = new Date(Date.now() - 45 * 60 * 1000);
+
+    const overdue = await this.prisma.auction.findMany({
+      where: {
+        status: AuctionStatus.SCHEDULED,
+        startTime: { lt: cutoff },
+      },
+      select: { id: true },
+    });
+
+    if (overdue.length === 0) return;
+
+    this.logger.log(`Auto-cancelling ${overdue.length} overdue auctions...`);
+
+    await this.prisma.auction.updateMany({
+      where: { id: { in: overdue.map((a) => a.id) } },
+      data: { status: AuctionStatus.CANCELLED },
+    });
+
+    this.logger.log(`Cancelled ${overdue.length} overdue auctions`);
   }
 }

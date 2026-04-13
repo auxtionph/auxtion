@@ -63,11 +63,11 @@ export default function SellScreen() {
           className="bg-gray-900 border border-gray-700 rounded-2xl p-6 flex-row items-center gap-4"
           onPress={() => router.push('/auction/create')}
         >
-          <Text className="text-4xl">📦</Text>
+          <Text className="text-4xl">🏷️</Text>
           <View className="flex-1">
-            <Text className="text-white font-bold text-lg">My Shop</Text>
+            <Text className="text-white font-bold text-lg">Create Auction</Text>
             <Text className="text-gray-400 text-sm">
-              Manage your listed items
+              Set up an auction room and add items
             </Text>
           </View>
           <Text className="text-gray-400 text-xl">→</Text>
