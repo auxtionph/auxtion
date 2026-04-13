@@ -12,7 +12,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { shopItemsApi } from '../../../../src/services/api/shop-items.api';
-import { formatPHP } from '@auxtion/utils';
+import { computeMinimumOffer, formatPHP } from '@auxtion/utils';
 import { apiClient } from '../../../../src/services/api/client';
 
 export default function AddItemScreen() {
@@ -37,7 +37,7 @@ export default function AddItemScreen() {
         title: title.trim(),
         description: description.trim().length >= 10 ? description.trim() : `${title.trim()} - auction item`,
         photos: [],
-        price,
+        price: price * 100,
         type: 'AUCTION',
         });
 
@@ -172,7 +172,8 @@ export default function AddItemScreen() {
           </View>
           {price > 0 && (
             <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 6 }}>
-              Minimum offer will be {formatPHP(Math.round(price * 0.7))} (70% of starting price)
+              Minimum offer will e {formatPHP(computeMinimumOffer(price * 100))} (70% of starting price)
+
             </Text>
           )}
         </View>
@@ -195,7 +196,7 @@ export default function AddItemScreen() {
                   {title}
                 </Text>
                 <Text style={{ color: '#F59E0B', fontSize: 13 }}>
-                  Starting at {formatPHP(price)}
+                  Starting at {formatPHP(price * 100)}
                 </Text>
               </View>
             </View>

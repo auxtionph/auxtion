@@ -423,6 +423,9 @@ export class BiddingGateway
 
   private async handleTimerExpired(auctionId: string, itemId: string) {
     this.logger.log(`Timer expired — auto-selling item ${itemId}`);
+
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
     try {
       const auction = await this.prisma.auction.findUnique({
         where: { id: auctionId },

@@ -133,8 +133,8 @@ export const useAuctionSocket = ({
     });
   };
 
-  const placeBid = useCallback((itemId: string, amount: number) => {
-    socketRef.current?.emit(SOCKET_EVENTS.PLACE_BID, { auctionId, itemId, amount });
+  const placeBid = useCallback((itemId: string, amount: number, bidderId: string) => {
+    socketRef.current?.emit(SOCKET_EVENTS.PLACE_BID, { auctionId, itemId, amount, bidderId });
   }, [auctionId]);
 
   const sendChat = useCallback((message: string, userId?: string, displayName?: string) => {

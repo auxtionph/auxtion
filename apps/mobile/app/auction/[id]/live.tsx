@@ -13,6 +13,8 @@ import {
   Keyboard,
   Platform,
   KeyboardAvoidingView,
+  Animated,
+  PanResponder,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState, useCallback } from 'react';
@@ -71,6 +73,74 @@ interface ItemEndedData {
   winner: { userId: string; displayName: string; amount: number } | null;
 }
 
+const SCREEN_WIDTH = Dimensions.get('window').width;
+
+const getBidIncrement = (price: number): number => {
+  if (price < 1_000_000) return 10_000;  // under ₱10,000 → +₱100
+  return 50_000;                          // ₱10,000+ → +₱500
+};
+
+function SwipeBidButton({ label, sublabel, onBid }: {
+  label: string;
+  sublabel: string;
+  onBid: () => void;
+}) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const THRESHOLD = SCREEN_WIDTH * 0.55;
+  const MAX_DRAG = SCREEN_WIDTH - 32 - 56;
+
+  const panResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderMove: (_, g) => {
+      const val = Math.max(0, Math.min(g.dx, MAX_DRAG));
+      translateX.setValue(val);
+    },
+    onPanResponderRelease: (_, g) => {
+      if (g.dx >= THRESHOLD) {
+        Animated.timing(translateX, {
+          toValue: MAX_DRAG,
+          duration: 100,
+          useNativeDriver: true,
+        }).start(() => {
+          onBid();
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+        });
+      } else {
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+      }
+    },
+  })).current;
+
+  return (
+    <View style={{
+      backgroundColor: '#1A56DB', borderRadius: 16,
+      height: 60, overflow: 'hidden', justifyContent: 'center',
+    }}>
+      <View style={{ position: 'absolute', width: '100%', alignItems: 'center' }}>
+        <Text style={{ color: 'rgba(255,255,255,0.9)', fontWeight: '700', fontSize: 17 }}>{label}</Text>
+        <Text style={{ color: 'rgba(191,219,254,0.9)', fontSize: 11, marginTop: 2 }}>{sublabel}</Text>
+      </View>
+      <View style={{ position: 'absolute', right: 16, flexDirection: 'row', gap: 2, opacity: 0.3 }}>
+        <Text style={{ color: '#fff', fontSize: 14 }}>›</Text>
+        <Text style={{ color: '#fff', fontSize: 14 }}>›</Text>
+        <Text style={{ color: '#fff', fontSize: 14 }}>›</Text>
+      </View>
+      <Animated.View
+        style={{
+          transform: [{ translateX }],
+          width: 52, height: 52, borderRadius: 12, marginLeft: 4,
+          backgroundColor: 'rgba(255,255,255,0.2)',
+          alignItems: 'center', justifyContent: 'center',
+        }}
+        {...panResponder.panHandlers}
+      >
+        <Text style={{ fontSize: 22 }}>🔨</Text>
+      </Animated.View>
+    </View>
+  );
+}
+
 export default function LiveAuctionRoom() {
   const { id, role: routeRole } = useLocalSearchParams<{ id: string; role?: string }>();
   const router = useRouter();
@@ -94,6 +164,11 @@ export default function LiveAuctionRoom() {
   const [customCounterbid, setCustomCounterbid] = useState(false);
 
   const chatRef = useRef<FlatList>(null);
+  const currentItemRef = useRef<CurrentItem | null>(null); 
+
+  useEffect(() => {
+    currentItemRef.current = currentItem;
+  }, [currentItem]);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -247,19 +322,6 @@ export default function LiveAuctionRoom() {
     }
     prevBroadcasterRef.current = currentId;
   }, [hms.broadcasterPeer?.id, isSeller]);
-
-  const handleBid = () => {
-    if (!currentItem) return;
-    const nextBid = currentItem.currentPrice + 10000;
-    Alert.alert(
-      'Place Bid',
-      `Bid ${formatPHP(nextBid)} on ${currentItem.title}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: `Bid ${formatPHP(nextBid)}`, onPress: () => placeBid(currentItem.itemId, nextBid) },
-      ],
-    );
-  };
 
   const handleSendChat = () => {
     if (!chatInput.trim()) return;
@@ -600,21 +662,24 @@ export default function LiveAuctionRoom() {
         {/* Bid button — viewers only */}
         {!isSeller && (
           currentItem ? (
-            <TouchableOpacity
-              style={{
-                backgroundColor: '#1A56DB', borderRadius: 16,
-                paddingVertical: 16, alignItems: 'center',
-              }}
-              onPress={handleBid}
-              activeOpacity={0.85}
-            >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17 }}>
-                🔨 Bid {formatPHP(currentItem.currentPrice + 10000)}
-              </Text>
-              <Text style={{ color: '#BFDBFE', fontSize: 11, marginTop: 2 }}>
-                Current price: {formatPHP(currentItem.currentPrice)}
-              </Text>
-            </TouchableOpacity>
+          <SwipeBidButton
+            label={currentItem.totalBids === 0
+              ? `Bid ${formatPHP(currentItem.currentPrice)}`
+              : `Bid ${formatPHP(currentItem.currentPrice + getBidIncrement(currentItem.currentPrice))}`
+            }
+            sublabel={currentItem.totalBids === 0
+              ? `Start the bidding at ${formatPHP(currentItem.currentPrice)}`
+              : `Swipe to bid · Current: ${formatPHP(currentItem.currentPrice)}`
+            }
+            onBid={() => {
+              const latest = currentItemRef.current;
+              if (!latest) return;
+              const bidAmount = latest.totalBids === 0
+                ? latest.currentPrice
+                : latest.currentPrice + getBidIncrement(latest.currentPrice);
+              placeBid(latest.itemId, bidAmount, user?.id ?? '');
+            }}
+          />
           ) : (
             <View style={{
               backgroundColor: 'rgba(0,0,0,0.60)', borderWidth: 1, borderColor: '#374151',

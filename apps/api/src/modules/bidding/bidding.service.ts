@@ -56,10 +56,19 @@ export class BiddingService {
     }
 
     // Validate bid amount is higher than current price
-    if (amount <= item.price) {
-      throw new BadRequestException(
-        `Bid must be higher than current price of ${item.price}`,
-      );
+    const existingBidCount = await this.prisma.bid.count({ where: { itemId } });
+    if (existingBidCount === 0) {
+      // First bid — must be at least starting price
+      if (amount < item.price) {
+        throw new BadRequestException(`Bid must be at least ${item.price}`);
+      }
+    } else {
+      // Subsequent bids — must be strictly higher
+      if (amount <= item.price) {
+        throw new BadRequestException(
+          `Bid must be higher than current price of ${item.price}`,
+        );
+      }
     }
 
     // Validate bidder is not the seller
@@ -76,7 +85,13 @@ export class BiddingService {
     if (!bidder) throw new NotFoundException('Bidder not found');
 
     // Create bid and update item price atomically
-    const [,] = await this.prisma.$transaction([
+    await this.prisma.$transaction([
+      // Step 1: Mark ALL existing winning bids as not winning
+      this.prisma.bid.updateMany({
+        where: { itemId, isWinning: true },
+        data: { isWinning: false },
+      }),
+      // Step 2: Create new winning bid
       this.prisma.bid.create({
         data: {
           auctionId,
@@ -86,16 +101,7 @@ export class BiddingService {
           isWinning: true,
         },
       }),
-      // Mark previous winning bid as not winning
-      this.prisma.bid.updateMany({
-        where: {
-          itemId,
-          isWinning: true,
-          bidderId: { not: bidderId },
-        },
-        data: { isWinning: false },
-      }),
-      // Update item current price
+      // Step 3: Update item current price
       this.prisma.shopItem.update({
         where: { id: itemId },
         data: { price: amount },
@@ -151,7 +157,8 @@ export class BiddingService {
     if (!item) throw new NotFoundException('Item not found');
 
     const winningBid = await this.prisma.bid.findFirst({
-      where: { itemId, isWinning: true },
+      where: { itemId },
+      orderBy: { amount: 'desc' },
       include: {
         bidder: { select: { id: true, displayName: true } },
       },
@@ -186,6 +193,12 @@ export class BiddingService {
       data: { status: ShopItemStatus.QUEUED },
     });
 
+    await this.prisma.bid.deleteMany({
+      where: { itemId },
+    });
+
+    await this.redis.del(`bid:${itemId}`);
+
     // Set this item to LIVE
     const item = await this.prisma.shopItem.update({
       where: { id: itemId },
@@ -207,35 +220,36 @@ export class BiddingService {
       throw new BadRequestException('You do not own this auction');
     }
 
-    // Find winning bid
-    const winningBid = await this.prisma.bid.findFirst({
-      where: { itemId, isWinning: true },
-      include: {
-        bidder: { select: { id: true, displayName: true } },
-      },
-    });
+    // ✅ Use Redis as source of truth — always has the latest bid
+    const cached = await this.redis.get(`bid:${itemId}`);
+    let winner: { userId: string; displayName: string; amount: number } | null =
+      null;
 
-    // Mark item as sold or available (if no bids)
+    if (cached) {
+      const state = JSON.parse(cached) as {
+        highestBidderId: string;
+        highestBidderName: string;
+        currentPrice: number;
+      };
+      winner = {
+        userId: state.highestBidderId,
+        displayName: state.highestBidderName,
+        amount: state.currentPrice,
+      };
+    }
+
+    // Mark item as sold or available
     await this.prisma.shopItem.update({
       where: { id: itemId },
       data: {
-        status: winningBid ? ShopItemStatus.SOLD : ShopItemStatus.AVAILABLE,
+        status: winner ? ShopItemStatus.SOLD : ShopItemStatus.AVAILABLE,
       },
     });
 
     // Clear Redis cache
     await this.redis.del(`bid:${itemId}`);
 
-    return {
-      itemId,
-      winner: winningBid
-        ? {
-            userId: winningBid.bidderId,
-            displayName: winningBid.bidder.displayName,
-            amount: winningBid.amount,
-          }
-        : null,
-    };
+    return { itemId, winner };
   }
 
   // ── Get Bid History ────────────────────────────────────────────────────────
