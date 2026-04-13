@@ -74,4 +74,26 @@ export class UsersService {
 
     return user;
   }
+
+  async searchUsers(search: string) {
+    if (!search?.trim()) return [];
+
+    return this.prisma.user.findMany({
+      where: {
+        role: 'SELLER',
+        displayName: {
+          contains: search,
+          mode: 'insensitive',
+        },
+      },
+      select: {
+        id: true,
+        displayName: true,
+        avatarUrl: true,
+        sellerTier: true,
+        totalSales: true,
+      },
+      take: 20,
+    });
+  }
 }
