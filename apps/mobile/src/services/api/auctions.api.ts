@@ -37,6 +37,7 @@ export const auctionsApi = {
   getSellerAuctions: async (sellerId: string) => {
     const response = await apiClient.get(`/auctions/seller/${sellerId}`);
     return response.data.data as SellerAuction[];
+    
   },
   
   getScheduledSlots: async (sellerId: string, date: string) => {
@@ -44,6 +45,11 @@ export const auctionsApi = {
       `/auctions/seller/${sellerId}/scheduled-slots?date=${date}`
     );
     return response.data.data as { startTime: string; hour: number; minute: number; title: string }[];
+  },
+
+  cancelAuction: async (id: string) => {
+    const response = await apiClient.patch(`/auctions/${id}/cancel`);
+    return response.data.data;
   },
 };
 

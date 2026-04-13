@@ -6,6 +6,11 @@ import {
   Alert,
   ActivityIndicator,
   RefreshControl,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useState, useCallback } from 'react';
@@ -23,6 +28,8 @@ export default function SellScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [goingLive, setGoingLive] = useState<string | null>(null);
+  const [showQuickLive, setShowQuickLive] = useState(false);
+  const [quickTitle, setQuickTitle] = useState('');
 
   const fetchAuctions = async () => {
     try {
@@ -60,14 +67,17 @@ export default function SellScreen() {
   };
 
   const handleQuickLive = async () => {
+    if (!quickTitle.trim()) return;
     setLoading(true);
+    setShowQuickLive(false);
     try {
       const res = await apiClient.post('/auctions', {
-        title: `${user?.displayName ?? 'Seller'}'s Live Auction`,
+        title: quickTitle.trim(),
         startTime: new Date().toISOString(),
       });
       const auctionId = (res.data.data as { id: string }).id;
       await auctionsApi.goLive(auctionId);
+      setQuickTitle('');
       router.push(`/auction/${auctionId}/live?role=broadcaster`);
     } catch {
       Alert.alert('Error', 'Failed to start live auction.');
@@ -165,7 +175,10 @@ export default function SellScreen() {
           padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12,
           opacity: loading ? 0.6 : 1,
         }}
-        onPress={() => void handleQuickLive()}
+        onPress={() => {
+          setQuickTitle(`${user?.displayName ?? 'Seller'}'s Live Auction`);
+          setShowQuickLive(true);
+        }}
         disabled={loading}
       >
         <Text style={{ fontSize: 24 }}>🔴</Text>
@@ -298,6 +311,75 @@ export default function SellScreen() {
           );
         })}
       </ScrollView>
+
+      {/* Quick Live Modal */}
+      <Modal visible={showQuickLive} transparent animationType="slide" onRequestClose={() => setShowQuickLive(false)}>
+        <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{ flex: 1, justifyContent: 'flex-end' }}
+          >
+            <TouchableOpacity
+              style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' }}
+              activeOpacity={1}
+              onPress={() => setShowQuickLive(false)}
+            />
+            <View style={{
+              backgroundColor: '#1F2937',
+              borderTopLeftRadius: 24, borderTopRightRadius: 24,
+              padding: 24, paddingBottom: 48,
+            }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>🔴 Go Live Now</Text>
+              <TouchableOpacity onPress={() => setShowQuickLive(false)}>
+                <Text style={{ color: '#6B7280', fontSize: 16 }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Title */}
+            <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Live Title *
+            </Text>
+            <TextInput
+              style={{
+                backgroundColor: '#111827', borderRadius: 12,
+                borderWidth: 1, borderColor: quickTitle.trim().length >= 2 ? '#1A56DB' : '#374151',
+                padding: 14, color: '#fff', fontSize: 15, marginBottom: 24,
+              }}
+              placeholder="e.g. Weekend Sneaker Drop"
+              placeholderTextColor="#4B5563"
+              value={quickTitle}
+              onChangeText={setQuickTitle}
+              maxLength={100}
+              autoFocus
+            />
+
+            {/* Info */}
+            <View style={{
+              backgroundColor: '#111827', borderRadius: 12,
+              padding: 14, marginBottom: 24,
+              flexDirection: 'row', gap: 10, alignItems: 'flex-start',
+            }}>
+              <Text style={{ fontSize: 16 }}>💡</Text>
+              <Text style={{ color: '#6B7280', fontSize: 13, flex: 1 }}>
+                Going live now will immediately create a room and let viewers join. Add items to your queue once you're live.
+              </Text>
+            </View>
+
+            {/* Go Live button */}
+            <TouchableOpacity
+              style={{
+                backgroundColor: quickTitle.trim().length >= 2 ? '#DC2626' : '#374151',
+                borderRadius: 16, paddingVertical: 18, alignItems: 'center',
+              }}
+              onPress={() => void handleQuickLive()}
+              disabled={quickTitle.trim().length < 2 || loading}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17 }}>🔴 Start Live</Text>
+              <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>You'll go live immediately</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }

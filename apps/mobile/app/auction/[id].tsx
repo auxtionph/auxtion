@@ -463,27 +463,60 @@ export default function AuctionDetailScreen() {
         {isSeller && (
           <>
             {isScheduled && (
-              <TouchableOpacity
-                style={{
-                  backgroundColor: startingLive ? '#374151' : '#DC2626',
-                  borderRadius: 16, paddingVertical: 18, alignItems: 'center',
-                }}
-                onPress={() => void handleGoLive()}
-                disabled={startingLive}
-              >
-                {startingLive ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <>
-                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17 }}>🔴 Go Live</Text>
-                    <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>
-                      {auction.shopItems.length === 0
-                        ? 'Add items before going live'
-                        : `Start with ${auction.shopItems.length} item${auction.shopItems.length !== 1 ? 's' : ''}`}
-                    </Text>
-                  </>
-                )}
-              </TouchableOpacity>
+              <View style={{ gap: 10 }}>
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: startingLive ? '#374151' : '#DC2626',
+                    borderRadius: 16, paddingVertical: 18, alignItems: 'center',
+                  }}
+                  onPress={() => void handleGoLive()}
+                  disabled={startingLive}
+                >
+                  {startingLive ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17 }}>🔴 Go Live</Text>
+                      <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>
+                        {auction.shopItems.length === 0
+                          ? 'Add items before going live'
+                          : `Start with ${auction.shopItems.length} item${auction.shopItems.length !== 1 ? 's' : ''}`}
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: 'transparent',
+                    borderWidth: 1, borderColor: '#374151',
+                    borderRadius: 16, paddingVertical: 14, alignItems: 'center',
+                  }}
+                  onPress={() => {
+                    Alert.alert(
+                      'Cancel Auction',
+                      'Are you sure you want to cancel this scheduled auction?',
+                      [
+                        { text: 'Keep it', style: 'cancel' },
+                        {
+                          text: 'Cancel Auction',
+                          style: 'destructive',
+                          onPress: async () => {
+                            try {
+                              await auctionsApi.cancelAuction(id);
+                              router.back();
+                            } catch {
+                              Alert.alert('Error', 'Failed to cancel auction.');
+                            }
+                          },
+                        },
+                      ],
+                    );
+                  }}
+                >
+                  <Text style={{ color: '#6B7280', fontWeight: '600', fontSize: 15 }}>Cancel Auction</Text>
+                </TouchableOpacity>
+              </View>
             )}
             {isLive && (
               <TouchableOpacity
