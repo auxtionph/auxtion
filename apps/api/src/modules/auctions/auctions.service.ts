@@ -233,6 +233,30 @@ export class AuctionsService {
     });
   }
 
+  // ── Get Scheduled Slots ────────────────────────────────────────────────────
+  async getScheduledSlots(sellerId: string, date: string) {
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(date);
+    end.setHours(23, 59, 59, 999);
+
+    const auctions = await this.prisma.auction.findMany({
+      where: {
+        sellerId,
+        status: { in: [AuctionStatus.SCHEDULED, AuctionStatus.LIVE] },
+        startTime: { gte: start, lte: end },
+      },
+      select: { startTime: true, title: true },
+    });
+
+    return auctions.map((a) => ({
+      startTime: a.startTime.toISOString(),
+      hour: a.startTime.getHours(),
+      minute: a.startTime.getMinutes(),
+      title: a.title,
+    }));
+  }
+
   // ── End Stream ─────────────────────────────────────────────────────────────
 
   async endStream(sellerId: string, auctionId: string) {

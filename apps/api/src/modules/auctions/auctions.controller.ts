@@ -5,6 +5,7 @@ import {
   Patch,
   Body,
   Param,
+  Query,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -30,6 +31,15 @@ export class AuctionsController {
   @Get('feed')
   getFeed() {
     return this.auctionsService.getFeed();
+  }
+
+  // Get taken time slots for a seller on a specific date
+  @Get('seller/:sellerId/scheduled-slots')
+  getScheduledSlots(
+    @Param('sellerId') sellerId: string,
+    @Query('date') date: string,
+  ) {
+    return this.auctionsService.getScheduledSlots(sellerId, date);
   }
 
   // Get single auction

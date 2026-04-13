@@ -73,15 +73,21 @@ export class SchedulerService {
         continue;
       }
 
-      // Calculate next 15-min slot from now
+      // Snap to exact 15-min boundary (no floating point drift)
       const newStartTime = new Date(
         Math.ceil(now.getTime() / INTERVAL_MS) * INTERVAL_MS,
       );
+      // Zero out seconds and milliseconds for clean times
+      newStartTime.setSeconds(0, 0);
 
       // Only update if time actually changed
       if (newStartTime.getTime() === scheduledTime.getTime()) continue;
 
-      const shiftMs = newStartTime.getTime() - scheduledTime.getTime();
+      // Calculate shift in whole minutes to avoid ms drift
+      const shiftMinutes = Math.round(
+        (newStartTime.getTime() - scheduledTime.getTime()) / 60000,
+      );
+      const shiftMs = shiftMinutes * 60000;
 
       this.logger.log(
         `Shifting auction "${auction.title}" by ${Math.round(shiftMs / 60000)}min → ${newStartTime.toISOString()}`,
@@ -104,9 +110,11 @@ export class SchedulerService {
       });
 
       for (const next of subsequent) {
+        const shifted = new Date(next.startTime.getTime() + shiftMs);
+        shifted.setSeconds(0, 0);
         await this.prisma.auction.update({
           where: { id: next.id },
-          data: { startTime: new Date(next.startTime.getTime() + shiftMs) },
+          data: { startTime: shifted },
         });
       }
     }

@@ -11,11 +11,13 @@ import {
   Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { auctionsApi } from '../../src/services/api/auctions.api';
+import { useAuthStore } from '../../src/stores/auth.store';
 
 export default function CreateAuctionScreen() {
   const router = useRouter();
+  const { user } = useAuthStore();
   const [title, setTitle] = useState('');
   const [saving, setSaving] = useState(false);
   const [scheduledDate, setScheduledDate] = useState(() => {
@@ -57,6 +59,19 @@ export default function CreateAuctionScreen() {
     }
   };
 
+  const [takenSlots, setTakenSlots] = useState<{ hour: number; minute: number; title: string }[]>([]);
+  const isSlotTaken = (hour: number, minute: number) => {
+    // Convert hour from 12h to 24h for comparison
+    return takenSlots.some(s => s.hour === hour && s.minute === minute);
+  };
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const dateStr = scheduledDate.toISOString().split('T')[0];
+    void auctionsApi.getScheduledSlots(user.id, dateStr).then(slots => {
+      setTakenSlots(slots);
+    }).catch(() => {});
+  }, [scheduledDate.toDateString(), user?.id]);
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: '#111827' }}
@@ -76,11 +91,11 @@ export default function CreateAuctionScreen() {
         </Text>
         <TouchableOpacity
           style={{
-            backgroundColor: isValid && !saving && !isPast ? '#1A56DB' : '#374151',
+            backgroundColor: isValid && !saving && !isPast && !isSlotTaken(scheduledDate.getHours(), scheduledDate.getMinutes()) ? '#1A56DB' : '#374151',
             borderRadius: 999, paddingHorizontal: 16, paddingVertical: 8,
           }}
           onPress={() => void handleCreate()}
-          disabled={!isValid || saving || isPast}
+          disabled={!isValid || saving || isPast || isSlotTaken(scheduledDate.getHours(), scheduledDate.getMinutes())}
         >
           {saving ? (
             <ActivityIndicator size="small" color="#fff" />
@@ -176,6 +191,20 @@ export default function CreateAuctionScreen() {
             <Text style={{ fontSize: 16 }}>⚠️</Text>
             <Text style={{ color: '#F87171', fontSize: 13 }}>
               Please select a future date and time.
+            </Text>
+          </View>
+        )}
+
+        {/* After the time picker row TouchableOpacity, add: */}
+        {isSlotTaken(scheduledDate.getHours(), scheduledDate.getMinutes()) && (
+          <View style={{
+            backgroundColor: 'rgba(220,38,38,0.15)', borderRadius: 10,
+            borderWidth: 1, borderColor: '#DC2626',
+            padding: 12, marginBottom: 16, flexDirection: 'row', gap: 8, alignItems: 'center',
+          }}>
+            <Text style={{ fontSize: 16 }}>⚠️</Text>
+            <Text style={{ color: '#F87171', fontSize: 13 }}>
+              This time slot is already taken. Please select a different time.
             </Text>
           </View>
         )}
@@ -287,45 +316,63 @@ export default function CreateAuctionScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 8 }}>HOUR</Text>
                 <ScrollView style={{ maxHeight: 200 }}>
-                  {Array.from({ length: 12 }, (_, i) => i + 1).map(h => (
-                    <TouchableOpacity
-                      key={h}
-                      style={{
-                        padding: 10, borderRadius: 8, marginBottom: 4,
-                        backgroundColor: (scheduledDate.getHours() % 12 || 12) === h ? '#1A56DB' : '#111827',
-                      }}
-                      onPress={() => {
-                        const d = new Date(scheduledDate);
-                        const isPM = scheduledDate.getHours() >= 12;
-                        d.setHours(isPM ? (h === 12 ? 12 : h + 12) : (h === 12 ? 0 : h));
-                        setScheduledDate(d);
-                      }}
-                    >
-                      <Text style={{ color: '#fff', textAlign: 'center' }}>{h}</Text>
-                    </TouchableOpacity>
-                  ))}
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(h => {
+                    const isPM = scheduledDate.getHours() >= 12;
+                    const hour24 = isPM ? (h === 12 ? 12 : h + 12) : (h === 12 ? 0 : h);
+                    const taken = isSlotTaken(hour24, scheduledDate.getMinutes());
+                    const isSelected = (scheduledDate.getHours() % 12 || 12) === h;
+                    return (
+                      <TouchableOpacity
+                        key={h}
+                        disabled={taken}
+                        style={{
+                          padding: 10, borderRadius: 8, marginBottom: 4,
+                          backgroundColor: isSelected ? '#1A56DB' : taken ? '#3B1515' : '#111827',
+                          opacity: taken ? 0.7 : 1,
+                        }}
+                        onPress={() => {
+                          const d = new Date(scheduledDate);
+                          const isPM = scheduledDate.getHours() >= 12;
+                          d.setHours(isPM ? (h === 12 ? 12 : h + 12) : (h === 12 ? 0 : h));
+                          setScheduledDate(d);
+                        }}
+                      >
+                        <Text style={{ color: taken ? '#EF4444' : '#fff', textAlign: 'center' }}>
+                          {h}{taken ? ' ✕' : ''}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </ScrollView>
               </View>
               {/* Minute */}
               <View style={{ flex: 1 }}>
                 <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 8 }}>MIN</Text>
                 <ScrollView style={{ maxHeight: 200 }}>
-                  {[0, 15, 30, 45].map(m => (
-                    <TouchableOpacity
-                      key={m}
-                      style={{
-                        padding: 10, borderRadius: 8, marginBottom: 4,
-                        backgroundColor: scheduledDate.getMinutes() === m ? '#1A56DB' : '#111827',
-                      }}
-                      onPress={() => {
-                        const d = new Date(scheduledDate);
-                        d.setMinutes(m);
-                        setScheduledDate(d);
-                      }}
-                    >
-                      <Text style={{ color: '#fff', textAlign: 'center' }}>{String(m).padStart(2, '0')}</Text>
-                    </TouchableOpacity>
-                  ))}
+                  {[0, 15, 30, 45].map(m => {
+                    const taken = isSlotTaken(scheduledDate.getHours(), m);
+                    const isSelected = scheduledDate.getMinutes() === m;
+                    return (
+                      <TouchableOpacity
+                        key={m}
+                        disabled={taken}
+                        style={{
+                          padding: 10, borderRadius: 8, marginBottom: 4,
+                          backgroundColor: isSelected ? '#1A56DB' : taken ? '#3B1515' : '#111827',
+                          opacity: taken ? 0.7 : 1,
+                        }}
+                        onPress={() => {
+                          const d = new Date(scheduledDate);
+                          d.setMinutes(m);
+                          setScheduledDate(d);
+                        }}
+                      >
+                        <Text style={{ color: taken ? '#EF4444' : '#fff', textAlign: 'center' }}>
+                          {String(m).padStart(2, '0')}{taken ? ' ✕' : ''}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </ScrollView>
               </View>
               {/* AM/PM */}

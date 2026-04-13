@@ -38,6 +38,13 @@ export const auctionsApi = {
     const response = await apiClient.get(`/auctions/seller/${sellerId}`);
     return response.data.data as SellerAuction[];
   },
+  
+  getScheduledSlots: async (sellerId: string, date: string) => {
+    const response = await apiClient.get(
+      `/auctions/seller/${sellerId}/scheduled-slots?date=${date}`
+    );
+    return response.data.data as { startTime: string; hour: number; minute: number; title: string }[];
+  },
 };
 
 export interface AuctionFeedItem {
