@@ -173,11 +173,15 @@ export default function AuctionDetailScreen() {
         <View style={{ padding: 20 }}>
 
           {/* Seller Info */}
-          <View style={{
-            flexDirection: 'row', alignItems: 'center', gap: 12,
-            backgroundColor: '#111827', borderRadius: 16, padding: 16,
-            borderWidth: 1, borderColor: '#1F2937', marginBottom: 24,
-          }}>
+          <TouchableOpacity
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: 12,
+                backgroundColor: '#111827', borderRadius: 16, padding: 16,
+                borderWidth: 1, borderColor: '#1F2937', marginBottom: 24,
+              }}
+              onPress={() => router.push(`/seller/${auction.seller.id}` as never)}
+              activeOpacity={0.8}
+            >
             <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#1A56DB', alignItems: 'center', justifyContent: 'center' }}>
               <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>
                 {auction.seller.displayName.charAt(0).toUpperCase()}
@@ -196,7 +200,7 @@ export default function AuctionDetailScreen() {
                 <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>Follow</Text>
               </TouchableOpacity>
             )}
-          </View>
+          </TouchableOpacity>
 
           {/* Auction Info */}
           <View style={{ marginBottom: 24 }}>
