@@ -36,32 +36,79 @@ export class SchedulerService {
     this.logger.log(`Expired ${result.expired} offers`);
   }
 
-  // ── Auto-Cancel Overdue Auctions ───────────────────────────────────────────
+  // ── Auto-Shift Overdue Auctions ────────────────────────────────────────────
   // Runs every minute
-  // SCHEDULED auctions past startTime + 45min → CANCELLED
-  // Does NOT shift subsequent sets (seller no-showed)
+  // If a SCHEDULED auction is past its startTime → shift to next 15-min slot
+  // Also shift all subsequent SCHEDULED auctions by same delay
+  // If already shifted past startTime + 45min → cancel
 
   @Cron('* * * * *')
   async autoCancelOverdueAuctions() {
-    const cutoff = new Date(Date.now() - 45 * 60 * 1000);
+    const now = new Date();
+    const MAX_DELAY_MS = 45 * 60 * 1000;
+    const INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 
+    // Find SCHEDULED auctions where startTime has passed
     const overdue = await this.prisma.auction.findMany({
       where: {
         status: AuctionStatus.SCHEDULED,
-        startTime: { lt: cutoff },
+        startTime: { lt: now },
       },
-      select: { id: true },
+      orderBy: { startTime: 'asc' },
     });
 
-    if (overdue.length === 0) return;
+    for (const auction of overdue) {
+      const scheduledTime = new Date(auction.startTime);
+      const overdueMs = now.getTime() - scheduledTime.getTime();
 
-    this.logger.log(`Auto-cancelling ${overdue.length} overdue auctions...`);
+      // Past 45min window → cancel, don't shift subsequent
+      if (overdueMs >= MAX_DELAY_MS) {
+        this.logger.log(
+          `Cancelling overdue auction ${auction.id} — past 45min window`,
+        );
+        await this.prisma.auction.update({
+          where: { id: auction.id },
+          data: { status: AuctionStatus.CANCELLED },
+        });
+        continue;
+      }
 
-    await this.prisma.auction.updateMany({
-      where: { id: { in: overdue.map((a) => a.id) } },
-      data: { status: AuctionStatus.CANCELLED },
-    });
+      // Calculate next 15-min slot from now
+      const newStartTime = new Date(
+        Math.ceil(now.getTime() / INTERVAL_MS) * INTERVAL_MS,
+      );
 
-    this.logger.log(`Cancelled ${overdue.length} overdue auctions`);
+      // Only update if time actually changed
+      if (newStartTime.getTime() === scheduledTime.getTime()) continue;
+
+      const shiftMs = newStartTime.getTime() - scheduledTime.getTime();
+
+      this.logger.log(
+        `Shifting auction "${auction.title}" by ${Math.round(shiftMs / 60000)}min → ${newStartTime.toISOString()}`,
+      );
+
+      // Shift this auction
+      await this.prisma.auction.update({
+        where: { id: auction.id },
+        data: { startTime: newStartTime },
+      });
+
+      // Shift all subsequent SCHEDULED auctions by same amount
+      const subsequent = await this.prisma.auction.findMany({
+        where: {
+          sellerId: auction.sellerId,
+          status: AuctionStatus.SCHEDULED,
+          startTime: { gt: scheduledTime },
+          id: { not: auction.id },
+        },
+      });
+
+      for (const next of subsequent) {
+        await this.prisma.auction.update({
+          where: { id: next.id },
+          data: { startTime: new Date(next.startTime.getTime() + shiftMs) },
+        });
+      }
+    }
   }
 }

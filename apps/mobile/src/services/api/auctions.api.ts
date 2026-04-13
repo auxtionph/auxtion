@@ -1,5 +1,13 @@
 import { apiClient } from './client';
 
+export interface SellerAuction {
+  id: string;
+  title: string;
+  status: 'SCHEDULED' | 'LIVE' | 'ENDED' | 'CANCELLED';
+  startTime: string;
+  shopItems: { id: string; title: string; status: string }[];
+}
+
 export const auctionsApi = {
   getFeed: async () => {
     const response = await apiClient.get('/auctions/feed');
@@ -11,7 +19,6 @@ export const auctionsApi = {
     return response.data.data as AuctionDetail;
   },
 
-  // ✅ Added
   goLive: async (id: string) => {
     const response = await apiClient.patch(`/auctions/${id}/go-live`);
     return response.data.data as AuctionDetail;
@@ -25,6 +32,11 @@ export const auctionsApi = {
   create: async (data: { title: string; startTime: string }) => {
     const response = await apiClient.post('/auctions', data);
     return response.data.data as AuctionDetail;
+  },
+
+  getSellerAuctions: async (sellerId: string) => {
+    const response = await apiClient.get(`/auctions/seller/${sellerId}`);
+    return response.data.data as SellerAuction[];
   },
 };
 
