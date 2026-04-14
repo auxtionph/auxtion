@@ -515,6 +515,11 @@ export class BiddingGateway
     }
   }
 
+  // ── Public emit helper (used by OffersService) ─────────────────────────────
+  emitToAuction(auctionId: string, event: string, data: unknown) {
+    this.server.to(`auction:${auctionId}`).emit(event, data);
+  }
+
   private clearTimer(itemId: string) {
     const existing = this.activeTimers.get(itemId);
     if (existing) {

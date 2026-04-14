@@ -7,10 +7,14 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { OfferStatus, ShopItemStatus, ShopItemType } from '@prisma/client';
+import { BiddingGateway } from '../bidding/bidding.gateway';
 
 @Injectable()
 export class OffersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly biddingGateway: BiddingGateway,
+  ) {}
 
   // ── Make Offer ─────────────────────────────────────────────────────────────
 
@@ -21,37 +25,28 @@ export class OffersService {
 
     if (!item) throw new NotFoundException('Item not found');
 
-    // Only BUY_NOW items accept offers
     if (item.type !== ShopItemType.BUY_NOW) {
       throw new BadRequestException('Offers can only be made on Buy Now items');
     }
 
-    // Item must be available
     if (item.status !== ShopItemStatus.AVAILABLE) {
       throw new BadRequestException('This item is not available for offers');
     }
 
-    // Buyer cannot offer on their own item
     if (item.sellerId === buyerId) {
       throw new BadRequestException(
         'You cannot make an offer on your own item',
       );
     }
 
-    // Enforce minimum offer (70% of price)
     if (dto.amount < item.minimumOffer) {
       throw new BadRequestException(
         `Minimum offer is ${item.minimumOffer} centavos (70% of listed price)`,
       );
     }
 
-    // Check if buyer already has a pending offer on this item
     const existingOffer = await this.prisma.offer.findFirst({
-      where: {
-        itemId: dto.itemId,
-        buyerId,
-        status: OfferStatus.PENDING,
-      },
+      where: { itemId: dto.itemId, buyerId, status: OfferStatus.PENDING },
     });
 
     if (existingOffer) {
@@ -60,11 +55,10 @@ export class OffersService {
       );
     }
 
-    // Create offer — expires in 24 hours
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 24);
 
-    return this.prisma.offer.create({
+    const offer = await this.prisma.offer.create({
       data: {
         itemId: dto.itemId,
         buyerId,
@@ -74,14 +68,31 @@ export class OffersService {
         status: OfferStatus.PENDING,
       },
       include: {
-        item: {
-          select: { id: true, title: true, price: true, photos: true },
-        },
-        buyer: {
-          select: { id: true, displayName: true },
-        },
+        item: { select: { id: true, title: true, price: true, photos: true } },
+        buyer: { select: { id: true, displayName: true } },
       },
     });
+
+    const activeAuction = await this.prisma.auction.findFirst({
+      where: {
+        sellerId: item.sellerId,
+        status: 'LIVE',
+        shopItems: { some: { id: dto.itemId } },
+      },
+    });
+
+    if (activeAuction) {
+      this.biddingGateway.emitToAuction(activeAuction.id, 'offer-received', {
+        offerId: offer.id,
+        itemId: dto.itemId,
+        itemTitle: item.title,
+        buyerName: offer.buyer.displayName,
+        amount: dto.amount,
+        timestamp: Date.now(),
+      });
+    }
+
+    return offer;
   }
 
   // ── Get My Offers (Buyer) ──────────────────────────────────────────────────
@@ -90,12 +101,8 @@ export class OffersService {
     return this.prisma.offer.findMany({
       where: { buyerId },
       include: {
-        item: {
-          select: { id: true, title: true, price: true, photos: true },
-        },
-        seller: {
-          select: { id: true, displayName: true, avatarUrl: true },
-        },
+        item: { select: { id: true, title: true, price: true, photos: true } },
+        seller: { select: { id: true, displayName: true, avatarUrl: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -105,17 +112,10 @@ export class OffersService {
 
   async getReceivedOffers(sellerId: string, status?: OfferStatus) {
     return this.prisma.offer.findMany({
-      where: {
-        sellerId,
-        ...(status ? { status } : {}),
-      },
+      where: { sellerId, ...(status ? { status } : {}) },
       include: {
-        item: {
-          select: { id: true, title: true, price: true, photos: true },
-        },
-        buyer: {
-          select: { id: true, displayName: true, avatarUrl: true },
-        },
+        item: { select: { id: true, title: true, price: true, photos: true } },
+        buyer: { select: { id: true, displayName: true, avatarUrl: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -130,20 +130,16 @@ export class OffersService {
     });
 
     if (!offer) throw new NotFoundException('Offer not found');
-    if (offer.sellerId !== sellerId) {
+    if (offer.sellerId !== sellerId)
       throw new ForbiddenException('You do not own this offer');
-    }
-    if (offer.status !== OfferStatus.PENDING) {
+    if (offer.status !== OfferStatus.PENDING)
       throw new BadRequestException('Offer is no longer pending');
-    }
 
-    // Accept this offer
     const accepted = await this.prisma.offer.update({
       where: { id: offerId },
       data: { status: OfferStatus.ACCEPTED },
     });
 
-    // Decline all other pending offers on the same item
     await this.prisma.offer.updateMany({
       where: {
         itemId: offer.itemId,
@@ -153,11 +149,31 @@ export class OffersService {
       data: { status: OfferStatus.DECLINED },
     });
 
-    // Mark item as sold
     await this.prisma.shopItem.update({
       where: { id: offer.itemId },
       data: { status: ShopItemStatus.SOLD },
     });
+
+    const activeAuction = await this.prisma.auction.findFirst({
+      where: {
+        sellerId,
+        status: 'LIVE',
+        shopItems: { some: { id: offer.itemId } },
+      },
+    });
+
+    if (activeAuction) {
+      this.biddingGateway.emitToAuction(activeAuction.id, 'offer-responded', {
+        offerId,
+        status: 'ACCEPTED',
+        itemTitle: offer.item.title,
+        amount: offer.amount,
+      });
+      this.biddingGateway.emitToAuction(activeAuction.id, 'shop-updated', {
+        auctionId: activeAuction.id,
+        timestamp: Date.now(),
+      });
+    }
 
     return accepted;
   }
@@ -167,20 +183,38 @@ export class OffersService {
   async declineOffer(sellerId: string, offerId: string) {
     const offer = await this.prisma.offer.findUnique({
       where: { id: offerId },
+      include: { item: { select: { title: true } } },
     });
 
     if (!offer) throw new NotFoundException('Offer not found');
-    if (offer.sellerId !== sellerId) {
+    if (offer.sellerId !== sellerId)
       throw new ForbiddenException('You do not own this offer');
-    }
-    if (offer.status !== OfferStatus.PENDING) {
+    if (offer.status !== OfferStatus.PENDING)
       throw new BadRequestException('Offer is no longer pending');
-    }
 
-    return this.prisma.offer.update({
+    const declined = await this.prisma.offer.update({
       where: { id: offerId },
       data: { status: OfferStatus.DECLINED },
     });
+
+    const activeAuction = await this.prisma.auction.findFirst({
+      where: {
+        sellerId,
+        status: 'LIVE',
+        shopItems: { some: { id: offer.itemId } },
+      },
+    });
+
+    if (activeAuction) {
+      this.biddingGateway.emitToAuction(activeAuction.id, 'offer-responded', {
+        offerId,
+        status: 'DECLINED',
+        itemTitle: offer.item.title ?? '',
+        amount: offer.amount,
+      });
+    }
+
+    return declined;
   }
 
   // ── Cancel Offer (Buyer withdraws) ────────────────────────────────────────
@@ -191,12 +225,10 @@ export class OffersService {
     });
 
     if (!offer) throw new NotFoundException('Offer not found');
-    if (offer.buyerId !== buyerId) {
+    if (offer.buyerId !== buyerId)
       throw new ForbiddenException('You did not make this offer');
-    }
-    if (offer.status !== OfferStatus.PENDING) {
+    if (offer.status !== OfferStatus.PENDING)
       throw new BadRequestException('Offer is no longer pending');
-    }
 
     return this.prisma.offer.update({
       where: { id: offerId },
@@ -204,17 +236,13 @@ export class OffersService {
     });
   }
 
-  // ── Expire Offers (called by background job) ───────────────────────────────
+  // ── Expire Offers ──────────────────────────────────────────────────────────
 
   async expireOffers() {
     const result = await this.prisma.offer.updateMany({
-      where: {
-        status: OfferStatus.PENDING,
-        expiresAt: { lte: new Date() },
-      },
+      where: { status: OfferStatus.PENDING, expiresAt: { lte: new Date() } },
       data: { status: OfferStatus.EXPIRED },
     });
-
     return { expired: result.count };
   }
 }
