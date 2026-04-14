@@ -335,8 +335,12 @@ export class AuctionsService {
       where: { id: itemId },
       data: {
         auctionId,
-        status: ShopItemStatus.QUEUED,
-        queueOrder: queueCount + 1,
+        // BUY_NOW items stay AVAILABLE — only AUCTION items go to QUEUED
+        status:
+          item.type === 'BUY_NOW'
+            ? ShopItemStatus.AVAILABLE
+            : ShopItemStatus.QUEUED,
+        queueOrder: item.type === 'BUY_NOW' ? null : queueCount + 1,
       },
     });
   }

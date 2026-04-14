@@ -148,7 +148,7 @@ export default function LiveAuctionRoom() {
   const [viewerCount, setViewerCount] = useState(0);
   const [showShop, setShowShop] = useState(false);
   const [auctionEnded, setAuctionEnded] = useState(false);
-  const [shopTab, setShopTab] = useState<'bidding' | 'sold'>('bidding');
+  const [shopTab, setShopTab] = useState<'bidding' | 'buynow' | 'sold'>('bidding');
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [timerRemaining, setTimerRemaining] = useState<number | null>(null);
   const [counterbidSeconds, setCounterbidSeconds] = useState(5);
@@ -305,7 +305,7 @@ export default function LiveAuctionRoom() {
     }, []),
   });
 
-  const handleAddItemLive = async (mode: 'queue' | 'now') => {
+  const handleAddItemLive = async (mode: 'queue' | 'now' | 'buynow') => {
     const price = parseInt(newItemPrice.replace(/[^0-9]/g, ''), 10);
     if (!newItemTitle.trim() || !price) return;
     setAddingItem(true);
@@ -315,14 +315,15 @@ export default function LiveAuctionRoom() {
 
       const newItem = await shopItemsApi.create({
         title: newItemTitle.trim(),
-        description: `${newItemTitle.trim()} - auction item`,
+        description: `${newItemTitle.trim()} - item`,
         photos: [],
         price: price * 100,
-        type: 'AUCTION',
+        type: mode === 'buynow' ? 'BUY_NOW' : 'AUCTION',
       });
+
+      // Always assign to auction so it appears in shop drawer
       await apiClient.post(`/auctions/${id}/items/${newItem.id}`);
 
-      // Refresh auction data
       const updated = await auctionsApi.getById(id);
       setAuction(updated);
 
@@ -330,10 +331,13 @@ export default function LiveAuctionRoom() {
       setNewItemPrice('');
       setShowAddItem(false);
 
-      // If run now — open start item modal immediately
       if (mode === 'now') {
         setSelectedItem({ id: newItem.id, title: newItem.title, price: newItem.price });
         setShowStartItem(true);
+      }
+
+      if (mode === 'buynow') {
+        Alert.alert('Listed! 🏷️', `${newItem.title} is now available for buyers to purchase.`);
       }
     } catch {
       Alert.alert('Error', 'Failed to add item. Try again.');
@@ -402,8 +406,10 @@ export default function LiveAuctionRoom() {
     setChatInput('');
   };
 
-  const biddingItems = auction?.shopItems.filter(i => i.status === 'QUEUED' || i.status === 'LIVE') ?? [];
+  const biddingItems = auction?.shopItems.filter(i => (i.status === 'QUEUED' || i.status === 'LIVE') && i.type !== 'BUY_NOW') ?? [];
+  const buyNowItems = auction?.shopItems.filter(i => i.type === 'BUY_NOW' && i.status === 'AVAILABLE') ?? [];
   const soldItems = auction?.shopItems.filter(i => i.status === 'SOLD') ?? [];
+  
 
   const sellerTrackId = hms.localPeer?.videoTrackId ?? null;
   const viewerTrackId = hms.broadcasterPeer?.id
@@ -877,7 +883,7 @@ export default function LiveAuctionRoom() {
             Shop
           </Text>
           <View style={{ flexDirection: 'row', paddingHorizontal: 24, marginBottom: 16, gap: 8 }}>
-            {(['bidding', 'sold'] as const).map(tab => (
+            {(['bidding', 'buynow', 'sold'] as const).map(tab => (
               <TouchableOpacity
                 key={tab}
                 style={{
@@ -890,7 +896,7 @@ export default function LiveAuctionRoom() {
                   fontSize: 13, fontWeight: '600',
                   color: shopTab === tab ? '#fff' : '#9CA3AF',
                 }}>
-                  {tab === 'bidding' ? '🔨 For Bidding' : '✅ Sold'}
+                  {tab === 'bidding' ? '🔨 Bidding' : tab === 'buynow' ? '🏷️ Buy Now' : '✅ Sold'}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -1011,6 +1017,73 @@ export default function LiveAuctionRoom() {
                   </View>
                 );
               })
+            )}
+
+            {/* ── Buy Now Tab ── */}
+            {shopTab === 'buynow' && (
+              buyNowItems.length === 0 ? (
+                <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                  <Text style={{ color: '#4B5563', fontSize: 13 }}>No buy now items</Text>
+                </View>
+              ) : buyNowItems.map(item => (
+                <View
+                  key={item.id}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', gap: 12,
+                    backgroundColor: '#1F2937', borderRadius: 12,
+                    padding: 12, marginBottom: 8,
+                  }}
+                >
+                  <View style={{
+                    width: 56, height: 56, borderRadius: 10,
+                    backgroundColor: '#374151', overflow: 'hidden',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {item.photos[0] ? (
+                      <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    ) : (
+                      <Text style={{ fontSize: 24 }}>📦</Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
+                      {item.title}
+                    </Text>
+                    <Text style={{ color: '#10B981', fontSize: 13, fontWeight: '700' }}>
+                      🏷️ {formatPHP(item.price)}
+                    </Text>
+                  </View>
+                  {/* Seller can remove from buy now */}
+                  {isSeller ? (
+                    <View style={{
+                      backgroundColor: '#064E3B', borderRadius: 8,
+                      paddingHorizontal: 10, paddingVertical: 4,
+                    }}>
+                      <Text style={{ color: '#10B981', fontSize: 11, fontWeight: '700' }}>FIXED</Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#1A56DB', borderRadius: 8,
+                        paddingHorizontal: 12, paddingVertical: 6,
+                      }}
+                      onPress={() => {
+                        setShowShop(false);
+                        Alert.alert(
+                          'Buy Now',
+                          `Purchase ${item.title} for ${formatPHP(item.price)}?`,
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            { text: 'Confirm', onPress: () => Alert.alert('Coming Soon', 'Payment flow coming soon!') },
+                          ]
+                        );
+                      }}
+                    >
+                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Buy</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))
             )}
           </ScrollView>
         </View>
@@ -1217,6 +1290,7 @@ export default function LiveAuctionRoom() {
               style={{
                 backgroundColor: newItemTitle.trim() && newItemPrice ? '#DC2626' : '#374151',
                 borderRadius: 14, paddingVertical: 16, alignItems: 'center',
+                marginBottom: 10,
               }}
               onPress={() => void handleAddItemLive('now')}
               disabled={!newItemTitle.trim() || !newItemPrice || addingItem}
@@ -1227,6 +1301,24 @@ export default function LiveAuctionRoom() {
                 <>
                   <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>🔨 Run Now</Text>
                   <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>Add and start bidding immediately</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                backgroundColor: newItemTitle.trim() && newItemPrice ? '#065F46' : '#374151',
+                borderRadius: 14, paddingVertical: 16, alignItems: 'center',
+              }}
+              onPress={() => void handleAddItemLive('buynow')}
+              disabled={!newItemTitle.trim() || !newItemPrice || addingItem}
+            >
+              {addingItem ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>🏷️ List as Buy Now</Text>
+                  <Text style={{ color: '#6EE7B7', fontSize: 12, marginTop: 2 }}>Fixed price — buyers purchase directly</Text>
                 </>
               )}
             </TouchableOpacity>
