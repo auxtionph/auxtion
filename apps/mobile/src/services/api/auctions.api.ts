@@ -74,6 +74,7 @@ export interface AuctionFeedItem {
     type: string;
     status: string;
     queueOrder: number;
+    minimumOffer: number;
   }[];
 }
 

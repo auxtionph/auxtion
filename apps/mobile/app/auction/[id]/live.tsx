@@ -165,6 +165,11 @@ export default function LiveAuctionRoom() {
   const [showCustomBid, setShowCustomBid] = useState(false);
   const [customBidInput, setCustomBidInput] = useState('');
   const [winnerBanner, setWinnerBanner] = useState<string | null>(null);
+  const [showLiveOfferModal, setShowLiveOfferModal] = useState(false);
+  const [selectedBuyNowItem, setSelectedBuyNowItem] = useState<{ id: string; title: string; price: number; minimumOffer: number } | null>(null);
+  const [liveOfferPercent, setLiveOfferPercent] = useState<number | null>(-20);
+  const [liveCustomOffer, setLiveCustomOffer] = useState('');
+  const [submittingOffer, setSubmittingOffer] = useState(false);
 
   const chatRef = useRef<FlatList>(null);
   const currentItemRef = useRef<CurrentItem | null>(null); 
@@ -1062,25 +1067,43 @@ export default function LiveAuctionRoom() {
                       <Text style={{ color: '#10B981', fontSize: 11, fontWeight: '700' }}>FIXED</Text>
                     </View>
                   ) : (
-                    <TouchableOpacity
-                      style={{
-                        backgroundColor: '#1A56DB', borderRadius: 8,
-                        paddingHorizontal: 12, paddingVertical: 6,
-                      }}
-                      onPress={() => {
-                        setShowShop(false);
-                        Alert.alert(
-                          'Buy Now',
-                          `Purchase ${item.title} for ${formatPHP(item.price)}?`,
-                          [
-                            { text: 'Cancel', style: 'cancel' },
-                            { text: 'Confirm', onPress: () => Alert.alert('Coming Soon', 'Payment flow coming soon!') },
-                          ]
-                        );
-                      }}
-                    >
-                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Buy</Text>
-                    </TouchableOpacity>
+                    <View style={{ flexDirection: 'column', gap: 6 }}>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#1A56DB', borderRadius: 8,
+                          paddingHorizontal: 12, paddingVertical: 6, alignItems: 'center',
+                        }}
+                        onPress={() => {
+                          setShowShop(false);
+                          Alert.alert(
+                            'Buy Now',
+                            `Purchase ${item.title} for ${formatPHP(item.price)}?`,
+                            [
+                              { text: 'Cancel', style: 'cancel' },
+                              { text: 'Confirm', onPress: () => Alert.alert('Coming Soon', 'Payment flow coming soon!') },
+                            ]
+                          );
+                        }}
+                      >
+                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>Buy</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#1F2937', borderRadius: 8,
+                          paddingHorizontal: 12, paddingVertical: 6, alignItems: 'center',
+                          borderWidth: 1, borderColor: '#374151',
+                        }}
+                        onPress={() => {
+                          setSelectedBuyNowItem({ id: item.id, title: item.title, price: item.price, minimumOffer: item.minimumOffer ?? 0 });
+                          setLiveOfferPercent(-20);
+                          setLiveCustomOffer('');
+                          setShowShop(false);
+                          setShowLiveOfferModal(true);
+                        }}
+                      >
+                        <Text style={{ color: '#9CA3AF', fontSize: 11, fontWeight: '600' }}>Offer</Text>
+                      </TouchableOpacity>
+                    </View>
                   )}
                 </View>
               ))
@@ -1399,6 +1422,139 @@ export default function LiveAuctionRoom() {
             >
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
                 Place Bid — {customBidInput ? formatPHP(parseInt(customBidInput) * 100) : '₱0'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ── Live Offer Modal ── */}
+      <Modal visible={showLiveOfferModal} transparent animationType="slide" onRequestClose={() => setShowLiveOfferModal(false)}>
+        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} activeOpacity={1} onPress={() => setShowLiveOfferModal(false)} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={{ backgroundColor: '#111827', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 48 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>Make Offer</Text>
+              <TouchableOpacity onPress={() => setShowLiveOfferModal(false)}>
+                <Text style={{ color: '#6B7280', fontSize: 16 }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {selectedBuyNowItem && (
+              <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 20 }}>
+                {selectedBuyNowItem.title} · Listed at {formatPHP(selectedBuyNowItem.price)}
+                {selectedBuyNowItem.minimumOffer > 0 ? ` · Min: ${formatPHP(selectedBuyNowItem.minimumOffer)}` : ''}
+              </Text>
+            )}
+
+            {/* Percent chips */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+              {[-20, -15, -10, -5].map(pct => {
+                const amt = selectedBuyNowItem ? Math.round(selectedBuyNowItem.price * (1 + pct / 100)) : 0;
+                const isSelected = liveOfferPercent === pct && liveCustomOffer === '';
+                return (
+                  <TouchableOpacity
+                    key={pct}
+                    style={{
+                      flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+                      backgroundColor: isSelected ? '#fff' : '#1F2937',
+                    }}
+                    onPress={() => { setLiveOfferPercent(pct); setLiveCustomOffer(''); }}
+                  >
+                    <Text style={{ color: isSelected ? '#000' : '#fff', fontWeight: '700', fontSize: 13 }}>{pct}%</Text>
+                    <Text style={{ color: isSelected ? '#374151' : '#6B7280', fontSize: 10, marginTop: 2 }}>{formatPHP(amt)}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+              <TouchableOpacity
+                style={{
+                  flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+                  backgroundColor: liveOfferPercent === null ? '#fff' : '#1F2937',
+                }}
+                onPress={() => { setLiveOfferPercent(null); setLiveCustomOffer(''); }}
+              >
+                <Text style={{ color: liveOfferPercent === null ? '#000' : '#fff', fontWeight: '700', fontSize: 13 }}>Custom</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Custom input */}
+            {liveOfferPercent === null && (
+              <View style={{
+                backgroundColor: '#1F2937', borderRadius: 12,
+                borderWidth: 1, borderColor: liveCustomOffer ? '#1A56DB' : '#374151',
+                flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, marginBottom: 16,
+              }}>
+                <Text style={{ color: '#6B7280', fontSize: 16, marginRight: 8 }}>₱</Text>
+                <TextInput
+                  style={{ flex: 1, color: '#fff', fontSize: 20, fontWeight: '700', paddingVertical: 12 }}
+                  placeholder="0"
+                  placeholderTextColor="#4B5563"
+                  value={liveCustomOffer}
+                  onChangeText={setLiveCustomOffer}
+                  keyboardType="numeric"
+                  autoFocus
+                />
+              </View>
+            )}
+
+            {/* Summary */}
+            {selectedBuyNowItem && (
+              <View style={{ backgroundColor: '#1F2937', borderRadius: 12, padding: 16, marginBottom: 20 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Your offer</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Text style={{ color: '#6B7280', fontSize: 13, textDecorationLine: 'line-through' }}>
+                      {formatPHP(selectedBuyNowItem.price)}
+                    </Text>
+                    <Text style={{ color: '#10B981', fontSize: 16, fontWeight: '800' }}>
+                      {formatPHP(
+                        liveCustomOffer
+                          ? parseInt(liveCustomOffer) * 100
+                          : liveOfferPercent !== null && selectedBuyNowItem
+                            ? Math.round(selectedBuyNowItem.price * (1 + liveOfferPercent / 100))
+                            : 0
+                      )}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 4 }}>
+                  Seller has 24 hours to respond. You won't be charged unless accepted.
+                </Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={{
+                backgroundColor: submittingOffer ? '#374151' : '#1A56DB',
+                borderRadius: 14, paddingVertical: 16, alignItems: 'center',
+              }}
+              disabled={submittingOffer}
+              onPress={async () => {
+                if (!selectedBuyNowItem) return;
+                const amount = liveCustomOffer
+                  ? parseInt(liveCustomOffer) * 100
+                  : liveOfferPercent !== null
+                    ? Math.round(selectedBuyNowItem.price * (1 + liveOfferPercent / 100))
+                    : 0;
+                if (!amount) return;
+                if (selectedBuyNowItem.minimumOffer > 0 && amount < selectedBuyNowItem.minimumOffer) {
+                  Alert.alert('Offer too low', `Minimum offer is ${formatPHP(selectedBuyNowItem.minimumOffer)}`);
+                  return;
+                }
+                setSubmittingOffer(true);
+                try {
+                  const { offersApi } = await import('../../../src/services/api/offers.api');
+                  await offersApi.create(selectedBuyNowItem.id, amount);
+                  setShowLiveOfferModal(false);
+                  Alert.alert('Offer Sent! 🎉', 'The seller will respond within 24 hours.');
+                } catch {
+                  Alert.alert('Error', 'Failed to send offer. Try again.');
+                } finally {
+                  setSubmittingOffer(false);
+                }
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+                {submittingOffer ? 'Sending...' : 'Send Offer'}
               </Text>
             </TouchableOpacity>
           </View>
