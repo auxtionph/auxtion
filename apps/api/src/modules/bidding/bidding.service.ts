@@ -32,103 +32,75 @@ export class BiddingService {
     itemId: string,
     amount: number,
   ): Promise<BidResult> {
-    // Validate auction is live
-    const auction = await this.prisma.auction.findUnique({
-      where: { id: auctionId },
-    });
-
-    if (!auction) throw new NotFoundException('Auction not found');
-    if (auction.status !== AuctionStatus.LIVE) {
-      throw new BadRequestException('Auction is not live');
-    }
-
-    // Validate item is live in this auction
-    const item = await this.prisma.shopItem.findUnique({
-      where: { id: itemId },
-    });
-
-    if (!item) throw new NotFoundException('Item not found');
-    if (item.auctionId !== auctionId) {
-      throw new BadRequestException('Item does not belong to this auction');
-    }
-    if (item.status !== ShopItemStatus.LIVE) {
-      throw new BadRequestException('Item is not currently being auctioned');
-    }
-
-    // Validate bid amount is higher than current price
-    const existingBidCount = await this.prisma.bid.count({ where: { itemId } });
-    if (existingBidCount === 0) {
-      // First bid — must be at least starting price
-      if (amount < item.price) {
-        throw new BadRequestException(`Bid must be at least ${item.price}`);
-      }
-    } else {
-      // Subsequent bids — must be strictly higher
-      if (amount <= item.price) {
-        throw new BadRequestException(
-          `Bid must be higher than current price of ${item.price}`,
-        );
-      }
-    }
-
-    // Validate bidder is not the seller
-    if (auction.sellerId === bidderId) {
-      throw new BadRequestException('Sellers cannot bid on their own auctions');
-    }
-
-    // Get bidder info
-    const bidder = await this.prisma.user.findUnique({
-      where: { id: bidderId },
-      select: { id: true, displayName: true },
-    });
-
-    if (!bidder) throw new NotFoundException('Bidder not found');
-
-    // Create bid and update item price atomically
-    await this.prisma.$transaction([
-      // Step 1: Mark ALL existing winning bids as not winning
-      this.prisma.bid.updateMany({
-        where: { itemId, isWinning: true },
-        data: { isWinning: false },
-      }),
-      // Step 2: Create new winning bid
-      this.prisma.bid.create({
-        data: {
-          auctionId,
-          itemId,
-          bidderId,
-          amount,
-          isWinning: true,
-        },
-      }),
-      // Step 3: Update item current price
-      this.prisma.shopItem.update({
-        where: { id: itemId },
-        data: { price: amount },
+    // ── Single query to get everything needed ──
+    const [auction, item, bidder] = await Promise.all([
+      this.prisma.auction.findUnique({ where: { id: auctionId } }),
+      this.prisma.shopItem.findUnique({ where: { id: itemId } }),
+      this.prisma.user.findUnique({
+        where: { id: bidderId },
+        select: { id: true, displayName: true },
       }),
     ]);
 
-    // Get total bid count
-    const totalBids = await this.prisma.bid.count({
-      where: { itemId },
-    });
+    if (!auction) throw new NotFoundException('Auction not found');
+    if (auction.status !== AuctionStatus.LIVE)
+      throw new BadRequestException('Auction is not live');
+    if (!item) throw new NotFoundException('Item not found');
+    if (item.auctionId !== auctionId)
+      throw new BadRequestException('Item does not belong to this auction');
+    if (item.status !== ShopItemStatus.LIVE)
+      throw new BadRequestException('Item is not currently being auctioned');
+    if (auction.sellerId === bidderId)
+      throw new BadRequestException('Sellers cannot bid on their own auctions');
+    if (!bidder) throw new NotFoundException('Bidder not found');
 
-    // Cache current bid state in Redis
+    // ── Use Redis as source of truth for bid count (avoids DB query) ──
+    const cached = await this.redis.get(`bid:${itemId}`);
+    const cachedState = cached
+      ? (JSON.parse(cached) as { totalBids: number; currentPrice: number })
+      : null;
+
+    const existingBidCount = cachedState?.totalBids ?? 0;
+    const currentPrice = cachedState?.currentPrice ?? item.price;
+
+    if (existingBidCount === 0) {
+      if (amount < currentPrice)
+        throw new BadRequestException(`Bid must be at least ${currentPrice}`);
+    } else {
+      if (amount <= currentPrice)
+        throw new BadRequestException(
+          `Bid must be higher than ${currentPrice}`,
+        );
+    }
+
+    const newTotalBids = existingBidCount + 1;
+
+    // ── Update Redis immediately (before DB) for instant response ──
     const bidState = {
       auctionId,
       itemId,
       currentPrice: amount,
       highestBidderId: bidderId,
       highestBidderName: bidder.displayName,
-      totalBids,
+      totalBids: newTotalBids,
       updatedAt: Date.now(),
     };
+    await this.redis.set(`bid:${itemId}`, JSON.stringify(bidState), 3600);
 
-    await this.redis.set(
-      `bid:${itemId}`,
-      JSON.stringify(bidState),
-      3600, // 1 hour TTL
-    );
+    // ── DB write in background (fire and forget for speed) ──
+    void this.prisma.$transaction([
+      this.prisma.bid.updateMany({
+        where: { itemId, isWinning: true },
+        data: { isWinning: false },
+      }),
+      this.prisma.bid.create({
+        data: { auctionId, itemId, bidderId, amount, isWinning: true },
+      }),
+      this.prisma.shopItem.update({
+        where: { id: itemId },
+        data: { price: amount },
+      }),
+    ]);
 
     return {
       auctionId,
@@ -136,7 +108,7 @@ export class BiddingService {
       bidderId,
       bidderName: bidder.displayName,
       amount,
-      totalBids,
+      totalBids: newTotalBids,
       timestamp: Date.now(),
     };
   }

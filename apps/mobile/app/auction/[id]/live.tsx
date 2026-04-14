@@ -98,14 +98,10 @@ function SwipeBidButton({ label, sublabel, onBid }: {
     },
     onPanResponderRelease: (_, g) => {
       if (g.dx >= THRESHOLD) {
-        Animated.timing(translateX, {
-          toValue: MAX_DRAG,
-          duration: 100,
-          useNativeDriver: true,
-        }).start(() => {
-          onBid();
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
-        });
+        // ← Fire bid IMMEDIATELY, don't wait for animation
+        onBid();
+        // Then animate back
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
       } else {
         Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
       }
@@ -166,6 +162,9 @@ export default function LiveAuctionRoom() {
   const [newItemTitle, setNewItemTitle] = useState('');
   const [newItemPrice, setNewItemPrice] = useState('');
   const [addingItem, setAddingItem] = useState(false);
+  const [showCustomBid, setShowCustomBid] = useState(false);
+  const [customBidInput, setCustomBidInput] = useState('');
+  const [winnerBanner, setWinnerBanner] = useState<string | null>(null);
 
   const chatRef = useRef<FlatList>(null);
   const currentItemRef = useRef<CurrentItem | null>(null); 
@@ -207,6 +206,7 @@ export default function LiveAuctionRoom() {
         totalBids: data.totalBids,
         highestBidderName: data.bidderName,
       } : prev);
+      setWinnerBanner(`${data.bidderName} is winning!`);
       setChatMessages(prev => [...prev, {
         id: `bid-${data.timestamp}`,
         userId: data.bidderId,
@@ -242,6 +242,7 @@ export default function LiveAuctionRoom() {
         Alert.alert('🎉 Item Sold!', `${data.winner.displayName} won for ${formatPHP(data.winner.amount)}`);
       }
       setCurrentItem(null);
+      setWinnerBanner(null);
     }, []),
     onViewerCount: useCallback((data: { count: number }) => {
       setViewerCount(data.count);
@@ -575,14 +576,61 @@ export default function LiveAuctionRoom() {
         </View>
       )}
 
+      {/* ── Right Side Viewer Controls ── */}
+      {!isSeller && (
+        <View style={{
+          position: 'absolute',
+          right: 12,
+          bottom: (currentItem ? 230 : 190) + keyboardHeight,
+          alignItems: 'center',
+          gap: 20,
+        }}>
+          {/* Share */}
+          <TouchableOpacity style={{ alignItems: 'center', gap: 4 }} activeOpacity={0.75}>
+            <View style={{
+              width: 44, height: 44, borderRadius: 22,
+              backgroundColor: 'rgba(0,0,0,0.60)',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ fontSize: 20 }}>↑</Text>
+            </View>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>Share</Text>
+          </TouchableOpacity>
+
+          {/* Shop */}
+          <TouchableOpacity
+            style={{ alignItems: 'center', gap: 4 }}
+            onPress={() => setShowShop(true)}
+            activeOpacity={0.75}
+          >
+            <View style={{
+              width: 44, height: 44, borderRadius: 22,
+              backgroundColor: 'rgba(0,0,0,0.60)',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ fontSize: 20 }}>🛍️</Text>
+              {biddingItems.length > 0 && (
+                <View style={{
+                  position: 'absolute', top: -2, right: -2,
+                  backgroundColor: '#DC2626', borderRadius: 999,
+                  width: 16, height: 16, alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>{biddingItems.length}</Text>
+                </View>
+              )}
+            </View>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>Shop</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* ── Chat Messages ── */}
       <View style={{
         position: 'absolute',
         left: 0,
-        // Indent right to avoid overlapping seller controls
-        right: isSeller ? 68 : 0,
-        bottom: (currentItem ? 200 : 160) + keyboardHeight,
-        height: 220,
+        right: isSeller ? 68 : 68, // indent right for both seller and viewer controls
+        bottom: (currentItem ? 260 : 160) + keyboardHeight,
+        height: 200,
       }}>
         <FlatList
           ref={chatRef}
@@ -610,6 +658,7 @@ export default function LiveAuctionRoom() {
         />
       </View>
 
+
       {/* ── Current Item Bar ── */}
       {currentItem && (
        <View style={{ position: 'absolute', left: 16, right: 16, bottom: 152 + keyboardHeight }}>
@@ -630,10 +679,16 @@ export default function LiveAuctionRoom() {
                 <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
                   {currentItem.title}
                 </Text>
-                <Text style={{ color: '#9CA3AF', fontSize: 11 }}>
-                  {currentItem.totalBids} bid{currentItem.totalBids !== 1 ? 's' : ''}
-                  {currentItem.highestBidderName ? ` · ${currentItem.highestBidderName} leading` : ''}
-                </Text>
+                {winnerBanner ? (
+                  <Text style={{ color: '#10B981', fontSize: 11, fontWeight: '700' }}>
+                    🏆 {winnerBanner}
+                  </Text>
+                ) : (
+                  <Text style={{ color: '#9CA3AF', fontSize: 11 }}>
+                    {currentItem.totalBids} bid{currentItem.totalBids !== 1 ? 's' : ''}
+                    {currentItem.highestBidderName ? ` · ${currentItem.highestBidderName} leading` : ''}
+                  </Text>
+                )}
               </View>
             </View>
             <View style={{ alignItems: 'flex-end', gap: 4 }}>
@@ -685,42 +740,63 @@ export default function LiveAuctionRoom() {
             <Text style={{ color: '#fff', fontSize: 16 }}>→</Text>
           </TouchableOpacity>
 
-          {/* Shop button — viewers only; seller has it in right panel */}
-          {!isSeller && (
-            <TouchableOpacity
-              style={{
-                width: 40, height: 40, borderRadius: 20,
-                backgroundColor: 'rgba(0,0,0,0.60)', borderWidth: 1, borderColor: '#374151',
-                alignItems: 'center', justifyContent: 'center',
-              }}
-              onPress={() => setShowShop(true)}
-            >
-              <Text style={{ fontSize: 18 }}>🛍️</Text>
-            </TouchableOpacity>
-          )}
         </View>
 
         {/* Bid button — viewers only */}
         {!isSeller && (
           currentItem ? (
-          <SwipeBidButton
-            label={currentItem.totalBids === 0
-              ? `Bid ${formatPHP(currentItem.currentPrice)}`
-              : `Bid ${formatPHP(currentItem.currentPrice + getBidIncrement(currentItem.currentPrice))}`
-            }
-            sublabel={currentItem.totalBids === 0
-              ? `Start the bidding at ${formatPHP(currentItem.currentPrice)}`
-              : `Swipe to bid · Current: ${formatPHP(currentItem.currentPrice)}`
-            }
-            onBid={() => {
-              const latest = currentItemRef.current;
-              if (!latest) return;
-              const bidAmount = latest.totalBids === 0
-                ? latest.currentPrice
-                : latest.currentPrice + getBidIncrement(latest.currentPrice);
-              placeBid(latest.itemId, bidAmount, user?.id ?? '');
-            }}
-          />
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {/* Custom bid button */}
+              <TouchableOpacity
+                style={{
+                  backgroundColor: 'rgba(0,0,0,0.60)',
+                  borderWidth: 1, borderColor: '#374151',
+                  borderRadius: 14, paddingHorizontal: 16,
+                  alignItems: 'center', justifyContent: 'center',
+                }}
+                onPress={() => {
+                  setCustomBidInput('');
+                  setShowCustomBid(true);
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>Custom</Text>
+              </TouchableOpacity>
+
+              {/* Swipe bid button */}
+              <View style={{ flex: 1 }}>
+                <SwipeBidButton
+                  label={currentItem.totalBids === 0
+                    ? `Bid ${formatPHP(currentItem.currentPrice)}`
+                    : `Bid ${formatPHP(currentItem.currentPrice + getBidIncrement(currentItem.currentPrice))}`
+                  }
+                  sublabel={currentItem.totalBids === 0
+                    ? `Start at ${formatPHP(currentItem.currentPrice)}`
+                    : `Current: ${formatPHP(currentItem.currentPrice)}`
+                  }
+                  onBid={() => {
+                    const latest = currentItemRef.current;
+                    if (!latest) return;
+                    const bidAmount = latest.totalBids === 0
+                      ? latest.currentPrice
+                      : latest.currentPrice + getBidIncrement(latest.currentPrice);
+
+                    // Optimistic update — instant UI before server confirms
+                    setCurrentItem(prev => prev ? {
+                      ...prev,
+                      currentPrice: bidAmount,
+                      totalBids: prev.totalBids + 1,
+                      highestBidderName: user?.displayName ?? 'You',
+                    } : prev);
+                    setWinnerBanner(`${user?.displayName ?? 'You'} is winning!`);
+                    if (timerRemaining !== null && timerRemaining <= counterbidSeconds) {
+                      setTimerRemaining(counterbidSeconds);
+                    }
+
+                    placeBid(latest.itemId, bidAmount, user?.id ?? '');
+                  }}
+                />
+              </View>
+            </View>
           ) : (
             <View style={{
               backgroundColor: 'rgba(0,0,0,0.60)', borderWidth: 1, borderColor: '#374151',
@@ -1050,6 +1126,85 @@ export default function LiveAuctionRoom() {
                   <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>Add and start bidding immediately</Text>
                 </>
               )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ── Custom Bid Modal ── */}
+      <Modal visible={showCustomBid} transparent animationType="slide" onRequestClose={() => setShowCustomBid(false)}>
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowCustomBid(false)} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={{
+            backgroundColor: '#111827',
+            borderTopLeftRadius: 24, borderTopRightRadius: 24,
+            padding: 24, paddingBottom: 48,
+          }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>Custom Bid</Text>
+              <TouchableOpacity onPress={() => setShowCustomBid(false)}>
+                <Text style={{ color: '#6B7280', fontSize: 16 }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {currentItem && (
+              <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 20 }}>
+                Current: {formatPHP(currentItem.currentPrice)} · Min bid: {formatPHP(currentItem.totalBids === 0 ? currentItem.currentPrice : currentItem.currentPrice + getBidIncrement(currentItem.currentPrice))}
+              </Text>
+            )}
+            <View style={{
+              backgroundColor: '#1F2937', borderRadius: 12,
+              borderWidth: 1, borderColor: customBidInput ? '#1A56DB' : '#374151',
+              flexDirection: 'row', alignItems: 'center',
+              paddingHorizontal: 14, marginBottom: 20,
+            }}>
+              <Text style={{ color: '#6B7280', fontSize: 18, marginRight: 8 }}>₱</Text>
+              <TextInput
+                style={{ flex: 1, color: '#fff', fontSize: 22, fontWeight: '700', paddingVertical: 14 }}
+                placeholder="0"
+                placeholderTextColor="#4B5563"
+                value={customBidInput}
+                onChangeText={t => setCustomBidInput(t.replace(/[^0-9]/g, ''))}
+                keyboardType="numeric"
+                autoFocus
+              />
+            </View>
+            <TouchableOpacity
+              style={{
+                backgroundColor: customBidInput ? '#1A56DB' : '#374151',
+                borderRadius: 14, paddingVertical: 16, alignItems: 'center',
+              }}
+              onPress={() => {
+                const latest = currentItemRef.current;
+                if (!latest || !customBidInput) return;
+                const amount = parseInt(customBidInput) * 100;
+                const minBid = latest.totalBids === 0
+                  ? latest.currentPrice
+                  : latest.currentPrice + getBidIncrement(latest.currentPrice);
+                if (amount < minBid) {
+                  Alert.alert('Bid too low', `Minimum bid is ${formatPHP(minBid)}`);
+                  return;
+                }
+
+                // Optimistic update
+                setCurrentItem(prev => prev ? {
+                  ...prev,
+                  currentPrice: amount,
+                  totalBids: prev.totalBids + 1,
+                  highestBidderName: user?.displayName ?? 'You',
+                } : prev);
+                setWinnerBanner(`${user?.displayName ?? 'You'} is winning!`);
+                if (timerRemaining !== null && timerRemaining <= counterbidSeconds) {
+                  setTimerRemaining(counterbidSeconds);
+                }
+
+                placeBid(latest.itemId, amount, user?.id ?? '');
+                setShowCustomBid(false);
+              }}
+              disabled={!customBidInput}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+                Place Bid — {customBidInput ? formatPHP(parseInt(customBidInput) * 100) : '₱0'}
+              </Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
