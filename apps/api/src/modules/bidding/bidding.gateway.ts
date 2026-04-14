@@ -232,9 +232,12 @@ export class BiddingGateway
       // Record bid time for snipe protection
       this.lastBidTime.set(payload.itemId, Date.now());
 
-      // ✅ Counterbid reset — if bid placed within counterbid window, reset timer
+      // ✅ Counterbid reset — reset if within counterbid window OR if timer just expired
       const state = this.timerState.get(payload.itemId);
-      if (state && state.remaining <= state.counterbidSeconds) {
+      if (
+        state &&
+        (state.remaining <= state.counterbidSeconds || state.remaining <= 1)
+      ) {
         this.logger.log(
           `Counterbid! Resetting timer to ${state.counterbidSeconds}s`,
         );
@@ -413,7 +416,10 @@ export class BiddingGateway
       });
 
       if (state.remaining <= 0) {
-        this.clearTimer(itemId);
+        // ← Don't clear timerState yet — handleTimerExpired needs it
+        const existing = this.activeTimers.get(itemId);
+        if (existing) clearTimeout(existing);
+        this.activeTimers.delete(itemId);
         void this.handleTimerExpired(auctionId, itemId);
       } else {
         const timeout = setTimeout(tick, 1000);
@@ -426,25 +432,31 @@ export class BiddingGateway
   }
 
   private async handleTimerExpired(auctionId: string, itemId: string) {
-    // ── Snipe protection: if bid placed in last 2s, extend timer instead ──
+    const state = this.timerState.get(itemId);
     const lastBid = this.lastBidTime.get(itemId);
+
+    // Snipe protection
     if (lastBid && Date.now() - lastBid < 2000) {
-      this.logger.log(
-        `Snipe detected — bid placed ${Date.now() - lastBid}ms ago, extending timer`,
-      );
-      const state = this.timerState.get(itemId);
-      if (state) {
-        state.remaining = state.counterbidSeconds;
-        this.timerState.set(itemId, state);
-        this.server.to(`auction:${auctionId}`).emit('timer-update', {
-          itemId,
-          remaining: state.counterbidSeconds,
-          isCounterbid: true,
-        });
-        this.startCountdown(auctionId, itemId);
-      }
+      this.logger.log(`Snipe detected — extending timer`);
+      const counterbidSeconds = state?.counterbidSeconds ?? 5;
+      this.timerState.set(itemId, {
+        remaining: counterbidSeconds,
+        counterbidSeconds,
+        auctionId,
+        itemId,
+      });
+      this.server.to(`auction:${auctionId}`).emit('timer-update', {
+        itemId,
+        remaining: counterbidSeconds,
+        isCounterbid: true,
+      });
+      this.startCountdown(auctionId, itemId);
       return;
     }
+
+    // Now clean up
+    this.timerState.delete(itemId);
+    this.lastBidTime.delete(itemId);
 
     this.logger.log(`Timer expired — auto-selling item ${itemId}`);
 
@@ -486,7 +498,6 @@ export class BiddingGateway
       this.activeTimers.delete(itemId);
     }
     this.timerState.delete(itemId);
-    this.lastBidTime.delete(itemId);
   }
 
   // ── Viewer Count ───────────────────────────────────────────────────────────
