@@ -39,7 +39,8 @@ interface Suggestion {
 export default function ExploreScreen() {
   const router = useRouter();
   const inputRef = useRef<TextInput>(null);
-
+  const debounceRef = useRef<any>(null);
+  const feedCacheRef = useRef<AuctionFeedItem[]>([]);
   const [search, setSearch] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const [activeTab, setActiveTab] = useState<SearchTab>('shows');
@@ -56,12 +57,16 @@ export default function ExploreScreen() {
     setLoading(true);
     setSuggestions([]);
     try {
-      const [auctionRes, userRes] = await Promise.all([
-        apiClient.get('/auctions/feed'),
-        apiClient.get(`/users?search=${encodeURIComponent(q)}`).catch(() => ({ data: { data: [] } })),
-      ]);
-      const allAuctions = auctionRes.data.data as AuctionFeedItem[];
-      const filtered = allAuctions.filter(a =>
+      // Use cached feed if available
+      if (feedCacheRef.current.length === 0) {
+        const auctionRes = await apiClient.get('/auctions/feed');
+        feedCacheRef.current = auctionRes.data.data as AuctionFeedItem[];
+      }
+
+      const userRes = await apiClient.get(`/users?search=${encodeURIComponent(q)}`)
+        .catch(() => ({ data: { data: [] } }));
+
+      const filtered = feedCacheRef.current.filter(a =>
         a.title.toLowerCase().includes(q.toLowerCase()) ||
         a.seller.displayName.toLowerCase().includes(q.toLowerCase())
       );
@@ -78,15 +83,21 @@ export default function ExploreScreen() {
   const fetchSuggestions = useCallback(async (q: string) => {
     if (!q.trim()) { setSuggestions([]); return; }
     try {
-      const [auctionRes, userRes] = await Promise.all([
-        apiClient.get('/auctions/feed'),
+      // Only fetch feed if not cached
+      if (feedCacheRef.current.length === 0) {
+        const auctionRes = await apiClient.get('/auctions/feed');
+        feedCacheRef.current = auctionRes.data.data as AuctionFeedItem[];
+      }
+
+      const [userRes] = await Promise.all([
         apiClient.get(`/users?search=${encodeURIComponent(q)}`).catch(() => ({ data: { data: [] } })),
       ]);
-      const allAuctions = auctionRes.data.data as AuctionFeedItem[];
-      const matchedAuctions = allAuctions
+
+      const matchedAuctions = feedCacheRef.current
         .filter(a => a.title.toLowerCase().includes(q.toLowerCase()))
         .slice(0, 2)
         .map(a => ({ type: 'query' as const, label: a.title, sublabel: 'in Shows' }));
+
       const matchedUsers = (userRes.data.data as UserResult[])
         .slice(0, 3)
         .map(u => ({
@@ -96,6 +107,7 @@ export default function ExploreScreen() {
           id: u.id,
           avatarUrl: u.avatarUrl,
         }));
+
       setSuggestions([
         { type: 'query', label: q },
         ...matchedUsers,
@@ -108,7 +120,6 @@ export default function ExploreScreen() {
 
   const handleSubmit = (q: string) => {
     if (!q.trim()) return;
-    setSubmitted(true);
     setSuggestions([]);
     if (!recentSearches.includes(q)) {
       setRecentSearches(prev => [q, ...prev].slice(0, 8));
@@ -125,10 +136,16 @@ export default function ExploreScreen() {
     inputRef.current?.blur();
   };
 
-  const [submitted, setSubmitted] = useState(false);
-  const showSuggestions = isFocused && search.trim().length > 0 && suggestions.length > 0 && !submitted;
-  const showResults = isFocused && search.trim().length > 0 && suggestions.length === 0 && !loading;
-  const showDefault = isFocused && search.trim().length === 0;
+  type Mode = 'idle' | 'default' | 'suggestions' | 'loading' | 'results';
+
+  const getMode = (): Mode => {
+    if (!isFocused) return 'idle';
+    if (search.trim().length === 0) return 'default';
+    if (suggestions.length > 0) return 'suggestions';
+    if (loading) return 'loading';
+    return 'results';
+  };
+  const mode = getMode();
 
   return (
     <View style={{ flex: 1, backgroundColor: '#0D1117' }}>
@@ -158,8 +175,16 @@ export default function ExploreScreen() {
             keyboardType="web-search"
             onChangeText={q => {
               setSearch(q);
-              setSubmitted(false);
-              void fetchSuggestions(q);
+              // Clear previous timer
+              if (debounceRef.current) clearTimeout(debounceRef.current);
+              if (!q.trim()) {
+                setSuggestions([]);
+                return;
+              }
+              // Wait 300ms after user stops typing
+              debounceRef.current = setTimeout(() => {
+                void fetchSuggestions(q);
+              }, 300);
             }}
             onFocus={() => setIsFocused(true)}
             onSubmitEditing={() => {
@@ -192,7 +217,7 @@ export default function ExploreScreen() {
       </View>
 
       {/* ── Suggestions Dropdown ── */}
-      {showSuggestions && (
+      {mode === 'suggestions' && (
         <View style={{ backgroundColor: '#111827', borderBottomWidth: 1, borderColor: '#1F2937' }}>
           {suggestions.map((s, i) => (
             <TouchableOpacity
@@ -245,7 +270,7 @@ export default function ExploreScreen() {
       )}
 
       {/* ── Default State ── */}
-      {showDefault && (
+      {mode === 'default' && (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
           {recentSearches.length > 0 && (
             <View style={{ marginBottom: 28 }}>
@@ -305,14 +330,14 @@ export default function ExploreScreen() {
       )}
 
       {/* ── Loading ── */}
-      {isFocused && search.trim().length > 0 && loading && (
+      {mode === 'loading' && (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color="#1A56DB" />
         </View>
       )}
 
       {/* ── Search Results ── */}
-      {showResults && !loading && (
+      {mode === 'results' && (
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', borderBottomWidth: 1, borderColor: '#1F2937', paddingHorizontal: 16 }}>
             {(['shows', 'users'] as SearchTab[]).map(tab => (
