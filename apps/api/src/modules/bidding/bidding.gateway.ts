@@ -209,6 +209,12 @@ export class BiddingGateway
     // Start countdown
     this.startCountdown(auctionId, itemId);
 
+    // Notify all clients shop state changed
+    this.server.to(`auction:${auctionId}`).emit('shop-updated', {
+      auctionId,
+      timestamp: Date.now(),
+    });
+
     this.logger.log(
       `Timer started: item ${itemId} — ${startSeconds}s (counterbid: ${counterbidSeconds}s)`,
     );
@@ -341,6 +347,11 @@ export class BiddingGateway
         timestamp: Date.now(),
       });
 
+      this.server.to(`auction:${payload.auctionId}`).emit('shop-updated', {
+        auctionId: payload.auctionId,
+        timestamp: Date.now(),
+      });
+
       return { success: true, result };
     } catch (error) {
       const message =
@@ -348,6 +359,14 @@ export class BiddingGateway
       client.emit('error', { message });
       throw new WsException(message);
     }
+  }
+
+  @SubscribeMessage('notify-shop-updated')
+  handleNotifyShopUpdated(@MessageBody() payload: { auctionId: string }) {
+    this.server.to(`auction:${payload.auctionId}`).emit('shop-updated', {
+      auctionId: payload.auctionId,
+      timestamp: Date.now(),
+    });
   }
 
   // ── Chat ───────────────────────────────────────────────────────────────────
@@ -480,6 +499,11 @@ export class BiddingGateway
       this.server.to(`auction:${auctionId}`).emit('item-ended', {
         itemId,
         winner: result.winner,
+        timestamp: Date.now(),
+      });
+
+      this.server.to(`auction:${auctionId}`).emit('shop-updated', {
+        auctionId,
         timestamp: Date.now(),
       });
 

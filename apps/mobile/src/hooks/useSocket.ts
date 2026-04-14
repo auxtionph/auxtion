@@ -59,6 +59,7 @@ interface UseSocketOptions {
   onTimerStarted?: (data: TimerStarted) => void;
   onTimerUpdate?: (data: TimerUpdate) => void;
   onTimerEnded?: (data: { itemId: string }) => void;
+  onShopUpdated?: (data: { auctionId: string; timestamp: number }) => void;
 }
 
 export const useAuctionSocket = ({
@@ -75,6 +76,7 @@ export const useAuctionSocket = ({
   onTimerStarted,
   onTimerUpdate,
   onTimerEnded,
+  onShopUpdated,
 }: UseSocketOptions) => {
   const socketRef = useRef<Socket | null>(null);
 
@@ -106,6 +108,7 @@ export const useAuctionSocket = ({
     socket.off(SOCKET_EVENTS.TIMER_STARTED);
     socket.off(SOCKET_EVENTS.TIMER_UPDATE);
     socket.off(SOCKET_EVENTS.TIMER_ENDED);
+    socket.off('shop-updated');
 
     socket.emit(SOCKET_EVENTS.JOIN_AUCTION, { auctionId, token });
 
@@ -119,6 +122,7 @@ export const useAuctionSocket = ({
     if (onTimerStarted) socket.on(SOCKET_EVENTS.TIMER_STARTED, onTimerStarted);
     if (onTimerUpdate) socket.on(SOCKET_EVENTS.TIMER_UPDATE, onTimerUpdate);
     if (onTimerEnded) socket.on(SOCKET_EVENTS.TIMER_ENDED, onTimerEnded);
+    if (onShopUpdated) socket.on('shop-updated', onShopUpdated);
 
     if (onChatHistory) {
       socket.on('chat-history', (messages: ChatMessage[]) => {
@@ -145,6 +149,10 @@ export const useAuctionSocket = ({
     socketRef.current?.emit(SOCKET_EVENTS.END_AUCTION, { auctionId });
   }, [auctionId]);
 
+  const notifyShopUpdated = useCallback(() => {
+    socketRef.current?.emit('notify-shop-updated', { auctionId });
+  }, [auctionId]);
+
   const startItemTimer = useCallback((
     itemId: string,
     sellerId: string,
@@ -160,5 +168,5 @@ export const useAuctionSocket = ({
     });
   }, [auctionId]);
 
-  return { placeBid, sendChat, endAuction, startItemTimer };
+  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated };
 };

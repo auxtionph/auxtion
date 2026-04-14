@@ -210,7 +210,7 @@ export default function LiveAuctionRoom() {
 
   const [saleToast, setSaleToast] = useState<{ winner: string; amount: number; title: string } | null>(null);
 
-  const { placeBid, sendChat, endAuction, startItemTimer } = useAuctionSocket({
+  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated } = useAuctionSocket({
     auctionId: id,
     onBidUpdate: useCallback((data: BidUpdateData) => {
       setCurrentItem(prev => prev ? {
@@ -308,6 +308,11 @@ export default function LiveAuctionRoom() {
     onTimerEnded: useCallback((_data: { itemId: string }) => {
       setTimerRemaining(null);
     }, []),
+
+    onShopUpdated: useCallback((_data: { auctionId: string; timestamp: number }) => {
+      // Refresh auction state for everyone
+      void auctionsApi.getById(id).then(setAuction);
+    }, [id]),
   });
 
   const handleAddItemLive = async (mode: 'queue' | 'now' | 'buynow') => {
@@ -331,6 +336,7 @@ export default function LiveAuctionRoom() {
 
       const updated = await auctionsApi.getById(id);
       setAuction(updated);
+      notifyShopUpdated();
 
       setNewItemTitle('');
       setNewItemPrice('');
