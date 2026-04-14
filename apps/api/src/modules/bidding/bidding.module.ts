@@ -4,6 +4,6 @@ import { BiddingService } from './bidding.service';
 
 @Module({
   providers: [BiddingGateway, BiddingService],
-  exports: [BiddingService],
+  exports: [BiddingService, BiddingGateway],
 })
 export class BiddingModule {}
