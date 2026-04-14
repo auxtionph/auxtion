@@ -170,6 +170,15 @@ export default function LiveAuctionRoom() {
   const [liveOfferPercent, setLiveOfferPercent] = useState<number | null>(-20);
   const [liveCustomOffer, setLiveCustomOffer] = useState('');
   const [submittingOffer, setSubmittingOffer] = useState(false);
+  const [pendingOffer, setPendingOffer] = useState<{
+    offerId: string;
+    itemTitle: string;
+    buyerName: string;
+    amount: number;
+  } | null>(null);
+  const { user } = useAuthStore();
+  const isSellerImmediate = routeRole === 'broadcaster';
+  const isSeller = auction ? auction.seller.id === user?.id : isSellerImmediate;
 
   const chatRef = useRef<FlatList>(null);
   const currentItemRef = useRef<CurrentItem | null>(null); 
@@ -313,6 +322,26 @@ export default function LiveAuctionRoom() {
       // Refresh auction state for everyone
       void auctionsApi.getById(id).then(setAuction);
     }, [id]),
+
+    onOfferReceived: useCallback((data: { offerId: string; itemTitle: string; buyerName: string; amount: number }) => {
+      if (!isSeller) return;
+      setPendingOffer({
+        offerId: data.offerId,
+        itemTitle: data.itemTitle,
+        buyerName: data.buyerName,
+        amount: data.amount,
+      });
+    }, [isSeller]),
+
+    onOfferResponded: useCallback((data: { offerId: string; status: string; itemTitle: string; amount: number }) => {
+      if (isSeller) return;
+      Alert.alert(
+        data.status === 'ACCEPTED' ? '🎉 Offer Accepted!' : '❌ Offer Declined',
+        data.status === 'ACCEPTED'
+          ? `Your offer of ${formatPHP(data.amount)} for ${data.itemTitle} was accepted!`
+          : `Your offer for ${data.itemTitle} was declined.`
+      );
+    }, [isSeller]),
   });
 
   const handleAddItemLive = async (mode: 'queue' | 'now' | 'buynow') => {
@@ -356,10 +385,6 @@ export default function LiveAuctionRoom() {
       setAddingItem(false);
     }
   };
-
-  const { user } = useAuthStore();
-  const isSellerImmediate = routeRole === 'broadcaster';
-  const isSeller = auction ? auction.seller.id === user?.id : isSellerImmediate;
 
   const [roomId, setRoomId] = useState<string | null>(null);
   useEffect(() => {
@@ -1201,6 +1226,70 @@ export default function LiveAuctionRoom() {
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* ── Offer Notification (Seller) ── */}
+      {isSeller && pendingOffer && (
+        <View style={{
+          position: 'absolute',
+          top: 100, left: 16, right: 16,
+          backgroundColor: '#1F2937',
+          borderRadius: 16, padding: 16,
+          borderWidth: 1, borderColor: '#374151',
+          zIndex: 997,
+        }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                💰 New Offer
+              </Text>
+              <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }} numberOfLines={2}>
+                {pendingOffer.buyerName} offered {formatPHP(pendingOffer.amount)} for {pendingOffer.itemTitle}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={() => setPendingOffer(null)}>
+              <Text style={{ color: '#6B7280', fontSize: 16, paddingLeft: 8 }}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              style={{
+                flex: 1, backgroundColor: '#10B981',
+                borderRadius: 10, paddingVertical: 10, alignItems: 'center',
+              }}
+              onPress={async () => {
+                try {
+                  const { apiClient } = await import('../../../src/services/api/client');
+                  await apiClient.patch(`/offers/${pendingOffer.offerId}/accept`);
+                  setPendingOffer(null);
+                  void auctionsApi.getById(id).then(setAuction);
+                  Alert.alert('✅ Accepted', `You accepted the offer from ${pendingOffer.buyerName}.`);
+                } catch {
+                  Alert.alert('Error', 'Failed to accept offer.');
+                }
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Accept</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{
+                flex: 1, backgroundColor: '#DC2626',
+                borderRadius: 10, paddingVertical: 10, alignItems: 'center',
+              }}
+              onPress={async () => {
+                try {
+                  const { apiClient } = await import('../../../src/services/api/client');
+                  await apiClient.patch(`/offers/${pendingOffer.offerId}/decline`);
+                  setPendingOffer(null);
+                } catch {
+                  Alert.alert('Error', 'Failed to decline offer.');
+                }
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Decline</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* ── Sale Toast ── */}
       {saleToast && (

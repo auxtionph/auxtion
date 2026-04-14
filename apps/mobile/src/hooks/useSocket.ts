@@ -60,6 +60,8 @@ interface UseSocketOptions {
   onTimerUpdate?: (data: TimerUpdate) => void;
   onTimerEnded?: (data: { itemId: string }) => void;
   onShopUpdated?: (data: { auctionId: string; timestamp: number }) => void;
+  onOfferReceived?: (data: { offerId: string; itemId: string; itemTitle: string; buyerName: string; amount: number; timestamp: number }) => void;
+  onOfferResponded?: (data: { offerId: string; status: string; itemTitle: string; amount: number }) => void;
 }
 
 export const useAuctionSocket = ({
@@ -77,6 +79,8 @@ export const useAuctionSocket = ({
   onTimerUpdate,
   onTimerEnded,
   onShopUpdated,
+  onOfferReceived,
+  onOfferResponded,
 }: UseSocketOptions) => {
   const socketRef = useRef<Socket | null>(null);
 
@@ -109,6 +113,8 @@ export const useAuctionSocket = ({
     socket.off(SOCKET_EVENTS.TIMER_UPDATE);
     socket.off(SOCKET_EVENTS.TIMER_ENDED);
     socket.off('shop-updated');
+    socket.off('offer-received');
+    socket.off('offer-responded');
 
     socket.emit(SOCKET_EVENTS.JOIN_AUCTION, { auctionId, token });
 
@@ -123,6 +129,9 @@ export const useAuctionSocket = ({
     if (onTimerUpdate) socket.on(SOCKET_EVENTS.TIMER_UPDATE, onTimerUpdate);
     if (onTimerEnded) socket.on(SOCKET_EVENTS.TIMER_ENDED, onTimerEnded);
     if (onShopUpdated) socket.on('shop-updated', onShopUpdated);
+    if (onOfferReceived) socket.on('offer-received', onOfferReceived);
+    if (onOfferResponded) socket.on('offer-responded', onOfferResponded);
+
 
     if (onChatHistory) {
       socket.on('chat-history', (messages: ChatMessage[]) => {
