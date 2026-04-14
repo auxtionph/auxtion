@@ -222,15 +222,15 @@ export class BiddingGateway
     @MessageBody() payload: PlaceBidPayload & { bidderId: string },
   ) {
     try {
+      // ← Record IMMEDIATELY before any async work
+      this.lastBidTime.set(payload.itemId, Date.now());
+
       const result = await this.biddingService.placeBid(
         payload.bidderId,
         payload.auctionId,
         payload.itemId,
         payload.amount,
       );
-
-      // Record bid time for snipe protection
-      this.lastBidTime.set(payload.itemId, Date.now());
 
       // ✅ Counterbid reset — reset if within counterbid window OR if timer just expired
       const state = this.timerState.get(payload.itemId);
@@ -436,7 +436,7 @@ export class BiddingGateway
     const lastBid = this.lastBidTime.get(itemId);
 
     // Snipe protection
-    if (lastBid && Date.now() - lastBid < 2000) {
+    if (lastBid && Date.now() - lastBid < 3000) {
       this.logger.log(`Snipe detected — extending timer`);
       const counterbidSeconds = state?.counterbidSeconds ?? 5;
       this.timerState.set(itemId, {

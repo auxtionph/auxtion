@@ -788,7 +788,7 @@ export default function LiveAuctionRoom() {
                       highestBidderName: user?.displayName ?? 'You',
                     } : prev);
                     setWinnerBanner(`${user?.displayName ?? 'You'} is winning!`);
-                    if (timerRemaining !== null && timerRemaining <= counterbidSeconds) {
+                   if (timerRemaining !== null && timerRemaining <= counterbidSeconds + 1) {
                       setTimerRemaining(counterbidSeconds);
                     }
 
@@ -1193,7 +1193,7 @@ export default function LiveAuctionRoom() {
                   highestBidderName: user?.displayName ?? 'You',
                 } : prev);
                 setWinnerBanner(`${user?.displayName ?? 'You'} is winning!`);
-                if (timerRemaining !== null && timerRemaining <= counterbidSeconds) {
+                if (timerRemaining !== null && timerRemaining <= counterbidSeconds + 1) {
                   setTimerRemaining(counterbidSeconds);
                 }
 
