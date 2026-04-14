@@ -57,6 +57,7 @@ export class BiddingGateway
   private viewerCounts = new Map<string, number>();
   private activeTimers = new Map<string, NodeJS.Timeout>();
   private timerState = new Map<string, TimerState>();
+  private lastBidTime = new Map<string, number>();
 
   constructor(
     private readonly biddingService: BiddingService,
@@ -227,6 +228,9 @@ export class BiddingGateway
         payload.itemId,
         payload.amount,
       );
+
+      // Record bid time for snipe protection
+      this.lastBidTime.set(payload.itemId, Date.now());
 
       // ✅ Counterbid reset — if bid placed within counterbid window, reset timer
       const state = this.timerState.get(payload.itemId);
@@ -422,9 +426,27 @@ export class BiddingGateway
   }
 
   private async handleTimerExpired(auctionId: string, itemId: string) {
-    this.logger.log(`Timer expired — auto-selling item ${itemId}`);
+    // ── Snipe protection: if bid placed in last 2s, extend timer instead ──
+    const lastBid = this.lastBidTime.get(itemId);
+    if (lastBid && Date.now() - lastBid < 2000) {
+      this.logger.log(
+        `Snipe detected — bid placed ${Date.now() - lastBid}ms ago, extending timer`,
+      );
+      const state = this.timerState.get(itemId);
+      if (state) {
+        state.remaining = state.counterbidSeconds;
+        this.timerState.set(itemId, state);
+        this.server.to(`auction:${auctionId}`).emit('timer-update', {
+          itemId,
+          remaining: state.counterbidSeconds,
+          isCounterbid: true,
+        });
+        this.startCountdown(auctionId, itemId);
+      }
+      return;
+    }
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    this.logger.log(`Timer expired — auto-selling item ${itemId}`);
 
     try {
       const auction = await this.prisma.auction.findUnique({
@@ -464,6 +486,7 @@ export class BiddingGateway
       this.activeTimers.delete(itemId);
     }
     this.timerState.delete(itemId);
+    this.lastBidTime.delete(itemId);
   }
 
   // ── Viewer Count ───────────────────────────────────────────────────────────
