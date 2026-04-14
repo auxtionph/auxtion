@@ -197,6 +197,14 @@ export default function LiveAuctionRoom() {
     });
   }, [id]);
 
+  const [soldItemWinners, setSoldItemWinners] = useState<Record<string, {
+    userId: string;
+    displayName: string;
+    amount: number;
+  }>>({});
+
+  const [saleToast, setSaleToast] = useState<{ winner: string; amount: number; title: string } | null>(null);
+
   const { placeBid, sendChat, endAuction, startItemTimer } = useAuctionSocket({
     auctionId: id,
     onBidUpdate: useCallback((data: BidUpdateData) => {
@@ -207,13 +215,6 @@ export default function LiveAuctionRoom() {
         highestBidderName: data.bidderName,
       } : prev);
       setWinnerBanner(`${data.bidderName} is winning!`);
-      setChatMessages(prev => [...prev, {
-        id: `bid-${data.timestamp}`,
-        userId: data.bidderId,
-        displayName: data.bidderName,
-        message: `🔨 Bid ${formatPHP(data.amount)}`,
-        timestamp: data.timestamp,
-      }]);
     }, []),
     onBidConfirmed: useCallback(() => {}, []),
     onBidError: useCallback((error: { message: string }) => {
@@ -239,10 +240,40 @@ export default function LiveAuctionRoom() {
     }, []),
     onItemEnded: useCallback((data: ItemEndedData) => {
       if (data.winner) {
-        Alert.alert('🎉 Item Sold!', `${data.winner.displayName} won for ${formatPHP(data.winner.amount)}`);
+        setSaleToast({
+          winner: data.winner.displayName,
+          amount: data.winner.amount,
+          title: currentItemRef.current?.title ?? 'Item',
+        });
+        setTimeout(() => setSaleToast(null), 4000);
       }
       setCurrentItem(null);
       setWinnerBanner(null);
+
+      // ← Move item to SOLD in local auction state + store winner info
+      setAuction(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          shopItems: prev.shopItems.map(item =>
+            item.id === data.itemId
+              ? {
+                  ...item,
+                  status: 'SOLD' as const,
+                  // Store winner in title suffix for display (temp until we have winner field)
+                }
+              : item
+          ),
+        };
+      });
+
+      // Store winner info separately for display in sold tab
+      if (data.winner) {
+        setSoldItemWinners(prev => ({
+          ...prev,
+          [data.itemId]: data.winner!,
+        }));
+      }
     }, []),
     onViewerCount: useCallback((data: { count: number }) => {
       setViewerCount(data.count);
@@ -880,8 +911,14 @@ export default function LiveAuctionRoom() {
             </TouchableOpacity>
           )}
           <ScrollView style={{ paddingHorizontal: 24, marginBottom: 32 }}>
-            {(shopTab === 'bidding' ? biddingItems : soldItems).map(item => (
-             <TouchableOpacity
+            {/* ── Bidding Tab ── */}
+            {shopTab === 'bidding' && (
+              biddingItems.length === 0 ? (
+                <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                  <Text style={{ color: '#4B5563', fontSize: 13 }}>No items queued</Text>
+                </View>
+              ) : biddingItems.map(item => (
+                <TouchableOpacity
                   key={item.id}
                   activeOpacity={isSeller && item.status !== 'LIVE' ? 0.7 : 1}
                   onPress={() => {
@@ -897,39 +934,83 @@ export default function LiveAuctionRoom() {
                     padding: 12, marginBottom: 8,
                   }}
                 >
-                <View style={{
-                  width: 56, height: 56, borderRadius: 10,
-                  backgroundColor: '#374151', overflow: 'hidden',
-                  alignItems: 'center', justifyContent: 'center',
-                }}>
-                  {item.photos[0] ? (
-                    <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-                  ) : (
-                    <Text style={{ fontSize: 24 }}>📦</Text>
-                  )}
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
-                    {item.title}
-                  </Text>
-                  <Text style={{ color: '#F59E0B', fontSize: 12 }}>{formatPHP(item.price)}</Text>
-                </View>
-                {item.status === 'LIVE' && (
                   <View style={{
-                    backgroundColor: '#DC2626', borderRadius: 999,
-                    paddingHorizontal: 8, paddingVertical: 2,
+                    width: 56, height: 56, borderRadius: 10,
+                    backgroundColor: '#374151', overflow: 'hidden',
+                    alignItems: 'center', justifyContent: 'center',
                   }}>
-                    <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>NOW</Text>
+                    {item.photos[0] ? (
+                      <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    ) : (
+                      <Text style={{ fontSize: 24 }}>📦</Text>
+                    )}
                   </View>
-                )}
-              </TouchableOpacity>
-            ))}
-            {(shopTab === 'bidding' ? biddingItems : soldItems).length === 0 && (
-              <View style={{ alignItems: 'center', paddingVertical: 32 }}>
-                <Text style={{ color: '#4B5563', fontSize: 13 }}>
-                  {shopTab === 'bidding' ? 'No items queued' : 'No items sold yet'}
-                </Text>
-              </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
+                      {item.title}
+                    </Text>
+                    <Text style={{ color: '#F59E0B', fontSize: 12 }}>{formatPHP(item.price)}</Text>
+                  </View>
+                  {item.status === 'LIVE' && (
+                    <View style={{
+                      backgroundColor: '#DC2626', borderRadius: 999,
+                      paddingHorizontal: 8, paddingVertical: 2,
+                    }}>
+                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>NOW</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              ))
+            )}
+
+            {/* ── Sold Tab ── */}
+            {shopTab === 'sold' && (
+              soldItems.length === 0 ? (
+                <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                  <Text style={{ color: '#4B5563', fontSize: 13 }}>No items sold yet</Text>
+                </View>
+              ) : soldItems.map(item => {
+                const winner = soldItemWinners[item.id];
+                return (
+                  <View
+                    key={item.id}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 12,
+                      backgroundColor: '#1F2937', borderRadius: 12,
+                      padding: 12, marginBottom: 8,
+                    }}
+                  >
+                    <View style={{
+                      width: 56, height: 56, borderRadius: 10,
+                      backgroundColor: '#374151', overflow: 'hidden',
+                      alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {item.photos[0] ? (
+                        <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                      ) : (
+                        <Text style={{ fontSize: 24 }}>📦</Text>
+                      )}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
+                        {item.title}
+                      </Text>
+                      {winner ? (
+                        <>
+                          <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '700' }}>
+                            ✅ {formatPHP(winner.amount)}
+                          </Text>
+                          <Text style={{ color: '#6B7280', fontSize: 11 }}>
+                            Won by {winner.displayName}
+                          </Text>
+                        </>
+                      ) : (
+                        <Text style={{ color: '#10B981', fontSize: 12 }}>✅ Sold</Text>
+                      )}
+                    </View>
+                  </View>
+                );
+              })
             )}
           </ScrollView>
         </View>
@@ -1018,6 +1099,28 @@ export default function LiveAuctionRoom() {
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* ── Sale Toast ── */}
+      {saleToast && (
+        <View style={{
+          position: 'absolute',
+          top: 100, left: 24, right: 24,
+          backgroundColor: 'rgba(16,185,129,0.95)',
+          borderRadius: 16, padding: 16,
+          flexDirection: 'row', alignItems: 'center', gap: 12,
+          zIndex: 998,
+        }}>
+          <Text style={{ fontSize: 32 }}>🎉</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
+              {saleToast.winner} won!
+            </Text>
+            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }} numberOfLines={1}>
+              {saleToast.title} — {formatPHP(saleToast.amount)}
+            </Text>
+          </View>
+        </View>
+      )}
 
       {/* ── Auction Ended Overlay ── */}
       {auctionEnded && !isSeller && (
