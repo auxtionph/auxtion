@@ -162,6 +162,10 @@ export default function LiveAuctionRoom() {
   const [startCounterbid, setStartCounterbid] = useState(5);
   const [customStartSeconds, setCustomStartSeconds] = useState(false);
   const [customCounterbid, setCustomCounterbid] = useState(false);
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [newItemTitle, setNewItemTitle] = useState('');
+  const [newItemPrice, setNewItemPrice] = useState('');
+  const [addingItem, setAddingItem] = useState(false);
 
   const chatRef = useRef<FlatList>(null);
   const currentItemRef = useRef<CurrentItem | null>(null); 
@@ -268,6 +272,43 @@ export default function LiveAuctionRoom() {
       setTimerRemaining(null);
     }, []),
   });
+
+  const handleAddItemLive = async (mode: 'queue' | 'now') => {
+    const price = parseInt(newItemPrice.replace(/[^0-9]/g, ''), 10);
+    if (!newItemTitle.trim() || !price) return;
+    setAddingItem(true);
+    try {
+      const { apiClient } = await import('../../../src/services/api/client');
+      const { shopItemsApi } = await import('../../../src/services/api/shop-items.api');
+
+      const newItem = await shopItemsApi.create({
+        title: newItemTitle.trim(),
+        description: `${newItemTitle.trim()} - auction item`,
+        photos: [],
+        price: price * 100,
+        type: 'AUCTION',
+      });
+      await apiClient.post(`/auctions/${id}/items/${newItem.id}`);
+
+      // Refresh auction data
+      const updated = await auctionsApi.getById(id);
+      setAuction(updated);
+
+      setNewItemTitle('');
+      setNewItemPrice('');
+      setShowAddItem(false);
+
+      // If run now — open start item modal immediately
+      if (mode === 'now') {
+        setSelectedItem({ id: newItem.id, title: newItem.title, price: newItem.price });
+        setShowStartItem(true);
+      }
+    } catch {
+      Alert.alert('Error', 'Failed to add item. Try again.');
+    } finally {
+      setAddingItem(false);
+    }
+  };
 
   const { user } = useAuthStore();
   const isSellerImmediate = routeRole === 'broadcaster';
@@ -747,6 +788,21 @@ export default function LiveAuctionRoom() {
               </TouchableOpacity>
             ))}
           </View>
+
+          {isSeller && shopTab === 'bidding' && (
+            <TouchableOpacity
+              style={{
+                marginHorizontal: 24, marginBottom: 12,
+                backgroundColor: '#1A56DB', borderRadius: 12,
+                paddingVertical: 12, flexDirection: 'row',
+                alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+              onPress={() => { setShowShop(false); setShowAddItem(true); }}
+            >
+              <Text style={{ color: '#fff', fontSize: 18 }}>+</Text>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Add Item to Queue</Text>
+            </TouchableOpacity>
+          )}
           <ScrollView style={{ paddingHorizontal: 24, marginBottom: 32 }}>
             {(shopTab === 'bidding' ? biddingItems : soldItems).map(item => (
              <TouchableOpacity
@@ -905,6 +961,99 @@ export default function LiveAuctionRoom() {
           <Text style={{ color: '#6B7280', fontSize: 12 }}>Redirecting you back...</Text>
         </View>
       )}
+
+      {/* ── Add Item Live Modal ── */}
+      <Modal visible={showAddItem} transparent animationType="slide" onRequestClose={() => setShowAddItem(false)}>
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowAddItem(false)} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={{
+            backgroundColor: '#111827',
+            borderTopLeftRadius: 24, borderTopRightRadius: 24,
+            padding: 24, paddingBottom: 48,
+          }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>📦 Add Item</Text>
+              <TouchableOpacity onPress={() => setShowAddItem(false)}>
+                <Text style={{ color: '#6B7280', fontSize: 16 }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase' }}>
+              Item Title *
+            </Text>
+            <TextInput
+              style={{
+                backgroundColor: '#1F2937', borderRadius: 12,
+                borderWidth: 1, borderColor: newItemTitle ? '#1A56DB' : '#374151',
+                padding: 14, color: '#fff', fontSize: 15, marginBottom: 16,
+              }}
+              placeholder="e.g. Nike Air Jordan 1"
+              placeholderTextColor="#4B5563"
+              value={newItemTitle}
+              onChangeText={setNewItemTitle}
+              maxLength={100}
+              autoFocus
+            />
+
+            <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase' }}>
+              Starting Price (₱) *
+            </Text>
+            <View style={{
+              backgroundColor: '#1F2937', borderRadius: 12,
+              borderWidth: 1, borderColor: newItemPrice ? '#1A56DB' : '#374151',
+              flexDirection: 'row', alignItems: 'center',
+              paddingHorizontal: 14, marginBottom: 24,
+            }}>
+              <Text style={{ color: '#6B7280', fontSize: 16, marginRight: 8 }}>₱</Text>
+              <TextInput
+                style={{ flex: 1, color: '#fff', fontSize: 18, fontWeight: '600', paddingVertical: 14 }}
+                placeholder="0"
+                placeholderTextColor="#4B5563"
+                value={newItemPrice}
+                onChangeText={t => setNewItemPrice(t.replace(/[^0-9]/g, ''))}
+                keyboardType="numeric"
+              />
+            </View>
+
+            <TouchableOpacity
+              style={{
+                backgroundColor: newItemTitle.trim() && newItemPrice ? '#1A56DB' : '#374151',
+                borderRadius: 14, paddingVertical: 16, alignItems: 'center',
+                marginBottom: 10,
+              }}
+              onPress={() => void handleAddItemLive('queue')}
+              disabled={!newItemTitle.trim() || !newItemPrice || addingItem}
+            >
+              {addingItem ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>📦 Add to Queue</Text>
+                  <Text style={{ color: '#BFDBFE', fontSize: 12, marginTop: 2 }}>Seller starts it manually later</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                backgroundColor: newItemTitle.trim() && newItemPrice ? '#DC2626' : '#374151',
+                borderRadius: 14, paddingVertical: 16, alignItems: 'center',
+              }}
+              onPress={() => void handleAddItemLive('now')}
+              disabled={!newItemTitle.trim() || !newItemPrice || addingItem}
+            >
+              {addingItem ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>🔨 Run Now</Text>
+                  <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>Add and start bidding immediately</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
