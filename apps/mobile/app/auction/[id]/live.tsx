@@ -182,6 +182,7 @@ export default function LiveAuctionRoom() {
 
   const chatRef = useRef<FlatList>(null);
   const currentItemRef = useRef<CurrentItem | null>(null); 
+  const [broadcasterReconnecting, setBroadcasterReconnecting] = useState(false);
 
   useEffect(() => {
     currentItemRef.current = currentItem;
@@ -427,14 +428,103 @@ export default function LiveAuctionRoom() {
   };
 
   const prevBroadcasterRef = useRef<string | null>(null);
+  const broadcasterDropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   useEffect(() => {
     if (isSeller) return;
     const currentId = hms.broadcasterPeer?.id ?? null;
+
     if (prevBroadcasterRef.current && !currentId) {
-      setAuctionEnded(true);
+      setBroadcasterReconnecting(true);
+
+      // Poll every 5s to check if auction ended
+      reconnectPollRef.current = setInterval(() => {
+        void auctionsApi.getById(id).then(data => {
+          if (data.status === 'ENDED') {
+            if (reconnectPollRef.current) clearInterval(reconnectPollRef.current);
+            setBroadcasterReconnecting(false);
+            setAuctionEnded(true);
+          }
+        });
+      }, 5000);
+
+      // Hard timeout at 2 minutes
+      broadcasterDropTimerRef.current = setTimeout(() => {
+        if (reconnectPollRef.current) clearInterval(reconnectPollRef.current);
+        setBroadcasterReconnecting(false);
+        setAuctionEnded(true);
+      }, 120000);
     }
+
+    if (!prevBroadcasterRef.current && currentId) {
+      if (broadcasterDropTimerRef.current) {
+        clearTimeout(broadcasterDropTimerRef.current);
+        broadcasterDropTimerRef.current = null;
+      }
+      if (reconnectPollRef.current) {
+        clearInterval(reconnectPollRef.current);
+        reconnectPollRef.current = null;
+      }
+      setBroadcasterReconnecting(false);
+      setAuctionEnded(false);
+    }
+
     prevBroadcasterRef.current = currentId;
-  }, [hms.broadcasterPeer?.id, isSeller]);
+  }, [hms.broadcasterPeer?.id, isSeller, id]);
+
+  const viewerTrackId = hms.broadcasterPeer?.id
+  ? (hms.trackMap[hms.broadcasterPeer.id] ?? null)
+  : null;
+
+  const noVideoSinceRef = useRef<number | null>(null);
+
+  // ── Reliable dead stream detector via API polling ──────────────────
+  useEffect(() => {
+    if (isSeller || auctionEnded) return;
+
+    const poll = setInterval(() => {
+      const hasVideo = !!hms.broadcasterPeer?.id;
+
+      if (!hasVideo) {
+        // No broadcaster — start counting
+        if (noVideoSinceRef.current === null) {
+          noVideoSinceRef.current = Date.now();
+        }
+
+        const elapsed = Date.now() - (noVideoSinceRef.current ?? Date.now());
+
+        if (elapsed >= 5000) {
+          // 5s with no broadcaster — show reconnecting and check API
+          setBroadcasterReconnecting(true);
+          void auctionsApi.getById(id).then(data => {
+            if (data.status === 'ENDED') {
+              if (reconnectPollRef.current) clearInterval(reconnectPollRef.current);
+              setBroadcasterReconnecting(false);
+              setAuctionEnded(true);
+            }
+          });
+        }
+      } else {
+        // Broadcaster is back
+        noVideoSinceRef.current = null;
+        if (broadcasterReconnecting) {
+          setBroadcasterReconnecting(false);
+          setAuctionEnded(false);
+        }
+      }
+    }, 2000);
+
+    return () => clearInterval(poll);
+  }, [isSeller, hms.isJoined, hms.broadcasterPeer?.id, auctionEnded, broadcasterReconnecting, id]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (broadcasterDropTimerRef.current) clearTimeout(broadcasterDropTimerRef.current);
+      if (reconnectPollRef.current) clearInterval(reconnectPollRef.current);
+    };
+  }, []);
 
   const handleSendChat = () => {
     if (!chatInput.trim()) return;
@@ -448,9 +538,6 @@ export default function LiveAuctionRoom() {
   
 
   const sellerTrackId = hms.localPeer?.videoTrackId ?? null;
-  const viewerTrackId = hms.broadcasterPeer?.id
-    ? (hms.trackMap[hms.broadcasterPeer.id] ?? null)
-    : null;
 
   const renderVideoBackground = () => {
     if (isSeller) {
@@ -1310,6 +1397,24 @@ export default function LiveAuctionRoom() {
               {saleToast.title} — {formatPHP(saleToast.amount)}
             </Text>
           </View>
+        </View>
+      )}
+
+      {/* ── Broadcaster Reconnecting ── */}
+      {broadcasterReconnecting && !auctionEnded && !isSeller && (
+        <View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.75)',
+          alignItems: 'center', justifyContent: 'center',
+          zIndex: 999,
+        }}>
+          <ActivityIndicator size="large" color="#1A56DB" style={{ marginBottom: 16 }} />
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 8 }}>
+            Connection interrupted
+          </Text>
+          <Text style={{ color: '#9CA3AF', fontSize: 14, textAlign: 'center', paddingHorizontal: 40, lineHeight: 22 }}>
+            The seller lost connection. Waiting for them to reconnect...
+          </Text>
         </View>
       )}
 
