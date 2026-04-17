@@ -221,7 +221,8 @@ export default function LiveAuctionRoom() {
 
   const [saleToast, setSaleToast] = useState<{ winner: string; amount: number; title: string } | null>(null);
 
-  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated } = useAuctionSocket({
+  const [timerPaused, setTimerPaused] = useState(false);
+  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer } = useAuctionSocket({
     auctionId: id,
     onBidUpdate: useCallback((data: BidUpdateData) => {
       setCurrentItem(prev => prev ? {
@@ -344,6 +345,14 @@ export default function LiveAuctionRoom() {
           : `Your offer for ${data.itemTitle} was declined.`
       );
     }, [isSeller]),
+
+    onTimerPaused: useCallback(() => {
+      setTimerPaused(true);
+    }, []),
+    onTimerResumed: useCallback((data: { itemId: string; remaining: number }) => {
+      setTimerPaused(false);
+      setTimerRemaining(data.remaining);
+    }, []),
   });
 
   const handleAddItemLive = async (mode: 'queue' | 'now' | 'buynow') => {
@@ -496,8 +505,10 @@ export default function LiveAuctionRoom() {
         const elapsed = Date.now() - (noVideoSinceRef.current ?? Date.now());
 
         if (elapsed >= 5000) {
-          // 5s with no broadcaster — show reconnecting and check API
           setBroadcasterReconnecting(true);
+          if (currentItemRef.current && user?.id) {
+            pauseTimer(currentItemRef.current.itemId, user.id);
+          }
           void auctionsApi.getById(id).then(data => {
             if (data.status === 'ENDED') {
               if (reconnectPollRef.current) clearInterval(reconnectPollRef.current);
@@ -507,11 +518,13 @@ export default function LiveAuctionRoom() {
           });
         }
       } else {
-        // Broadcaster is back
         noVideoSinceRef.current = null;
         if (broadcasterReconnecting) {
           setBroadcasterReconnecting(false);
           setAuctionEnded(false);
+          if (currentItemRef.current && user?.id) {
+            resumeTimer(currentItemRef.current.itemId, user.id);
+          }
         }
       }
     }, 2000);
@@ -873,10 +886,12 @@ export default function LiveAuctionRoom() {
               </Text>
               {timerRemaining !== null && (
                 <View style={{
-                  backgroundColor: timerRemaining <= counterbidSeconds ? '#DC2626' : '#1A56DB',
+                  backgroundColor: timerPaused ? '#6B7280' : timerRemaining <= counterbidSeconds ? '#DC2626' : '#1A56DB',
                   borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, minWidth: 48, alignItems: 'center',
-                }}>
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>{timerRemaining}s</Text>
+                  }}>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>
+                      {timerPaused ? '⏸' : `${timerRemaining}s`}
+                    </Text>
                 </View>
               )}
             </View>

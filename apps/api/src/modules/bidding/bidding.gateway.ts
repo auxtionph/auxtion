@@ -41,6 +41,7 @@ interface TimerState {
   counterbidSeconds: number;
   auctionId: string;
   itemId: string;
+  paused: boolean;
 }
 
 @WebSocketGateway({
@@ -188,6 +189,7 @@ export class BiddingGateway
       counterbidSeconds,
       auctionId,
       itemId,
+      paused: false,
     });
 
     // Broadcast item started
@@ -369,6 +371,68 @@ export class BiddingGateway
     });
   }
 
+  // ── Pause Timer (seller disconnected) ─────────────────────────────
+  @SubscribeMessage('pause-item-timer')
+  handlePauseTimer(
+    @MessageBody()
+    payload: {
+      auctionId: string;
+      itemId: string;
+      sellerId: string;
+    },
+  ) {
+    const state = this.timerState.get(payload.itemId);
+    if (!state || state.auctionId !== payload.auctionId) return;
+
+    if (!payload.sellerId) return;
+
+    state.paused = true;
+
+    // Stop the tick
+    const existing = this.activeTimers.get(payload.itemId);
+    if (existing) {
+      clearTimeout(existing);
+      this.activeTimers.delete(payload.itemId);
+    }
+
+    this.logger.log(
+      `Timer PAUSED for item ${payload.itemId} — seller disconnected`,
+    );
+
+    this.server.to(`auction:${payload.auctionId}`).emit('timer-paused', {
+      itemId: payload.itemId,
+      remaining: state.remaining,
+      reason: 'seller_disconnected',
+    });
+  }
+
+  // ── Resume Timer (seller reconnected) ─────────────────────────────
+  @SubscribeMessage('resume-item-timer')
+  handleResumeTimer(
+    @MessageBody()
+    payload: {
+      auctionId: string;
+      itemId: string;
+      sellerId: string;
+    },
+  ) {
+    const state = this.timerState.get(payload.itemId);
+    if (!state || state.auctionId !== payload.auctionId) return;
+
+    state.paused = false;
+
+    this.logger.log(
+      `Timer RESUMED for item ${payload.itemId} at ${state.remaining}s`,
+    );
+
+    this.server.to(`auction:${payload.auctionId}`).emit('timer-resumed', {
+      itemId: payload.itemId,
+      remaining: state.remaining,
+    });
+
+    this.startCountdown(payload.auctionId, payload.itemId);
+  }
+
   // ── Chat ───────────────────────────────────────────────────────────────────
 
   @SubscribeMessage('chat-message')
@@ -425,6 +489,7 @@ export class BiddingGateway
     const tick = () => {
       const state = this.timerState.get(itemId);
       if (!state) return;
+      if (state.paused) return;
 
       state.remaining -= 1;
 
@@ -463,6 +528,7 @@ export class BiddingGateway
         counterbidSeconds,
         auctionId,
         itemId,
+        paused: false,
       });
       this.server.to(`auction:${auctionId}`).emit('timer-update', {
         itemId,

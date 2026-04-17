@@ -62,6 +62,8 @@ interface UseSocketOptions {
   onShopUpdated?: (data: { auctionId: string; timestamp: number }) => void;
   onOfferReceived?: (data: { offerId: string; itemId: string; itemTitle: string; buyerName: string; amount: number; timestamp: number }) => void;
   onOfferResponded?: (data: { offerId: string; status: string; itemTitle: string; amount: number }) => void;
+  onTimerPaused?: (data: { itemId: string; remaining: number; reason: string }) => void;
+  onTimerResumed?: (data: { itemId: string; remaining: number }) => void;
 }
 
 export const useAuctionSocket = ({
@@ -81,6 +83,8 @@ export const useAuctionSocket = ({
   onShopUpdated,
   onOfferReceived,
   onOfferResponded,
+  onTimerPaused,
+  onTimerResumed,
 }: UseSocketOptions) => {
   const socketRef = useRef<Socket | null>(null);
 
@@ -115,6 +119,8 @@ export const useAuctionSocket = ({
     socket.off('shop-updated');
     socket.off('offer-received');
     socket.off('offer-responded');
+    socket.off('timer-paused');
+    socket.off('timer-resumed');
 
     socket.emit(SOCKET_EVENTS.JOIN_AUCTION, { auctionId, token });
 
@@ -131,6 +137,8 @@ export const useAuctionSocket = ({
     if (onShopUpdated) socket.on('shop-updated', onShopUpdated);
     if (onOfferReceived) socket.on('offer-received', onOfferReceived);
     if (onOfferResponded) socket.on('offer-responded', onOfferResponded);
+    if (onTimerPaused) socket.on('timer-paused', onTimerPaused);
+    if (onTimerResumed) socket.on('timer-resumed', onTimerResumed);
 
 
     if (onChatHistory) {
@@ -177,5 +185,13 @@ export const useAuctionSocket = ({
     });
   }, [auctionId]);
 
-  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated };
+  const pauseTimer = useCallback((itemId: string, sellerId: string) => {
+    socketRef.current?.emit('pause-item-timer', { auctionId, itemId, sellerId });
+  }, [auctionId]);
+
+  const resumeTimer = useCallback((itemId: string, sellerId: string) => {
+    socketRef.current?.emit('resume-item-timer', { auctionId, itemId, sellerId });
+  }, [auctionId]);
+
+  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer };
 };
