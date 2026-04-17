@@ -230,6 +230,15 @@ export class BiddingGateway
     @MessageBody() payload: PlaceBidPayload & { bidderId: string },
   ) {
     try {
+      // Block bids when timer is paused — seller disconnected
+      const timerState = this.timerState.get(payload.itemId);
+      if (timerState?.paused) {
+        client.emit('bid-error', {
+          message: 'Bidding is paused — seller is reconnecting.',
+        });
+        return;
+      }
+
       // ← Record IMMEDIATELY before any async work
       this.lastBidTime.set(payload.itemId, Date.now());
 

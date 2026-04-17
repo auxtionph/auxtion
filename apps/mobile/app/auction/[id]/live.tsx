@@ -189,6 +189,11 @@ export default function LiveAuctionRoom() {
     currentItemRef.current = currentItem;
   }, [currentItem]);
 
+  const auctionRef = useRef<AuctionDetail | null>(null);
+  useEffect(() => {
+    auctionRef.current = auction;
+  }, [auction]);
+
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
@@ -506,8 +511,8 @@ export default function LiveAuctionRoom() {
 
         if (elapsed >= 5000) {
           setBroadcasterReconnecting(true);
-          if (currentItemRef.current && user?.id) {
-            pauseTimer(currentItemRef.current.itemId, user.id);
+          if (currentItemRef.current && auctionRef.current?.seller.id) {
+            pauseTimer(currentItemRef.current.itemId, auctionRef.current.seller.id);
           }
           void auctionsApi.getById(id).then(data => {
             if (data.status === 'ENDED') {
@@ -522,8 +527,8 @@ export default function LiveAuctionRoom() {
         if (broadcasterReconnecting) {
           setBroadcasterReconnecting(false);
           setAuctionEnded(false);
-          if (currentItemRef.current && user?.id) {
-            resumeTimer(currentItemRef.current.itemId, user.id);
+          if (currentItemRef.current && auctionRef.current?.seller.id) {
+            resumeTimer(currentItemRef.current.itemId, auctionRef.current.seller.id);
           }
         }
       }
@@ -944,8 +949,10 @@ export default function LiveAuctionRoom() {
                   borderWidth: 1, borderColor: '#374151',
                   borderRadius: 14, paddingHorizontal: 16,
                   alignItems: 'center', justifyContent: 'center',
+                  opacity: broadcasterReconnecting ? 0.4 : 1,
                 }}
                 onPress={() => {
+                  if (broadcasterReconnecting) return;
                   setCustomBidInput('');
                   setShowCustomBid(true);
                 }}
@@ -965,6 +972,7 @@ export default function LiveAuctionRoom() {
                     : `Current: ${formatPHP(currentItem.currentPrice)}`
                   }
                   onBid={() => {
+                    if (broadcasterReconnecting) return;
                     const latest = currentItemRef.current;
                     if (!latest) return;
                     const bidAmount = latest.totalBids === 0
