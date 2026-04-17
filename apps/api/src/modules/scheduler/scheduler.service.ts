@@ -40,15 +40,14 @@ export class SchedulerService {
   // Runs every minute
   // If a SCHEDULED auction is past its startTime → shift to next 15-min slot
   // Also shift all subsequent SCHEDULED auctions by same delay
-  // If already shifted past startTime + 45min → cancel
+  // If already past originalStartTime + 45min → cancel
 
   @Cron('* * * * *')
   async autoCancelOverdueAuctions() {
     const now = new Date();
     const MAX_DELAY_MS = 45 * 60 * 1000;
-    const INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+    const INTERVAL_MS = 15 * 60 * 1000;
 
-    // Find SCHEDULED auctions where startTime has passed
     const overdue = await this.prisma.auction.findMany({
       where: {
         status: AuctionStatus.SCHEDULED,
@@ -58,13 +57,17 @@ export class SchedulerService {
     });
 
     for (const auction of overdue) {
-      const scheduledTime = new Date(auction.startTime);
-      const overdueMs = now.getTime() - scheduledTime.getTime();
+      // Use originalStartTime as the baseline — never the shifted time
+      const baseTime = auction.originalStartTime
+        ? new Date(auction.originalStartTime)
+        : new Date(auction.startTime);
 
-      // Past 45min window → cancel, don't shift subsequent
+      const overdueMs = now.getTime() - baseTime.getTime();
+
+      // Past 45min from ORIGINAL scheduled time → cancel
       if (overdueMs >= MAX_DELAY_MS) {
         this.logger.log(
-          `Cancelling overdue auction ${auction.id} — past 45min window`,
+          `Cancelling auction "${auction.title}" — past 45min from original start time`,
         );
         await this.prisma.auction.update({
           where: { id: auction.id },
@@ -73,33 +76,38 @@ export class SchedulerService {
         continue;
       }
 
-      // Snap to exact 15-min boundary (no floating point drift)
+      // Snap to next 15-min boundary
       const newStartTime = new Date(
         Math.ceil(now.getTime() / INTERVAL_MS) * INTERVAL_MS,
       );
-      // Zero out seconds and milliseconds for clean times
       newStartTime.setSeconds(0, 0);
 
-      // Only update if time actually changed
+      const scheduledTime = new Date(auction.startTime);
+
+      // No change needed
       if (newStartTime.getTime() === scheduledTime.getTime()) continue;
 
-      // Calculate shift in whole minutes to avoid ms drift
-      const shiftMinutes = Math.round(
-        (newStartTime.getTime() - scheduledTime.getTime()) / 60000,
-      );
-      const shiftMs = shiftMinutes * 60000;
+      const shiftMs =
+        Math.round(
+          (newStartTime.getTime() - scheduledTime.getTime()) / 60000,
+        ) * 60000;
 
       this.logger.log(
         `Shifting auction "${auction.title}" by ${Math.round(shiftMs / 60000)}min → ${newStartTime.toISOString()}`,
       );
 
-      // Shift this auction
+      // Shift this auction — record originalStartTime only on first shift
       await this.prisma.auction.update({
         where: { id: auction.id },
-        data: { startTime: newStartTime },
+        data: {
+          startTime: newStartTime,
+          ...(!auction.originalStartTime && {
+            originalStartTime: scheduledTime,
+          }),
+        },
       });
 
-      // Shift all subsequent SCHEDULED auctions by same amount
+      // Cascade shift to all subsequent SCHEDULED auctions for this seller
       const subsequent = await this.prisma.auction.findMany({
         where: {
           sellerId: auction.sellerId,
