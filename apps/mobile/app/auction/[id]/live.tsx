@@ -183,6 +183,7 @@ export default function LiveAuctionRoom() {
   const chatRef = useRef<FlatList>(null);
   const currentItemRef = useRef<CurrentItem | null>(null); 
   const [broadcasterReconnecting, setBroadcasterReconnecting] = useState(false);
+  const [viewerConnecting, setViewerConnecting] = useState(false);
 
   useEffect(() => {
     currentItemRef.current = currentItem;
@@ -525,6 +526,21 @@ export default function LiveAuctionRoom() {
       if (reconnectPollRef.current) clearInterval(reconnectPollRef.current);
     };
   }, []);
+
+  // ── Buyer own connection monitor ──────────────────────────────────
+  const wasJoinedRef = useRef(false);
+
+  useEffect(() => {
+    if (isSeller) return;
+
+    if (hms.isJoined) {
+      wasJoinedRef.current = true;
+      setViewerConnecting(false); // connected — clear overlay
+    } else if (wasJoinedRef.current) {
+      // Was connected before but now disconnected — buyer's own connection dropped
+      setViewerConnecting(true);
+    }
+  }, [hms.isJoined, isSeller]);
 
   const handleSendChat = () => {
     if (!chatInput.trim()) return;
@@ -1397,6 +1413,24 @@ export default function LiveAuctionRoom() {
               {saleToast.title} — {formatPHP(saleToast.amount)}
             </Text>
           </View>
+        </View>
+      )}
+
+      {/* ── Viewer Own Connection Lost ── */}
+      {viewerConnecting && !isSeller && !auctionEnded && (
+        <View style={{
+          position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.75)',
+          alignItems: 'center', justifyContent: 'center',
+          zIndex: 998,
+        }}>
+          <ActivityIndicator size="large" color="#F59E0B" style={{ marginBottom: 16 }} />
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 8 }}>
+            Reconnecting...
+          </Text>
+          <Text style={{ color: '#9CA3AF', fontSize: 14, textAlign: 'center', paddingHorizontal: 40, lineHeight: 22 }}>
+            Your connection was interrupted. Trying to reconnect to the stream...
+          </Text>
         </View>
       )}
 
