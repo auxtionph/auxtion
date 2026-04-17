@@ -29,6 +29,8 @@ export default function SellScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [goingLive, setGoingLive] = useState<string | null>(null);
   const [showQuickLive, setShowQuickLive] = useState(false);
+  const [pendingGoLiveId, setPendingGoLiveId] = useState<string | null>(null);
+  const [showGoLiveConfirm, setShowGoLiveConfirm] = useState(false);
   const [quickTitle, setQuickTitle] = useState('');
 
   const fetchAuctions = async () => {
@@ -54,20 +56,63 @@ export default function SellScreen() {
     setRefreshing(false);
   };
 
-  const handleGoLive = async (auctionId: string) => {
-    setGoingLive(auctionId);
+  const handleGoLive = (auctionId: string) => {
+    // Check if seller already has a live auction
+    const alreadyLive = auctions.find(a => a.status === 'LIVE');
+    if (alreadyLive) {
+      Alert.alert(
+        'Already Live',
+        `You already have a live auction "${alreadyLive.title}". End it first before starting a new one.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Rejoin Live',
+            onPress: () => router.push(`/auction/${alreadyLive.id}/live?role=broadcaster`),
+          },
+        ]
+      );
+      return;
+    }
+    setPendingGoLiveId(auctionId);
+    setShowGoLiveConfirm(true);
+  };
+
+  const confirmGoLive = async () => {
+    if (!pendingGoLiveId) return;
+    setShowGoLiveConfirm(false);
+    setGoingLive(pendingGoLiveId);
     try {
-      await auctionsApi.goLive(auctionId);
-      router.push(`/auction/${auctionId}/live?role=broadcaster`);
+      await auctionsApi.goLive(pendingGoLiveId);
+      router.push(`/auction/${pendingGoLiveId}/live?role=broadcaster`);
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.message ?? 'Failed to go live.');
     } finally {
       setGoingLive(null);
+      setPendingGoLiveId(null);
     }
   };
 
   const handleQuickLive = async () => {
     if (!quickTitle.trim()) return;
+
+    // Check if seller already has a live auction
+    const alreadyLive = auctions.find(a => a.status === 'LIVE');
+    if (alreadyLive) {
+      setShowQuickLive(false);
+      Alert.alert(
+        'Already Live',
+        `You already have a live auction "${alreadyLive.title}". End it first before starting a new one.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Rejoin Live',
+            onPress: () => router.push(`/auction/${alreadyLive.id}/live?role=broadcaster`),
+          },
+        ]
+      );
+      return;
+    }
+
     setLoading(true);
     setShowQuickLive(false);
     try {
@@ -379,6 +424,112 @@ export default function SellScreen() {
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+      {/* ── Go Live Confirmation Modal ── */}
+      <Modal
+        visible={showGoLiveConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowGoLiveConfirm(false)}
+      >
+        <View style={{
+          flex: 1, backgroundColor: 'rgba(0,0,0,0.75)',
+          alignItems: 'center', justifyContent: 'center',
+          paddingHorizontal: 24,
+        }}>
+          <View style={{
+            backgroundColor: '#111827', borderRadius: 24,
+            padding: 28, width: '100%',
+            borderWidth: 1, borderColor: '#1F2937',
+          }}>
+            {/* Icon */}
+            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+              <View style={{
+                width: 72, height: 72, borderRadius: 36,
+                backgroundColor: 'rgba(220,38,38,0.15)',
+                alignItems: 'center', justifyContent: 'center',
+                borderWidth: 1, borderColor: '#DC2626',
+                marginBottom: 16,
+              }}>
+                <Text style={{ fontSize: 32 }}>🔴</Text>
+              </View>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 20, marginBottom: 8 }}>
+                Ready to go live?
+              </Text>
+              <Text style={{ color: '#6B7280', fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
+                {(() => {
+                  const auction = auctions.find(a => a.id === pendingGoLiveId);
+                  return auction
+                    ? `"${auction.title}" will go live and viewers will be able to join and bid.`
+                    : 'Your auction will go live and viewers will be able to join.';
+                })()}
+              </Text>
+            </View>
+
+            {/* Checklist */}
+            <View style={{
+              backgroundColor: '#1F2937', borderRadius: 14,
+              padding: 16, marginBottom: 24, gap: 10,
+            }}>
+              {(() => {
+                const auction = auctions.find(a => a.id === pendingGoLiveId);
+                const itemCount = auction?.shopItems.length ?? 0;
+                return (
+                  <>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <Text style={{ fontSize: 16 }}>{itemCount > 0 ? '✅' : '⚠️'}</Text>
+                      <Text style={{ color: itemCount > 0 ? '#10B981' : '#F59E0B', fontSize: 13 }}>
+                        {itemCount > 0
+                          ? `${itemCount} item${itemCount !== 1 ? 's' : ''} ready`
+                          : 'No items added — you can add mid-live'}
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <Text style={{ fontSize: 16 }}>✅</Text>
+                      <Text style={{ color: '#10B981', fontSize: 13 }}>Stream will start automatically</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <Text style={{ fontSize: 16 }}>✅</Text>
+                      <Text style={{ color: '#10B981', fontSize: 13 }}>Buyers will be notified</Text>
+                    </View>
+                  </>
+                );
+              })()}
+            </View>
+
+            {/* Buttons */}
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#DC2626', borderRadius: 14,
+                paddingVertical: 16, alignItems: 'center', marginBottom: 10,
+              }}
+              onPress={() => void confirmGoLive()}
+              disabled={!!goingLive}
+            >
+              {goingLive ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+                  🔴 Yes, Go Live Now
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                backgroundColor: 'transparent', borderRadius: 14,
+                paddingVertical: 14, alignItems: 'center',
+                borderWidth: 1, borderColor: '#374151',
+              }}
+              onPress={() => {
+                setShowGoLiveConfirm(false);
+                setPendingGoLiveId(null);
+              }}
+            >
+              <Text style={{ color: '#6B7280', fontWeight: '600', fontSize: 15 }}>Not yet</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </View>
   );

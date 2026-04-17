@@ -7,6 +7,7 @@ import {
   Image,
   Alert,
   RefreshControl,
+  Modal,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useEffect, useState, useCallback } from 'react';
@@ -25,6 +26,7 @@ export default function AuctionDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [startingLive, setStartingLive] = useState(false);
+  const [showGoLiveModal, setShowGoLiveModal] = useState(false);
 
   const fetchAuction = useCallback(async () => {
     try {
@@ -52,29 +54,22 @@ export default function AuctionDetailScreen() {
     void fetchAuction();
   };
 
-  const handleGoLive = async () => {
+  const handleGoLive = () => {
     if (!auction) return;
-    Alert.alert(
-      'Go Live?',
-      'This will start your auction and viewers will be able to join.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Go Live 🔴',
-          onPress: async () => {
-            try {
-              setStartingLive(true);
-              await auctionsApi.goLive(id);
-              router.push(`/auction/${id}/live?role=broadcaster` as never);
-            } catch (e) {
-              Alert.alert('Error', 'Failed to start live. Please try again.');
-            } finally {
-              setStartingLive(false);
-            }
-          },
-        },
-      ],
-    );
+    setShowGoLiveModal(true);
+  };
+
+  const confirmGoLive = async () => {
+    try {
+      setStartingLive(true);
+      setShowGoLiveModal(false);
+      await auctionsApi.goLive(id);
+      router.push(`/auction/${id}/live?role=broadcaster` as never);
+    } catch {
+      Alert.alert('Error', 'Failed to start live. Please try again.');
+    } finally {
+      setStartingLive(false);
+    }
   };
 
   const handleRemoveItem = (item: { id: string; title: string }) => {
@@ -568,6 +563,98 @@ export default function AuctionDetailScreen() {
           </>
         )}
       </View>
+      {/* ── Go Live Confirmation Modal ── */}
+      <Modal
+        visible={showGoLiveModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowGoLiveModal(false)}
+      >
+        <View style={{
+          flex: 1, backgroundColor: 'rgba(0,0,0,0.75)',
+          alignItems: 'center', justifyContent: 'center',
+          paddingHorizontal: 24,
+        }}>
+          <View style={{
+            backgroundColor: '#111827', borderRadius: 24,
+            padding: 28, width: '100%',
+            borderWidth: 1, borderColor: '#1F2937',
+          }}>
+            {/* Icon */}
+            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+              <View style={{
+                width: 72, height: 72, borderRadius: 36,
+                backgroundColor: 'rgba(220,38,38,0.15)',
+                alignItems: 'center', justifyContent: 'center',
+                borderWidth: 1, borderColor: '#DC2626',
+                marginBottom: 16,
+              }}>
+                <Text style={{ fontSize: 32 }}>🔴</Text>
+              </View>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 20, marginBottom: 8 }}>
+                Ready to go live?
+              </Text>
+              <Text style={{ color: '#6B7280', fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
+                Your auction <Text style={{ color: '#fff', fontWeight: '600' }}>{auction?.title}</Text> will go live and viewers will be able to join and bid.
+              </Text>
+            </View>
+
+            {/* Checklist */}
+            <View style={{
+              backgroundColor: '#1F2937', borderRadius: 14,
+              padding: 16, marginBottom: 24, gap: 10,
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Text style={{ fontSize: 16 }}>{auction?.shopItems && auction.shopItems.length > 0 ? '✅' : '⚠️'}</Text>
+                <Text style={{ color: auction?.shopItems && auction.shopItems.length > 0 ? '#10B981' : '#F59E0B', fontSize: 13 }}>
+                  {auction?.shopItems && auction.shopItems.length > 0
+                    ? `${auction.shopItems.length} item${auction.shopItems.length !== 1 ? 's' : ''} ready`
+                    : 'No items added yet'}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Text style={{ fontSize: 16 }}>✅</Text>
+                <Text style={{ color: '#10B981', fontSize: 13 }}>Stream will start automatically</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Text style={{ fontSize: 16 }}>✅</Text>
+                <Text style={{ color: '#10B981', fontSize: 13 }}>Buyers will be notified</Text>
+              </View>
+            </View>
+
+            {/* Buttons */}
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#DC2626', borderRadius: 14,
+                paddingVertical: 16, alignItems: 'center', marginBottom: 10,
+              }}
+              onPress={() => void confirmGoLive()}
+              disabled={startingLive}
+            >
+              {startingLive ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+                  🔴 Yes, Go Live Now
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                backgroundColor: 'transparent', borderRadius: 14,
+                paddingVertical: 14, alignItems: 'center',
+                borderWidth: 1, borderColor: '#374151',
+              }}
+              onPress={() => setShowGoLiveModal(false)}
+            >
+              <Text style={{ color: '#6B7280', fontWeight: '600', fontSize: 15 }}>
+                Not yet
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

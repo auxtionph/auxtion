@@ -175,6 +175,15 @@ export class AuctionsService {
     if (auction.sellerId !== sellerId) {
       throw new ForbiddenException('You do not own this auction');
     }
+    // Prevent seller from having two live auctions simultaneously
+    const existingLive = await this.prisma.auction.findFirst({
+      where: { sellerId, status: AuctionStatus.LIVE },
+    });
+    if (existingLive) {
+      throw new BadRequestException(
+        'You already have a live auction. End it before starting a new one.',
+      );
+    }
     if (auction.status !== AuctionStatus.SCHEDULED) {
       throw new BadRequestException('Auction is not in scheduled status');
     }
