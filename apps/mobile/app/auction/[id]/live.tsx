@@ -88,6 +88,8 @@ function SwipeBidButton({ label, sublabel, onBid }: {
   const translateX = useRef(new Animated.Value(0)).current;
   const THRESHOLD = SCREEN_WIDTH * 0.55;
   const MAX_DRAG = SCREEN_WIDTH - 32 - 56;
+  const onBidRef = useRef(onBid);
+  useEffect(() => { onBidRef.current = onBid; }, [onBid]);
 
   const panResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
@@ -98,8 +100,7 @@ function SwipeBidButton({ label, sublabel, onBid }: {
     },
     onPanResponderRelease: (_, g) => {
       if (g.dx >= THRESHOLD) {
-        // ← Fire bid IMMEDIATELY, don't wait for animation
-        onBid();
+        onBidRef.current();
         // Then animate back
         Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
       } else {
@@ -182,8 +183,10 @@ export default function LiveAuctionRoom() {
 
   const chatRef = useRef<FlatList>(null);
   const currentItemRef = useRef<CurrentItem | null>(null); 
+  const bidStateReceivedRef = useRef(false);
   const [broadcasterReconnecting, setBroadcasterReconnecting] = useState(false);
   const [viewerConnecting, setViewerConnecting] = useState(false);
+  const pendingBidStateRef = useRef<BidUpdateData | null>(null);
 
   useEffect(() => {
     currentItemRef.current = currentItem;
@@ -207,13 +210,33 @@ export default function LiveAuctionRoom() {
       setAuction(data);
       const liveItem = data.shopItems.find(i => i.status === 'LIVE');
       if (liveItem) {
-        setCurrentItem({
-          itemId: liveItem.id,
-          title: liveItem.title,
-          currentPrice: liveItem.price,
-          photos: liveItem.photos,
-          totalBids: 0,
+        setCurrentItem(prev => {
+          if (prev && prev.itemId === liveItem.id && prev.totalBids > 0) return prev;
+          const base = {
+            itemId: liveItem.id,
+            title: liveItem.title,
+            currentPrice: liveItem.price,
+            photos: liveItem.photos,
+            totalBids: 0,
+          };
+          // Apply pending bid state if it exists for this item
+          const pending = pendingBidStateRef.current;
+          if (pending && pending.itemId === liveItem.id) {
+            const updated = {
+              ...base,
+              currentPrice: pending.amount,
+              totalBids: pending.totalBids,
+              highestBidderName: pending.bidderName,
+            };
+            currentItemRef.current = updated;
+            return updated;
+          }
+          return base;
         });
+        // Restore winner banner if bid state was pending
+        if (pendingBidStateRef.current) {
+          setWinnerBanner(`${pendingBidStateRef.current.bidderName} is winning!`);
+        }
       }
     });
   }, [id]);
@@ -232,12 +255,19 @@ export default function LiveAuctionRoom() {
     auctionId: id,
     userId: user?.id,
     onBidUpdate: useCallback((data: BidUpdateData) => {
-      setCurrentItem(prev => prev ? {
-        ...prev,
-        currentPrice: data.amount,
-        totalBids: data.totalBids,
-        highestBidderName: data.bidderName,
-      } : prev);
+      bidStateReceivedRef.current = true;
+      pendingBidStateRef.current = data; // always store latest
+      setCurrentItem(prev => {
+        if (!prev) return prev; // will be applied via getById + pendingBidStateRef
+        const updated = {
+          ...prev,
+          currentPrice: data.amount,
+          totalBids: data.totalBids,
+          highestBidderName: data.bidderName,
+        };
+        currentItemRef.current = updated;
+        return updated;
+      });
       setWinnerBanner(`${data.bidderName} is winning!`);
     }, []),
     onBidConfirmed: useCallback(() => {}, []),
@@ -254,6 +284,7 @@ export default function LiveAuctionRoom() {
       }]);
     }, []),
     onItemStarted: useCallback((data: ItemStartedData) => {
+      bidStateReceivedRef.current = false;
       setCurrentItem({
         itemId: data.itemId,
         title: data.title,
