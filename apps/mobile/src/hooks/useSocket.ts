@@ -47,6 +47,7 @@ export interface TimerStarted {
 
 interface UseSocketOptions {
   auctionId: string;
+  userId?: string;
   onBidUpdate?: (data: BidUpdate) => void;
   onBidConfirmed?: (data: BidUpdate) => void;
   onBidError?: (error: { message: string }) => void;
@@ -68,6 +69,7 @@ interface UseSocketOptions {
 
 export const useAuctionSocket = ({
   auctionId,
+  userId,
   onBidUpdate,
   onBidConfirmed,
   onBidError,
@@ -103,6 +105,7 @@ export const useAuctionSocket = ({
     await connectSocket();
     const socket = getSocket();
     socketRef.current = socket;
+    socket.emit(SOCKET_EVENTS.JOIN_AUCTION, { auctionId, token, sellerId: userId });
 
     socket.off(SOCKET_EVENTS.BID_UPDATE);
     socket.off(SOCKET_EVENTS.BID_CONFIRMED);
@@ -121,8 +124,6 @@ export const useAuctionSocket = ({
     socket.off('offer-responded');
     socket.off('timer-paused');
     socket.off('timer-resumed');
-
-    socket.emit(SOCKET_EVENTS.JOIN_AUCTION, { auctionId, token });
 
     if (onBidUpdate) socket.on(SOCKET_EVENTS.BID_UPDATE, onBidUpdate);
     if (onBidConfirmed) socket.on(SOCKET_EVENTS.BID_CONFIRMED, onBidConfirmed);

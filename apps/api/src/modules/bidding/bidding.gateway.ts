@@ -21,6 +21,7 @@ interface PlaceBidPayload {
 
 interface JoinAuctionPayload {
   auctionId: string;
+  sellerId?: string;
 }
 
 interface StartItemPayload {
@@ -59,6 +60,8 @@ export class BiddingGateway
   private activeTimers = new Map<string, NodeJS.Timeout>();
   private timerState = new Map<string, TimerState>();
   private lastBidTime = new Map<string, number>();
+  // Map of auctionId → seller's socket ID
+  private sellerSockets = new Map<string, string>();
 
   constructor(
     private readonly biddingService: BiddingService,
@@ -78,6 +81,30 @@ export class BiddingGateway
         const auctionId = room.replace('auction:', '');
         this.decrementViewers(auctionId);
         this.broadcastViewerCount(auctionId);
+
+        // Only pause timer if the seller disconnected
+        const sellerSocketId = this.sellerSockets.get(auctionId);
+        if (sellerSocketId === client.id) {
+          this.sellerSockets.delete(auctionId);
+          this.timerState.forEach((state, itemId) => {
+            if (state.auctionId === auctionId && !state.paused) {
+              state.paused = true;
+              const existing = this.activeTimers.get(itemId);
+              if (existing) {
+                clearTimeout(existing);
+                this.activeTimers.delete(itemId);
+              }
+              this.logger.log(
+                `Timer PAUSED — seller disconnected from auction ${auctionId}`,
+              );
+              this.server.to(`auction:${auctionId}`).emit('timer-paused', {
+                itemId,
+                remaining: state.remaining,
+                reason: 'seller_disconnected',
+              });
+            }
+          });
+        }
       }
     });
   }
@@ -91,6 +118,21 @@ export class BiddingGateway
   ) {
     const room = `auction:${payload.auctionId}`;
     await client.join(room);
+
+    // Track if this is the seller joining
+    const auction = await this.prisma.auction.findUnique({
+      where: { id: payload.auctionId },
+      select: { sellerId: true },
+    });
+    if (auction) {
+      // We'll identify seller by sellerId passed in payload
+      if (payload.sellerId === auction.sellerId) {
+        this.sellerSockets.set(payload.auctionId, client.id);
+        this.logger.log(
+          `Seller socket tracked: ${client.id} for auction ${payload.auctionId}`,
+        );
+      }
+    }
 
     this.incrementViewers(payload.auctionId);
     this.broadcastViewerCount(payload.auctionId);

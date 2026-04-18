@@ -227,8 +227,10 @@ export default function LiveAuctionRoom() {
   const [saleToast, setSaleToast] = useState<{ winner: string; amount: number; title: string } | null>(null);
 
   const [timerPaused, setTimerPaused] = useState(false);
+  const [showResumeModal, setShowResumeModal] = useState(false);
   const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer } = useAuctionSocket({
     auctionId: id,
+    userId: user?.id,
     onBidUpdate: useCallback((data: BidUpdateData) => {
       setCurrentItem(prev => prev ? {
         ...prev,
@@ -353,7 +355,10 @@ export default function LiveAuctionRoom() {
 
     onTimerPaused: useCallback(() => {
       setTimerPaused(true);
-    }, []),
+      if (isSeller) {
+        setShowResumeModal(true);
+      }
+    }, [isSeller]),
     onTimerResumed: useCallback((data: { itemId: string; remaining: number }) => {
       setTimerPaused(false);
       setTimerRemaining(data.remaining);
@@ -557,6 +562,20 @@ export default function LiveAuctionRoom() {
     } else if (wasJoinedRef.current) {
       // Was connected before but now disconnected — buyer's own connection dropped
       setViewerConnecting(true);
+    }
+  }, [hms.isJoined, isSeller]);
+
+  // ── Seller rejoin — show resume/cancel choice if timer was paused ──
+  useEffect(() => {
+    if (!isSeller) return;
+    if (!hms.isJoined) return;
+    // Check if there's an active item with paused timer when seller joins
+    if (currentItem && timerRemaining !== null) {
+      // Small delay to let socket events settle after joining
+      const timeout = setTimeout(() => {
+        setShowResumeModal(true);
+      }, 1500);
+      return () => clearTimeout(timeout);
     }
   }, [hms.isJoined, isSeller]);
 
@@ -1816,6 +1835,119 @@ export default function LiveAuctionRoom() {
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+      {/* ── Seller Rejoin — Resume or Cancel Item ── */}
+      <Modal
+        visible={showResumeModal && isSeller}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {}}
+      >
+        <View style={{
+          flex: 1, backgroundColor: 'rgba(0,0,0,0.85)',
+          alignItems: 'center', justifyContent: 'center',
+          paddingHorizontal: 24,
+        }}>
+          <View style={{
+            backgroundColor: '#111827', borderRadius: 24,
+            padding: 28, width: '100%',
+            borderWidth: 1, borderColor: '#1F2937',
+          }}>
+            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+              <Text style={{ fontSize: 40, marginBottom: 12 }}>⏸️</Text>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 20, marginBottom: 8, textAlign: 'center' }}>
+                Bidding is paused
+              </Text>
+              <Text style={{ color: '#6B7280', fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
+                You disconnected while{' '}
+                <Text style={{ color: '#fff', fontWeight: '600' }}>
+                  {currentItem?.title}
+                </Text>
+                {' '}was being auctioned.
+              </Text>
+            </View>
+
+            {/* Item info */}
+            <View style={{
+              backgroundColor: '#1F2937', borderRadius: 14,
+              padding: 16, marginBottom: 24,
+            }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Current bid</Text>
+                <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 15 }}>
+                  {currentItem ? formatPHP(currentItem.currentPrice) : '—'}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Total bids</Text>
+                <Text style={{ color: '#fff', fontSize: 13 }}>
+                  {currentItem?.totalBids ?? 0}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Time remaining</Text>
+                <Text style={{ color: '#6B7280', fontSize: 13 }}>
+                  {timerRemaining !== null ? `${timerRemaining}s` : '—'} (paused)
+                </Text>
+              </View>
+            </View>
+
+            {/* Resume */}
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#DC2626', borderRadius: 14,
+                paddingVertical: 16, alignItems: 'center', marginBottom: 10,
+              }}
+              onPress={() => {
+                if (!currentItem || !auctionRef.current?.seller.id) return;
+                resumeTimer(currentItem.itemId, auctionRef.current.seller.id);
+                setShowResumeModal(false);
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+                ▶ Resume Bidding
+              </Text>
+              <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>
+                Timer continues from {timerRemaining}s
+              </Text>
+            </TouchableOpacity>
+
+            {/* Cancel item */}
+            <TouchableOpacity
+              style={{
+                backgroundColor: 'transparent', borderRadius: 14,
+                paddingVertical: 14, alignItems: 'center',
+                borderWidth: 1, borderColor: '#374151',
+              }}
+              onPress={async () => {
+                if (!currentItem) return;
+                try {
+                  const { apiClient } = await import('../../../src/services/api/client');
+                  // Clear the timer on backend
+                  if (auctionRef.current?.seller.id) {
+                    pauseTimer(currentItem.itemId, auctionRef.current.seller.id);
+                  }
+                  // Reset item back to QUEUED
+                  await apiClient.patch(`/shop-items/${currentItem.itemId}/reset`);
+                  setCurrentItem(null);
+                  setTimerRemaining(null);
+                  setTimerPaused(false);
+                  setShowResumeModal(false);
+                  notifyShopUpdated();
+                } catch {
+                  Alert.alert('Error', 'Failed to cancel item. Try again.');
+                }
+              }}
+            >
+              <Text style={{ color: '#6B7280', fontWeight: '600', fontSize: 15 }}>
+                Cancel This Item
+              </Text>
+              <Text style={{ color: '#4B5563', fontSize: 12, marginTop: 2 }}>
+                No transaction — item goes back to queue
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </View>
   );
