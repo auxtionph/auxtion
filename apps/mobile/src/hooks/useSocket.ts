@@ -123,6 +123,7 @@ export const useAuctionSocket = ({
     socket.off('offer-responded');
     socket.off('timer-paused');
     socket.off('timer-resumed');
+    socket.off('bid-state');
 
     if (onBidUpdate) socket.on(SOCKET_EVENTS.BID_UPDATE, onBidUpdate);
     if (onBidConfirmed) socket.on(SOCKET_EVENTS.BID_CONFIRMED, onBidConfirmed);
@@ -139,6 +140,25 @@ export const useAuctionSocket = ({
     if (onOfferResponded) socket.on('offer-responded', onOfferResponded);
     if (onTimerPaused) socket.on('timer-paused', onTimerPaused);
     if (onTimerResumed) socket.on('timer-resumed', onTimerResumed);
+    socket.on('bid-state', (data: {
+      itemId: string;
+      currentPrice: number;
+      highestBidderId: string | null;
+      highestBidderName: string | null;
+      totalBids: number;
+    }) => {
+      if (onBidUpdate) {
+        onBidUpdate({
+          auctionId,
+          itemId: data.itemId,
+          bidderId: data.highestBidderId ?? '',
+          bidderName: data.highestBidderName ?? '',
+          amount: data.currentPrice,
+          totalBids: data.totalBids,
+          timestamp: Date.now(),
+        });
+      }
+    });
 
     if (onChatHistory) {
       socket.on('chat-history', (messages: ChatMessage[]) => {

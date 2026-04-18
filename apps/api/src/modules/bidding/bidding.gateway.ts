@@ -163,8 +163,15 @@ export class BiddingGateway
 
     // Send current bid state to joining client
     try {
-      const bidState = await this.biddingService.getBidState(payload.auctionId);
-      client.emit('bid-state', bidState);
+      const activeItem = [...this.timerState.values()].find(
+        (s) => s.auctionId === payload.auctionId,
+      );
+      if (activeItem) {
+        const bidState = await this.biddingService.getBidState(
+          activeItem.itemId,
+        );
+        client.emit('bid-state', bidState);
+      }
     } catch {
       // No active item yet
     }

@@ -1,9 +1,7 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
-const API_BASE_URL = __DEV__
-  ? 'https://auxtion-production.up.railway.app/api/v1'
-  : 'https://auxtion-production.up.railway.app/api/v1';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'https://auxtion-production.up.railway.app/api/v1';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -18,28 +16,3 @@ apiClient.interceptors.request.use(async (config) => {
   }
   return config;
 });
-
-apiClient.interceptors.response.use(
-  (response) => response,
-  async (error) => {
-    const originalRequest = error.config;
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-      try {
-        const refreshToken = await SecureStore.getItemAsync('refreshToken');
-        if (!refreshToken) throw new Error('No refresh token');
-        const response = await axios.post(`${API_BASE_URL}/auth/refresh`, null, {
-          headers: { Authorization: `Bearer ${refreshToken}` },
-        });
-        const { accessToken } = response.data.data as { accessToken: string };
-        await SecureStore.setItemAsync('accessToken', accessToken);
-        originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-        return apiClient(originalRequest);
-      } catch {
-        await SecureStore.deleteItemAsync('accessToken');
-        await SecureStore.deleteItemAsync('refreshToken');
-      }
-    }
-    return Promise.reject(error);
-  },
-);
