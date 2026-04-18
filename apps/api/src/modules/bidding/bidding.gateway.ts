@@ -56,21 +56,16 @@ export class BiddingGateway
   server!: Server;
 
   private readonly logger = new Logger(BiddingGateway.name);
-  private viewerCounts = new Map<string, number>();
   private activeTimers = new Map<string, NodeJS.Timeout>();
   private timerState = new Map<string, TimerState>();
   private lastBidTime = new Map<string, number>();
-  // auctionId → Set of seller socket IDs (seller can have multiple briefly during reconnect)
   private sellerSockets = new Map<string, Set<string>>();
-  // socketId → auctionId (for quick lookup on disconnect)
   private socketToAuction = new Map<string, string>();
 
   constructor(
     private readonly biddingService: BiddingService,
     private readonly prisma: PrismaService,
   ) {}
-
-  // ── Connection ─────────────────────────────────────────────────────────────
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
@@ -79,7 +74,6 @@ export class BiddingGateway
   handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
 
-    // Check if this was a seller socket
     const auctionId = this.socketToAuction.get(client.id);
     if (auctionId) {
       this.socketToAuction.delete(client.id);
@@ -90,7 +84,6 @@ export class BiddingGateway
           `Seller socket removed: ${client.id}, remaining: ${sellerSet.size}`,
         );
 
-        // Only pause when ALL seller sockets are gone
         if (sellerSet.size === 0) {
           this.sellerSockets.delete(auctionId);
           this.timerState.forEach((state, itemId) => {
@@ -115,17 +108,13 @@ export class BiddingGateway
       }
     }
 
-    // Always handle viewer count
     client.rooms.forEach((room) => {
       if (room.startsWith('auction:')) {
         const aid = room.replace('auction:', '');
-        this.decrementViewers(aid);
-        this.broadcastViewerCount(aid);
+        void this.broadcastViewerCount(aid);
       }
     });
   }
-
-  // ── Join ───────────────────────────────────────────────────────────────────
 
   @SubscribeMessage('join-auction')
   async handleJoinAuction(
@@ -136,7 +125,6 @@ export class BiddingGateway
     await client.join(room);
     this.logger.log(`Join payload: ${JSON.stringify(payload)}`);
 
-    // Track if this is the seller joining
     const auction = await this.prisma.auction.findUnique({
       where: { id: payload.auctionId },
       select: { sellerId: true },
@@ -145,7 +133,6 @@ export class BiddingGateway
       this.logger.log(
         `Join payload sellerId: ${payload.sellerId ?? 'none'}, auction sellerId: ${auction.sellerId}`,
       );
-      // We'll identify seller by sellerId passed in payload
       if (payload.sellerId === auction.sellerId) {
         if (!this.sellerSockets.has(payload.auctionId)) {
           this.sellerSockets.set(payload.auctionId, new Set());
@@ -158,10 +145,8 @@ export class BiddingGateway
       }
     }
 
-    this.incrementViewers(payload.auctionId);
-    this.broadcastViewerCount(payload.auctionId);
+    await this.broadcastViewerCount(payload.auctionId);
 
-    // Send current bid state to joining client
     try {
       const activeItem = [...this.timerState.values()].find(
         (s) => s.auctionId === payload.auctionId,
@@ -176,7 +161,6 @@ export class BiddingGateway
       // No active item yet
     }
 
-    // ✅ Send active timer state to late joiners
     const activeItem = [...this.timerState.values()].find(
       (s) => s.auctionId === payload.auctionId,
     );
@@ -188,7 +172,6 @@ export class BiddingGateway
       });
     }
 
-    // ✅ Send last 100 chat messages to this client only
     const history = await this.prisma.auctionChatMessage.findMany({
       where: { auctionId: payload.auctionId },
       orderBy: { createdAt: 'asc' },
@@ -211,8 +194,6 @@ export class BiddingGateway
     return { event: 'joined', room };
   }
 
-  // ── Leave ──────────────────────────────────────────────────────────────────
-
   @SubscribeMessage('leave-auction')
   async handleLeaveAuction(
     @ConnectedSocket() client: Socket,
@@ -220,12 +201,9 @@ export class BiddingGateway
   ) {
     const room = `auction:${payload.auctionId}`;
     await client.leave(room);
-    this.decrementViewers(payload.auctionId);
-    this.broadcastViewerCount(payload.auctionId);
+    await this.broadcastViewerCount(payload.auctionId);
     return { event: 'left', room };
   }
-
-  // ── Start Item Timer ───────────────────────────────────────────────────────
 
   @SubscribeMessage('start-item-timer')
   async handleStartItemTimer(
@@ -235,7 +213,6 @@ export class BiddingGateway
     const { auctionId, itemId, sellerId, startSeconds, counterbidSeconds } =
       payload;
 
-    // Validate seller owns auction
     const auction = await this.prisma.auction.findUnique({
       where: { id: auctionId },
     });
@@ -244,19 +221,14 @@ export class BiddingGateway
       return;
     }
 
-    // Clear any existing timer for this item
     this.clearTimer(itemId);
-
-    // Start item bidding in DB
     await this.biddingService.startItemBidding(sellerId, auctionId, itemId);
 
-    // Get item details for broadcast
     const item = await this.prisma.shopItem.findUnique({
       where: { id: itemId },
     });
     if (!item) return;
 
-    // Set timer state
     this.timerState.set(itemId, {
       remaining: startSeconds,
       counterbidSeconds,
@@ -265,7 +237,6 @@ export class BiddingGateway
       paused: false,
     });
 
-    // Broadcast item started
     this.server.to(`auction:${auctionId}`).emit('item-started', {
       itemId: item.id,
       title: item.title,
@@ -274,17 +245,14 @@ export class BiddingGateway
       timestamp: Date.now(),
     });
 
-    // Broadcast timer started
     this.server.to(`auction:${auctionId}`).emit('timer-started', {
       itemId,
       remaining: startSeconds,
       counterbidSeconds,
     });
 
-    // Start countdown
     this.startCountdown(auctionId, itemId);
 
-    // Notify all clients shop state changed
     this.server.to(`auction:${auctionId}`).emit('shop-updated', {
       auctionId,
       timestamp: Date.now(),
@@ -295,15 +263,12 @@ export class BiddingGateway
     );
   }
 
-  // ── Place Bid ──────────────────────────────────────────────────────────────
-
   @SubscribeMessage('place-bid')
   async handlePlaceBid(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: PlaceBidPayload & { bidderId: string },
   ) {
     try {
-      // Block bids when timer is paused — seller disconnected
       const timerState = this.timerState.get(payload.itemId);
       if (timerState?.paused) {
         client.emit('bid-error', {
@@ -312,7 +277,6 @@ export class BiddingGateway
         return;
       }
 
-      // ← Record IMMEDIATELY before any async work
       this.lastBidTime.set(payload.itemId, Date.now());
 
       const result = await this.biddingService.placeBid(
@@ -322,7 +286,6 @@ export class BiddingGateway
         payload.amount,
       );
 
-      // ✅ Counterbid reset — reset if within counterbid window OR if timer just expired
       const state = this.timerState.get(payload.itemId);
       if (
         state &&
@@ -331,20 +294,14 @@ export class BiddingGateway
         this.logger.log(
           `Counterbid! Resetting timer to ${state.counterbidSeconds}s`,
         );
-
-        // Clear current tick
         const existing = this.activeTimers.get(payload.itemId);
         if (existing) clearTimeout(existing);
-
         state.remaining = state.counterbidSeconds;
-
         this.server.to(`auction:${payload.auctionId}`).emit('timer-update', {
           itemId: payload.itemId,
           remaining: state.counterbidSeconds,
           isCounterbid: true,
         });
-
-        // Restart countdown from reset value
         this.startCountdown(payload.auctionId, payload.itemId);
       }
 
@@ -372,8 +329,6 @@ export class BiddingGateway
     }
   }
 
-  // ── Start Item (legacy — no timer) ─────────────────────────────────────────
-
   @SubscribeMessage('start-item')
   async handleStartItem(
     @ConnectedSocket() client: Socket,
@@ -386,7 +341,6 @@ export class BiddingGateway
         payload.auctionId,
         payload.itemId,
       );
-
       this.server.to(`auction:${payload.auctionId}`).emit('item-started', {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         itemId: item.id,
@@ -398,7 +352,6 @@ export class BiddingGateway
         photos: item.photos,
         timestamp: Date.now(),
       });
-
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       return { success: true, item };
     } catch (error) {
@@ -409,8 +362,6 @@ export class BiddingGateway
     }
   }
 
-  // ── End Item ───────────────────────────────────────────────────────────────
-
   @SubscribeMessage('end-item')
   async handleEndItem(
     @ConnectedSocket() client: Socket,
@@ -418,24 +369,20 @@ export class BiddingGateway
   ) {
     try {
       this.clearTimer(payload.itemId);
-
       const result = await this.biddingService.endItemBidding(
         payload.sellerId,
         payload.auctionId,
         payload.itemId,
       );
-
       this.server.to(`auction:${payload.auctionId}`).emit('item-ended', {
         itemId: payload.itemId,
         winner: result.winner,
         timestamp: Date.now(),
       });
-
       this.server.to(`auction:${payload.auctionId}`).emit('shop-updated', {
         auctionId: payload.auctionId,
         timestamp: Date.now(),
       });
-
       return { success: true, result };
     } catch (error) {
       const message =
@@ -453,7 +400,6 @@ export class BiddingGateway
     });
   }
 
-  // ── Pause Timer (seller disconnected) ─────────────────────────────
   @SubscribeMessage('pause-item-timer')
   handlePauseTimer(
     @MessageBody()
@@ -465,12 +411,9 @@ export class BiddingGateway
   ) {
     const state = this.timerState.get(payload.itemId);
     if (!state || state.auctionId !== payload.auctionId) return;
-
     if (!payload.sellerId) return;
 
     state.paused = true;
-
-    // Stop the tick
     const existing = this.activeTimers.get(payload.itemId);
     if (existing) {
       clearTimeout(existing);
@@ -480,7 +423,6 @@ export class BiddingGateway
     this.logger.log(
       `Timer PAUSED for item ${payload.itemId} — seller disconnected`,
     );
-
     this.server.to(`auction:${payload.auctionId}`).emit('timer-paused', {
       itemId: payload.itemId,
       remaining: state.remaining,
@@ -488,7 +430,6 @@ export class BiddingGateway
     });
   }
 
-  // ── Resume Timer (seller reconnected) ─────────────────────────────
   @SubscribeMessage('resume-item-timer')
   handleResumeTimer(
     @MessageBody()
@@ -502,20 +443,16 @@ export class BiddingGateway
     if (!state || state.auctionId !== payload.auctionId) return;
 
     state.paused = false;
-
     this.logger.log(
       `Timer RESUMED for item ${payload.itemId} at ${state.remaining}s`,
     );
-
     this.server.to(`auction:${payload.auctionId}`).emit('timer-resumed', {
       itemId: payload.itemId,
       remaining: state.remaining,
     });
-
     this.startCountdown(payload.auctionId, payload.itemId);
   }
 
-  // ── Cancel Item Timer (seller cancelled item after reconnect) ──────
   @SubscribeMessage('cancel-item-timer')
   handleCancelItemTimer(
     @MessageBody() payload: { auctionId: string; itemId: string },
@@ -527,20 +464,16 @@ export class BiddingGateway
       itemId: payload.itemId,
       remaining: 0,
     });
-
     this.server.to(`auction:${payload.auctionId}`).emit('item-ended', {
       itemId: payload.itemId,
       winner: null,
       timestamp: Date.now(),
     });
-
     this.server.to(`auction:${payload.auctionId}`).emit('shop-updated', {
       auctionId: payload.auctionId,
       timestamp: Date.now(),
     });
   }
-
-  // ── Chat ───────────────────────────────────────────────────────────────────
 
   @SubscribeMessage('chat-message')
   async handleChatMessage(
@@ -554,7 +487,6 @@ export class BiddingGateway
     },
   ) {
     const timestamp = Date.now();
-
     await this.prisma.auctionChatMessage.create({
       data: {
         auctionId: payload.auctionId,
@@ -564,7 +496,6 @@ export class BiddingGateway
         timestamp: BigInt(timestamp),
       },
     });
-
     this.server.to(`auction:${payload.auctionId}`).emit('chat-message', {
       userId: payload.userId,
       displayName: payload.displayName,
@@ -573,24 +504,18 @@ export class BiddingGateway
     });
   }
 
-  // ── End Auction ────────────────────────────────────────────────────────────
-
   @SubscribeMessage('end-auction')
   handleEndAuction(@MessageBody() payload: { auctionId: string }) {
-    // Clear all timers for this auction
     this.timerState.forEach((state, itemId) => {
       if (state.auctionId === payload.auctionId) {
         this.clearTimer(itemId);
       }
     });
-
     this.server.to(`auction:${payload.auctionId}`).emit('auction-ended', {
       auctionId: payload.auctionId,
       timestamp: Date.now(),
     });
   }
-
-  // ── Timer Internals ────────────────────────────────────────────────────────
 
   private startCountdown(auctionId: string, itemId: string) {
     const tick = () => {
@@ -599,7 +524,6 @@ export class BiddingGateway
       if (state.paused) return;
 
       state.remaining -= 1;
-
       this.server.to(`auction:${auctionId}`).emit('timer-update', {
         itemId,
         remaining: state.remaining,
@@ -607,7 +531,6 @@ export class BiddingGateway
       });
 
       if (state.remaining <= 0) {
-        // ← Don't clear timerState yet — handleTimerExpired needs it
         const existing = this.activeTimers.get(itemId);
         if (existing) clearTimeout(existing);
         this.activeTimers.delete(itemId);
@@ -626,7 +549,6 @@ export class BiddingGateway
     const state = this.timerState.get(itemId);
     const lastBid = this.lastBidTime.get(itemId);
 
-    // Snipe protection
     if (lastBid && Date.now() - lastBid < 3000) {
       this.logger.log(`Snipe detected — extending timer`);
       const counterbidSeconds = state?.counterbidSeconds ?? 5;
@@ -646,10 +568,8 @@ export class BiddingGateway
       return;
     }
 
-    // Now clean up
     this.timerState.delete(itemId);
     this.lastBidTime.delete(itemId);
-
     this.logger.log(`Timer expired — auto-selling item ${itemId}`);
 
     try {
@@ -664,17 +584,14 @@ export class BiddingGateway
         itemId,
       );
 
-      this.server.to(`auction:${auctionId}`).emit('timer-ended', {
-        itemId,
-        timestamp: Date.now(),
-      });
-
+      this.server
+        .to(`auction:${auctionId}`)
+        .emit('timer-ended', { itemId, timestamp: Date.now() });
       this.server.to(`auction:${auctionId}`).emit('item-ended', {
         itemId,
         winner: result.winner,
         timestamp: Date.now(),
       });
-
       this.server.to(`auction:${auctionId}`).emit('shop-updated', {
         auctionId,
         timestamp: Date.now(),
@@ -688,7 +605,6 @@ export class BiddingGateway
     }
   }
 
-  // ── Public emit helper (used by OffersService) ─────────────────────────────
   emitToAuction(auctionId: string, event: string, data: unknown) {
     this.server.to(`auction:${auctionId}`).emit(event, data);
   }
@@ -702,20 +618,9 @@ export class BiddingGateway
     this.timerState.delete(itemId);
   }
 
-  // ── Viewer Count ───────────────────────────────────────────────────────────
-
-  private incrementViewers(auctionId: string) {
-    const current = this.viewerCounts.get(auctionId) ?? 0;
-    this.viewerCounts.set(auctionId, current + 1);
-  }
-
-  private decrementViewers(auctionId: string) {
-    const current = this.viewerCounts.get(auctionId) ?? 0;
-    this.viewerCounts.set(auctionId, Math.max(0, current - 1));
-  }
-
-  private broadcastViewerCount(auctionId: string) {
-    const count = this.viewerCounts.get(auctionId) ?? 0;
+  private async broadcastViewerCount(auctionId: string) {
+    const sockets = await this.server.in(`auction:${auctionId}`).fetchSockets();
+    const count = sockets.length;
     this.server.to(`auction:${auctionId}`).emit('viewer-count', { count });
   }
 }
