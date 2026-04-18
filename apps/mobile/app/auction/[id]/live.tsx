@@ -400,32 +400,56 @@ export default function LiveAuctionRoom() {
     const price = parseInt(newItemPrice.replace(/[^0-9]/g, ''), 10);
     if (!newItemTitle.trim() || !price) return;
     setAddingItem(true);
+
+    const title = newItemTitle.trim();
+    const itemPrice = price * 100;
+    setNewItemTitle('');
+    setNewItemPrice('');
+    setShowAddItem(false);
+
+    // ✅ For "Run Now" — open Start Bidding modal immediately with a placeholder
+    // We'll update selectedItem with the real ID once API resolves
+    if (mode === 'now') {
+      setSelectedItem({ id: '__pending__', title, price: itemPrice });
+      setShowStartItem(true);
+    }
+
     try {
       const { apiClient } = await import('../../../src/services/api/client');
       const { shopItemsApi } = await import('../../../src/services/api/shop-items.api');
 
       const newItem = await shopItemsApi.create({
-        title: newItemTitle.trim(),
-        description: `${newItemTitle.trim()} - item`,
+        title,
+        description: `${title} - item`,
         photos: [],
-        price: price * 100,
+        price: itemPrice,
         type: mode === 'buynow' ? 'BUY_NOW' : 'AUCTION',
       });
 
-      // Always assign to auction so it appears in shop drawer
       await apiClient.post(`/auctions/${id}/items/${newItem.id}`);
 
-      const updated = await auctionsApi.getById(id);
-      setAuction(updated);
+      // ✅ Optimistic update — no getById needed
+      setAuction(prev => {
+        if (!prev) return prev;
+        const optimisticItem: typeof prev.shopItems[0] = {
+          id: newItem.id,
+          title: newItem.title,
+          photos: newItem.photos ?? [],
+          price: newItem.price,
+          type: mode === 'buynow' ? 'BUY_NOW' : 'AUCTION',
+          status: mode === 'buynow' ? 'AVAILABLE' : 'QUEUED',
+          queueOrder: newItem.queueOrder ?? 0,
+          minimumOffer: newItem.minimumOffer ?? 0,
+        };
+        return { ...prev, shopItems: [...prev.shopItems, optimisticItem] };
+      });
+
       notifyShopUpdated();
 
-      setNewItemTitle('');
-      setNewItemPrice('');
-      setShowAddItem(false);
-
       if (mode === 'now') {
+        // Update with real ID now that API resolved
         setSelectedItem({ id: newItem.id, title: newItem.title, price: newItem.price });
-        setShowStartItem(true);
+        // Modal is already open — selectedItem update is enough
       }
 
       if (mode === 'buynow') {
@@ -433,6 +457,10 @@ export default function LiveAuctionRoom() {
       }
     } catch {
       Alert.alert('Error', 'Failed to add item. Try again.');
+      // Revert form on error
+      setNewItemTitle(title);
+      setNewItemPrice(String(price));
+      setShowAddItem(true);
     } finally {
       setAddingItem(false);
     }
@@ -1321,7 +1349,7 @@ export default function LiveAuctionRoom() {
           <TouchableOpacity
             style={{ backgroundColor: '#DC2626', borderRadius: 14, paddingVertical: 16, alignItems: 'center' }}
             onPress={() => {
-              if (!selectedItem || !user?.id) return;
+              if (!selectedItem || !user?.id || selectedItem.id === '__pending__') return;
               console.log('[Timer] Starting timer for item:', selectedItem.id, 'seller:', user.id);
               startItemTimer(selectedItem.id, user.id, startSeconds, startCounterbid);
               setShowStartItem(false);
