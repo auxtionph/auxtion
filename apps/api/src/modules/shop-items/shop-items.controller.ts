@@ -67,6 +67,16 @@ export class ShopItemsController {
     return this.shopItemsService.deleteItem(user.id, id);
   }
 
+  // Seller resets a live item back to queued (after reconnect)
+  @Patch(':id/reset')
+  @HttpCode(HttpStatus.OK)
+  async resetItem(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+  ): Promise<{ success: boolean; message: string }> {
+    return this.shopItemsService.resetItem(user.id, id);
+  }
+
   // Seller reorders auction queue
   @Patch('queue/reorder')
   reorderQueue(@CurrentUser() user: AuthUser, @Body() dto: ReorderQueueDto) {

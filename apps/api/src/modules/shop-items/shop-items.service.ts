@@ -117,6 +117,28 @@ export class ShopItemsService {
     return { message: 'Item removed successfully' };
   }
 
+  // ── Reset Live Item (seller reconnect — no transaction) ────────────────────
+  async resetItem(
+    sellerId: string,
+    itemId: string,
+  ): Promise<{ success: boolean; message: string }> {
+    const item = await this.prisma.shopItem.findUnique({
+      where: { id: itemId },
+    });
+    if (!item) throw new NotFoundException('Item not found');
+    if (item.sellerId !== sellerId) {
+      throw new ForbiddenException('You do not own this item');
+    }
+    await this.prisma.shopItem.update({
+      where: { id: itemId },
+      data: {
+        status: ShopItemStatus.AVAILABLE,
+        queueOrder: null,
+      },
+    });
+    return { success: true, message: 'Item reset to queue' };
+  }
+
   // ── Reorder Queue ──────────────────────────────────────────────────────────
 
   async reorderQueue(sellerId: string, dto: ReorderQueueDto) {
