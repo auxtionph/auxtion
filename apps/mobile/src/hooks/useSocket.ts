@@ -105,7 +105,6 @@ export const useAuctionSocket = ({
     await connectSocket();
     const socket = getSocket();
     socketRef.current = socket;
-    socket.emit(SOCKET_EVENTS.JOIN_AUCTION, { auctionId, token, sellerId: userId });
 
     socket.off(SOCKET_EVENTS.BID_UPDATE);
     socket.off(SOCKET_EVENTS.BID_CONFIRMED);
@@ -141,7 +140,6 @@ export const useAuctionSocket = ({
     if (onTimerPaused) socket.on('timer-paused', onTimerPaused);
     if (onTimerResumed) socket.on('timer-resumed', onTimerResumed);
 
-
     if (onChatHistory) {
       socket.on('chat-history', (messages: ChatMessage[]) => {
         console.log(`[Socket] chat-history: ${messages.length} messages`);
@@ -153,6 +151,9 @@ export const useAuctionSocket = ({
       console.log('AUCTION_ENDED received:', JSON.stringify(data));
       if (onAuctionEnded) onAuctionEnded(data);
     });
+
+    // ← Join LAST so all listeners are ready and sellerId is captured
+    socket.emit(SOCKET_EVENTS.JOIN_AUCTION, { auctionId, token, sellerId: userId });
   };
 
   const placeBid = useCallback((itemId: string, amount: number, bidderId: string) => {

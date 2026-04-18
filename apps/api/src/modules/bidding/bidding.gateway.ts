@@ -118,6 +118,7 @@ export class BiddingGateway
   ) {
     const room = `auction:${payload.auctionId}`;
     await client.join(room);
+    this.logger.log(`Join payload: ${JSON.stringify(payload)}`);
 
     // Track if this is the seller joining
     const auction = await this.prisma.auction.findUnique({
@@ -125,6 +126,9 @@ export class BiddingGateway
       select: { sellerId: true },
     });
     if (auction) {
+      this.logger.log(
+        `Join payload sellerId: ${payload.sellerId ?? 'none'}, auction sellerId: ${auction.sellerId}`,
+      );
       // We'll identify seller by sellerId passed in payload
       if (payload.sellerId === auction.sellerId) {
         this.sellerSockets.set(payload.auctionId, client.id);
