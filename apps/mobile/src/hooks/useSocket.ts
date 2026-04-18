@@ -195,5 +195,10 @@ export const useAuctionSocket = ({
     socketRef.current?.emit('resume-item-timer', { auctionId, itemId, sellerId });
   }, [auctionId]);
 
-  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer };
+  const cancelItemTimer = useCallback((itemId: string) => {
+    socketRef.current?.emit('cancel-item-timer', { auctionId, itemId });
+  }, [auctionId]);
+
+
+  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer };
 };

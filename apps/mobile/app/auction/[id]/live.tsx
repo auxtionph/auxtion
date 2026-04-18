@@ -228,7 +228,7 @@ export default function LiveAuctionRoom() {
 
   const [timerPaused, setTimerPaused] = useState(false);
   const [showResumeModal, setShowResumeModal] = useState(false);
-  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer } = useAuctionSocket({
+  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer } = useAuctionSocket({
     auctionId: id,
     userId: user?.id,
     onBidUpdate: useCallback((data: BidUpdateData) => {
@@ -447,113 +447,10 @@ export default function LiveAuctionRoom() {
     }
   };
 
-  const prevBroadcasterRef = useRef<string | null>(null);
-  const broadcasterDropTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnectPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    if (isSeller) return;
-    const currentId = hms.broadcasterPeer?.id ?? null;
-
-    if (prevBroadcasterRef.current && !currentId) {
-      setBroadcasterReconnecting(true);
-
-      // Poll every 5s to check if auction ended
-      reconnectPollRef.current = setInterval(() => {
-        void auctionsApi.getById(id).then(data => {
-          if (data.status === 'ENDED') {
-            if (reconnectPollRef.current) clearInterval(reconnectPollRef.current);
-            setBroadcasterReconnecting(false);
-            setAuctionEnded(true);
-          }
-        });
-      }, 5000);
-
-      // Hard timeout at 2 minutes
-      broadcasterDropTimerRef.current = setTimeout(() => {
-        if (reconnectPollRef.current) clearInterval(reconnectPollRef.current);
-        setBroadcasterReconnecting(false);
-        setAuctionEnded(true);
-      }, 120000);
-    }
-
-    if (!prevBroadcasterRef.current && currentId) {
-      if (broadcasterDropTimerRef.current) {
-        clearTimeout(broadcasterDropTimerRef.current);
-        broadcasterDropTimerRef.current = null;
-      }
-      if (reconnectPollRef.current) {
-        clearInterval(reconnectPollRef.current);
-        reconnectPollRef.current = null;
-      }
-      setBroadcasterReconnecting(false);
-      setAuctionEnded(false);
-    }
-
-    prevBroadcasterRef.current = currentId;
-  }, [hms.broadcasterPeer?.id, isSeller, id]);
 
   const viewerTrackId = hms.broadcasterPeer?.id
   ? (hms.trackMap[hms.broadcasterPeer.id] ?? null)
   : null;
-
-  const viewerTrackIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    viewerTrackIdRef.current = viewerTrackId;
-  }, [viewerTrackId]);
-
-  const noVideoSinceRef = useRef<number | null>(null);
-
-  // ── Reliable dead stream detector via API polling ──────────────────
-  useEffect(() => {
-    if (isSeller || auctionEnded) return;
-
-    const poll = setInterval(() => {
-      const hasVideo = !!hms.broadcasterPeer?.id && !!viewerTrackIdRef.current;
-
-      if (!hasVideo) {
-        // No broadcaster — start counting
-        if (noVideoSinceRef.current === null) {
-          noVideoSinceRef.current = Date.now();
-        }
-
-        const elapsed = Date.now() - (noVideoSinceRef.current ?? Date.now());
-
-        if (elapsed >= 5000) {
-          setBroadcasterReconnecting(true);
-          if (currentItemRef.current && auctionRef.current?.seller.id) {
-            pauseTimer(currentItemRef.current.itemId, auctionRef.current.seller.id);
-          }
-          void auctionsApi.getById(id).then(data => {
-            if (data.status === 'ENDED') {
-              if (reconnectPollRef.current) clearInterval(reconnectPollRef.current);
-              setBroadcasterReconnecting(false);
-              setAuctionEnded(true);
-            }
-          });
-        }
-      } else {
-        noVideoSinceRef.current = null;
-        if (broadcasterReconnecting) {
-          setBroadcasterReconnecting(false);
-          setAuctionEnded(false);
-          if (currentItemRef.current && auctionRef.current?.seller.id) {
-            resumeTimer(currentItemRef.current.itemId, auctionRef.current.seller.id);
-          }
-        }
-      }
-    }, 2000);
-
-    return () => clearInterval(poll);
-  }, [isSeller, hms.isJoined, hms.broadcasterPeer?.id, auctionEnded, broadcasterReconnecting, id]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (broadcasterDropTimerRef.current) clearTimeout(broadcasterDropTimerRef.current);
-      if (reconnectPollRef.current) clearInterval(reconnectPollRef.current);
-    };
-  }, []);
 
   // ── Buyer own connection monitor ──────────────────────────────────
   const wasJoinedRef = useRef(false);
@@ -569,6 +466,35 @@ export default function LiveAuctionRoom() {
       setViewerConnecting(true);
     }
   }, [hms.isJoined, isSeller]);
+
+  // ── Buyer: show overlay driven by timer-paused socket event ──────
+  useEffect(() => {
+    if (isSeller) return;
+    setBroadcasterReconnecting(timerPaused);
+  }, [timerPaused, isSeller]);
+
+  // ── Poll for auction ended while seller disconnected ─────────────
+  useEffect(() => {
+    if (isSeller || !broadcasterReconnecting) return;
+    const poll = setInterval(() => {
+      void auctionsApi.getById(id).then(data => {
+        if (data.status === 'ENDED') {
+          clearInterval(poll);
+          setBroadcasterReconnecting(false);
+          setAuctionEnded(true);
+        }
+      });
+    }, 5000);
+    const hardTimeout = setTimeout(() => {
+      clearInterval(poll);
+      setBroadcasterReconnecting(false);
+      setAuctionEnded(true);
+    }, 120000);
+    return () => {
+      clearInterval(poll);
+      clearTimeout(hardTimeout);
+    };
+  }, [broadcasterReconnecting, isSeller, id]);
 
   // ── Seller rejoin — show resume/cancel choice if timer was paused ──
   useEffect(() => {
@@ -1928,17 +1854,12 @@ export default function LiveAuctionRoom() {
                 if (!currentItem) return;
                 try {
                   const { apiClient } = await import('../../../src/services/api/client');
-                  // Clear the timer on backend
-                  if (auctionRef.current?.seller.id) {
-                    pauseTimer(currentItem.itemId, auctionRef.current.seller.id);
-                  }
-                  // Reset item back to QUEUED
                   await apiClient.patch(`/shop-items/${currentItem.itemId}/reset`);
+                  cancelItemTimer(currentItem.itemId);
                   setCurrentItem(null);
                   setTimerRemaining(null);
                   setTimerPaused(false);
                   setShowResumeModal(false);
-                  notifyShopUpdated();
                 } catch {
                   Alert.alert('Error', 'Failed to cancel item. Try again.');
                 }

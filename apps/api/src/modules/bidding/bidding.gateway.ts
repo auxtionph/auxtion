@@ -508,6 +508,31 @@ export class BiddingGateway
     this.startCountdown(payload.auctionId, payload.itemId);
   }
 
+  // ── Cancel Item Timer (seller cancelled item after reconnect) ──────
+  @SubscribeMessage('cancel-item-timer')
+  handleCancelItemTimer(
+    @MessageBody() payload: { auctionId: string; itemId: string },
+  ) {
+    this.clearTimer(payload.itemId);
+    this.logger.log(`Timer CANCELLED for item ${payload.itemId}`);
+
+    this.server.to(`auction:${payload.auctionId}`).emit('timer-resumed', {
+      itemId: payload.itemId,
+      remaining: 0,
+    });
+
+    this.server.to(`auction:${payload.auctionId}`).emit('item-ended', {
+      itemId: payload.itemId,
+      winner: null,
+      timestamp: Date.now(),
+    });
+
+    this.server.to(`auction:${payload.auctionId}`).emit('shop-updated', {
+      auctionId: payload.auctionId,
+      timestamp: Date.now(),
+    });
+  }
+
   // ── Chat ───────────────────────────────────────────────────────────────────
 
   @SubscribeMessage('chat-message')
