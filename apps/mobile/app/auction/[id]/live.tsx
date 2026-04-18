@@ -497,6 +497,11 @@ export default function LiveAuctionRoom() {
   ? (hms.trackMap[hms.broadcasterPeer.id] ?? null)
   : null;
 
+  const viewerTrackIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    viewerTrackIdRef.current = viewerTrackId;
+  }, [viewerTrackId]);
+
   const noVideoSinceRef = useRef<number | null>(null);
 
   // ── Reliable dead stream detector via API polling ──────────────────
@@ -504,7 +509,7 @@ export default function LiveAuctionRoom() {
     if (isSeller || auctionEnded) return;
 
     const poll = setInterval(() => {
-      const hasVideo = !!hms.broadcasterPeer?.id;
+      const hasVideo = !!hms.broadcasterPeer?.id && !!viewerTrackIdRef.current;
 
       if (!hasVideo) {
         // No broadcaster — start counting

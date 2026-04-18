@@ -60,8 +60,10 @@ export class BiddingGateway
   private activeTimers = new Map<string, NodeJS.Timeout>();
   private timerState = new Map<string, TimerState>();
   private lastBidTime = new Map<string, number>();
-  // Map of auctionId → seller's socket ID
-  private sellerSockets = new Map<string, string>();
+  // auctionId → Set of seller socket IDs (seller can have multiple briefly during reconnect)
+  private sellerSockets = new Map<string, Set<string>>();
+  // socketId → auctionId (for quick lookup on disconnect)
+  private socketToAuction = new Map<string, string>();
 
   constructor(
     private readonly biddingService: BiddingService,
@@ -76,15 +78,20 @@ export class BiddingGateway
 
   handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
-    client.rooms.forEach((room) => {
-      if (room.startsWith('auction:')) {
-        const auctionId = room.replace('auction:', '');
-        this.decrementViewers(auctionId);
-        this.broadcastViewerCount(auctionId);
 
-        // Only pause timer if the seller disconnected
-        const sellerSocketId = this.sellerSockets.get(auctionId);
-        if (sellerSocketId === client.id) {
+    // Check if this was a seller socket
+    const auctionId = this.socketToAuction.get(client.id);
+    if (auctionId) {
+      this.socketToAuction.delete(client.id);
+      const sellerSet = this.sellerSockets.get(auctionId);
+      if (sellerSet) {
+        sellerSet.delete(client.id);
+        this.logger.log(
+          `Seller socket removed: ${client.id}, remaining: ${sellerSet.size}`,
+        );
+
+        // Only pause when ALL seller sockets are gone
+        if (sellerSet.size === 0) {
           this.sellerSockets.delete(auctionId);
           this.timerState.forEach((state, itemId) => {
             if (state.auctionId === auctionId && !state.paused) {
@@ -95,7 +102,7 @@ export class BiddingGateway
                 this.activeTimers.delete(itemId);
               }
               this.logger.log(
-                `Timer PAUSED — seller disconnected from auction ${auctionId}`,
+                `Timer PAUSED — all seller sockets gone from auction ${auctionId}`,
               );
               this.server.to(`auction:${auctionId}`).emit('timer-paused', {
                 itemId,
@@ -105,6 +112,15 @@ export class BiddingGateway
             }
           });
         }
+      }
+    }
+
+    // Always handle viewer count
+    client.rooms.forEach((room) => {
+      if (room.startsWith('auction:')) {
+        const aid = room.replace('auction:', '');
+        this.decrementViewers(aid);
+        this.broadcastViewerCount(aid);
       }
     });
   }
@@ -131,9 +147,13 @@ export class BiddingGateway
       );
       // We'll identify seller by sellerId passed in payload
       if (payload.sellerId === auction.sellerId) {
-        this.sellerSockets.set(payload.auctionId, client.id);
+        if (!this.sellerSockets.has(payload.auctionId)) {
+          this.sellerSockets.set(payload.auctionId, new Set());
+        }
+        this.sellerSockets.get(payload.auctionId)!.add(client.id);
+        this.socketToAuction.set(client.id, payload.auctionId);
         this.logger.log(
-          `Seller socket tracked: ${client.id} for auction ${payload.auctionId}`,
+          `Seller socket tracked: ${client.id} for auction ${payload.auctionId} (total: ${this.sellerSockets.get(payload.auctionId)!.size})`,
         );
       }
     }
