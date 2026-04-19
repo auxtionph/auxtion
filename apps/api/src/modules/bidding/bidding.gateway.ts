@@ -638,6 +638,13 @@ export class BiddingGateway
         this.clearTimer(itemId);
       }
     });
+
+    // Reset any LIVE items back to QUEUED — covers chat bid items with no winner
+    void this.prisma.shopItem.updateMany({
+      where: { auctionId: payload.auctionId, status: 'LIVE' },
+      data: { status: 'QUEUED' },
+    });
+
     this.server.to(`auction:${payload.auctionId}`).emit('auction-ended', {
       auctionId: payload.auctionId,
       timestamp: Date.now(),
