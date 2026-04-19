@@ -214,7 +214,7 @@ export class BiddingService {
     await this.prisma.shopItem.update({
       where: { id: itemId },
       data: {
-        status: winner ? ShopItemStatus.SOLD : ShopItemStatus.AVAILABLE,
+        status: winner ? ShopItemStatus.SOLD : ShopItemStatus.QUEUED,
       },
     });
 

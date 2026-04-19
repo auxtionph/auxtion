@@ -33,6 +33,8 @@ interface ChatMsg {
   displayName: string;
   message: string;
   timestamp: number;
+  type?: 'message' | 'item-divider';
+  itemTitle?: string;
 }
 
 interface CurrentItem {
@@ -295,6 +297,16 @@ export default function LiveAuctionRoom() {
     onItemStarted: useCallback((data: ItemStartedData) => {
       bidStateReceivedRef.current = false;
       pendingBidStateRef.current = null;
+      // Inject a visual divider so seller knows new item started
+      setChatMessages(prev => [...prev, {
+        id: `divider-${data.itemId}-${Date.now()}`,
+        userId: '__system__',
+        displayName: '',
+        message: '',
+        timestamp: Date.now(),
+        type: 'item-divider',
+        itemTitle: data.title,
+      }]);
       setCurrentItem({
         itemId: data.itemId,
         title: data.title,
@@ -323,11 +335,7 @@ export default function LiveAuctionRoom() {
           ...prev,
           shopItems: prev.shopItems.map(item =>
             item.id === data.itemId
-              ? {
-                  ...item,
-                  status: 'SOLD' as const,
-                  // Store winner in title suffix for display (temp until we have winner field)
-                }
+              ? { ...item, status: data.winner ? 'SOLD' as const : 'QUEUED' as const }
               : item
           ),
         };
@@ -848,27 +856,52 @@ export default function LiveAuctionRoom() {
       }}>
         <FlatList
           ref={chatRef}
-          data={chatMessages.slice(-20)}
+          data={(() => {
+            const real = chatMessages.filter(m => m.type !== 'item-divider').slice(-20);
+            const realIds = new Set(real.map(m => m.id));
+            return chatMessages.filter(m => m.type === 'item-divider' || realIds.has(m.id));
+          })()}
           keyExtractor={item => item.id}
           style={{ paddingHorizontal: 16 }}
           contentContainerStyle={{ justifyContent: 'flex-end', flexGrow: 1 }}
           onContentSizeChange={() => chatRef.current?.scrollToEnd({ animated: true })}
-          renderItem={({ item }) => (
-            <View style={{ marginBottom: 6, flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{
-                flex: 1,
-                backgroundColor: 'rgba(0,0,0,0.60)', borderRadius: 18,
-                paddingHorizontal: 12, paddingVertical: 6,
-                flexDirection: 'row', gap: 6, alignItems: 'center', flexShrink: 1,
-              }}>
-                <Text style={{ color: '#1A56DB', fontSize: 11, fontWeight: '700' }}>
-                  {item.displayName}
-                </Text>
-                <Text style={{ color: '#fff', fontSize: 11, flexShrink: 1 }}>
-                  {item.message}
-                </Text>
-              </View>
-                {isSeller && currentItem?.mode === 'chat' && (
+          renderItem={({ item }) => {
+            if (item.type === 'item-divider') {
+              return (
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center',
+                  marginVertical: 8, paddingHorizontal: 4,
+                }}>
+                  <View style={{ flex: 1, height: 1, backgroundColor: '#374151' }} />
+                  <View style={{
+                    backgroundColor: '#1F2937', borderRadius: 999,
+                    paddingHorizontal: 10, paddingVertical: 3, marginHorizontal: 8,
+                  }}>
+                    <Text style={{ color: '#6B7280', fontSize: 10, fontWeight: '600' }}>
+                      📦 {item.itemTitle}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1, height: 1, backgroundColor: '#374151' }} />
+                </View>
+              );
+            }
+
+            return (
+              <View style={{ marginBottom: 6, flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{
+                  flex: 1,
+                  backgroundColor: 'rgba(0,0,0,0.60)', borderRadius: 18,
+                  paddingHorizontal: 12, paddingVertical: 6,
+                  flexDirection: 'row', gap: 6, alignItems: 'center', flexShrink: 1,
+                }}>
+                  <Text style={{ color: '#1A56DB', fontSize: 11, fontWeight: '700' }}>
+                    {item.displayName}
+                  </Text>
+                  <Text style={{ color: '#fff', fontSize: 11, flexShrink: 1 }}>
+                    {item.message}
+                  </Text>
+                </View>
+                {isSeller && currentItem?.mode === 'chat' && item.type !== 'item-divider' && (
                   <TouchableOpacity
                     style={{ paddingHorizontal: 8, paddingVertical: 4 }}
                     onPress={() => setDeclaringWinner({
@@ -880,8 +913,9 @@ export default function LiveAuctionRoom() {
                     <Text style={{ fontSize: 16 }}>👑</Text>
                   </TouchableOpacity>
                 )}
-            </View>
-          )}
+              </View>
+            );
+          }}
         />
       </View>
 
