@@ -42,6 +42,7 @@ interface CurrentItem {
   photos: string[];
   totalBids: number;
   highestBidderName?: string;
+  mode: 'auction' | 'chat';
 }
 
 interface BidUpdateData {
@@ -218,6 +219,7 @@ export default function LiveAuctionRoom() {
             currentPrice: liveItem.price,
             photos: liveItem.photos,
             totalBids: 0,
+            mode: 'auction' as const,
           };
           // Apply pending bid state if it exists for this item
           const pending = pendingBidStateRef.current;
@@ -251,7 +253,14 @@ export default function LiveAuctionRoom() {
 
   const [timerPaused, setTimerPaused] = useState(false);
   const [showResumeModal, setShowResumeModal] = useState(false);
-  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer } = useAuctionSocket({
+
+  const [itemMode, setItemMode] = useState<'auction' | 'chat'>('auction');
+  const [declaringWinner, setDeclaringWinner] = useState<{
+    userId: string;
+    displayName: string;
+    message: string;
+  } | null>(null);
+  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner } = useAuctionSocket({
     auctionId: id,
     userId: user?.id,
     onBidUpdate: useCallback((data: BidUpdateData) => {
@@ -285,12 +294,14 @@ export default function LiveAuctionRoom() {
     }, []),
     onItemStarted: useCallback((data: ItemStartedData) => {
       bidStateReceivedRef.current = false;
+      pendingBidStateRef.current = null;
       setCurrentItem({
         itemId: data.itemId,
         title: data.title,
         currentPrice: data.currentPrice,
         photos: data.photos,
         totalBids: 0,
+        mode: (data as any).mode ?? 'auction',
       });
     }, []),
     onItemEnded: useCallback((data: ItemEndedData) => {
@@ -843,8 +854,9 @@ export default function LiveAuctionRoom() {
           contentContainerStyle={{ justifyContent: 'flex-end', flexGrow: 1 }}
           onContentSizeChange={() => chatRef.current?.scrollToEnd({ animated: true })}
           renderItem={({ item }) => (
-            <View style={{ marginBottom: 6, flexDirection: 'row' }}>
+            <View style={{ marginBottom: 6, flexDirection: 'row', alignItems: 'center' }}>
               <View style={{
+                flex: 1,
                 backgroundColor: 'rgba(0,0,0,0.60)', borderRadius: 18,
                 paddingHorizontal: 12, paddingVertical: 6,
                 flexDirection: 'row', gap: 6, alignItems: 'center', flexShrink: 1,
@@ -856,6 +868,18 @@ export default function LiveAuctionRoom() {
                   {item.message}
                 </Text>
               </View>
+                {isSeller && currentItem?.mode === 'chat' && (
+                  <TouchableOpacity
+                    style={{ paddingHorizontal: 8, paddingVertical: 4 }}
+                    onPress={() => setDeclaringWinner({
+                      userId: item.userId,
+                      displayName: item.displayName,
+                      message: item.message,
+                    })}
+                  >
+                    <Text style={{ fontSize: 16 }}>👑</Text>
+                  </TouchableOpacity>
+                )}
             </View>
           )}
         />
@@ -950,6 +974,22 @@ export default function LiveAuctionRoom() {
         {/* Bid button — viewers only */}
         {!isSeller && (
           currentItem ? (
+            currentItem.mode === 'chat' ? (
+              <View style={{
+                backgroundColor: 'rgba(124,58,237,0.15)',
+                borderWidth: 1, borderColor: '#7C3AED',
+                borderRadius: 16, paddingVertical: 14, alignItems: 'center',
+              }}>
+                <Text style={{ color: '#A78BFA', fontWeight: '700', fontSize: 15 }}>
+                  💬 Type your bid in chat!
+                </Text>
+                <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 4 }}>
+                  {currentItem.currentPrice > 0
+                    ? `Starting at ${formatPHP(currentItem.currentPrice)}`
+                    : 'Highest bid when seller closes wins'}
+                </Text>
+              </View>
+            ) : (
             <View style={{ flexDirection: 'row', gap: 8 }}>
               {/* Custom bid button */}
               <TouchableOpacity
@@ -1005,6 +1045,7 @@ export default function LiveAuctionRoom() {
                 />
               </View>
             </View>
+            )
           ) : (
             <View style={{
               backgroundColor: 'rgba(0,0,0,0.60)', borderWidth: 1, borderColor: '#374151',
@@ -1287,8 +1328,41 @@ export default function LiveAuctionRoom() {
           contentContainerStyle={{ padding: 24, paddingBottom: 48 }}
           keyboardShouldPersistTaps="handled"
         >
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 4 }}>Start Bidding</Text>
-          <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 24 }} numberOfLines={1}>{selectedItem?.title}</Text>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 4 }}>Start Item</Text>
+          <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 20 }} numberOfLines={1}>{selectedItem?.title}</Text>
+
+          {/* Mode selector */}
+          <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8 }}>BIDDING MODE</Text>
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 24 }}>
+            <TouchableOpacity
+              style={{
+                flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center',
+                backgroundColor: itemMode === 'auction' ? '#1A56DB' : '#1F2937',
+                borderWidth: 1, borderColor: itemMode === 'auction' ? '#1A56DB' : '#374151',
+              }}
+              onPress={() => setItemMode('auction')}
+            >
+              <Text style={{ fontSize: 22, marginBottom: 4 }}>🔨</Text>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Swipe Auction</Text>
+              <Text style={{ color: '#9CA3AF', fontSize: 10, marginTop: 2, textAlign: 'center' }}>Timer · auto increments</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{
+                flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center',
+                backgroundColor: itemMode === 'chat' ? '#7C3AED' : '#1F2937',
+                borderWidth: 1, borderColor: itemMode === 'chat' ? '#7C3AED' : '#374151',
+              }}
+              onPress={() => setItemMode('chat')}
+            >
+              <Text style={{ fontSize: 22, marginBottom: 4 }}>💬</Text>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Chat Bid</Text>
+              <Text style={{ color: '#9CA3AF', fontSize: 10, marginTop: 2, textAlign: 'center' }}>Buyers bid in chat</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Auction-only options */}
+          {itemMode === 'auction' && (
+            <>
 
           <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8 }}>START TIME (seconds)</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
@@ -1346,18 +1420,56 @@ export default function LiveAuctionRoom() {
             />
           )}
 
-          <TouchableOpacity
-            style={{ backgroundColor: '#DC2626', borderRadius: 14, paddingVertical: 16, alignItems: 'center' }}
-            onPress={() => {
-              if (!selectedItem || !user?.id || selectedItem.id === '__pending__') return;
-              console.log('[Timer] Starting timer for item:', selectedItem.id, 'seller:', user.id);
-              startItemTimer(selectedItem.id, user.id, startSeconds, startCounterbid);
-              setShowStartItem(false);
-            }}
-          >
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>🔨 Start Bidding — {startSeconds}s</Text>
-            <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>Counterbid resets at {startCounterbid}s</Text>
-          </TouchableOpacity>
+          </>
+          )}
+
+          {/* Chat-only options */}
+          {itemMode === 'chat' && (
+            <>
+              <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8 }}>DISPLAY TIMER (optional)</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                {[0, 30, 60, 90, 120].map(s => (
+                  <TouchableOpacity
+                    key={s}
+                    style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: startSeconds === s ? '#7C3AED' : '#1F2937' }}
+                    onPress={() => setStartSeconds(s)}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '600' }}>{s === 0 ? 'None' : `${s}s`}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <View style={{ backgroundColor: '#1F2937', borderRadius: 12, padding: 14, marginBottom: 24, flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
+                <Text style={{ fontSize: 16 }}>💡</Text>
+                <Text style={{ color: '#6B7280', fontSize: 12, flex: 1, lineHeight: 18 }}>
+                  Buyers bid by typing in chat. Tap a chat message to declare the winner when bidding ends.
+                </Text>
+              </View>
+            </>
+          )}
+
+          {/* Start button */}
+            <TouchableOpacity
+              style={{
+                backgroundColor: itemMode === 'auction' ? '#DC2626' : '#7C3AED',
+                borderRadius: 14, paddingVertical: 16, alignItems: 'center',
+              }}
+              onPress={() => {
+                if (!selectedItem || !user?.id || selectedItem.id === '__pending__') return;
+                if (itemMode === 'auction') {
+                  startItemTimer(selectedItem.id, user.id, startSeconds, startCounterbid);
+                } else {
+                  startChatBid(selectedItem.id, user.id, startSeconds);
+                }
+                setShowStartItem(false);
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+                {itemMode === 'auction' ? `🔨 Start Bidding — ${startSeconds}s` : '💬 Start Chat Bid'}
+              </Text>
+              {itemMode === 'auction' && (
+                <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>Counterbid resets at {startCounterbid}s</Text>
+              )}
+            </TouchableOpacity>
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
@@ -1930,6 +2042,95 @@ export default function LiveAuctionRoom() {
               <Text style={{ color: '#4B5563', fontSize: 12, marginTop: 2 }}>
                 No transaction — item goes back to queue
               </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+      {/* ── Declare Chat Winner Modal ── */}
+      <Modal
+        visible={!!declaringWinner}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDeclaringWinner(null)}
+      >
+        <View style={{
+          flex: 1, backgroundColor: 'rgba(0,0,0,0.85)',
+          alignItems: 'center', justifyContent: 'center',
+          paddingHorizontal: 24,
+        }}>
+          <View style={{
+            backgroundColor: '#111827', borderRadius: 24,
+            padding: 28, width: '100%',
+            borderWidth: 1, borderColor: '#1F2937',
+          }}>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 8, textAlign: 'center' }}>
+              👑 Declare Winner
+            </Text>
+            <Text style={{ color: '#6B7280', fontSize: 13, textAlign: 'center', marginBottom: 20 }}>
+              Confirm winner for{' '}
+              <Text style={{ color: '#fff', fontWeight: '600' }}>{currentItem?.title}</Text>
+            </Text>
+
+            {declaringWinner && (
+              <View style={{
+                backgroundColor: '#1F2937', borderRadius: 14,
+                padding: 16, marginBottom: 16,
+              }}>
+                <Text style={{ color: '#A78BFA', fontWeight: '700', fontSize: 14 }}>
+                  {declaringWinner.displayName}
+                </Text>
+                <Text style={{ color: '#9CA3AF', fontSize: 13, marginTop: 4 }}>
+                  "{declaringWinner.message}"
+                </Text>
+              </View>
+            )}
+
+            <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8 }}>
+              WINNING AMOUNT (₱)
+            </Text>
+            <View style={{
+              backgroundColor: '#1F2937', borderRadius: 12,
+              borderWidth: 1, borderColor: '#374151',
+              flexDirection: 'row', alignItems: 'center',
+              paddingHorizontal: 14, marginBottom: 20,
+            }}>
+              <Text style={{ color: '#6B7280', fontSize: 16, marginRight: 8 }}>₱</Text>
+              <TextInput
+                style={{ flex: 1, color: '#fff', fontSize: 20, fontWeight: '700', paddingVertical: 12 }}
+                placeholder="0"
+                placeholderTextColor="#4B5563"
+                keyboardType="numeric"
+                defaultValue={declaringWinner?.message.replace(/[^0-9]/g, '') ?? ''}
+                onChangeText={t => {
+                  if (declaringWinner) setDeclaringWinner({ ...declaringWinner, message: t });
+                }}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#7C3AED', borderRadius: 14,
+                paddingVertical: 16, alignItems: 'center', marginBottom: 10,
+              }}
+              onPress={() => {
+                if (!declaringWinner || !currentItem || !user?.id) return;
+                const amount = parseInt(declaringWinner.message.replace(/[^0-9]/g, '') || '0') * 100;
+                if (!amount) {
+                  Alert.alert('Enter amount', 'Please enter the winning bid amount.');
+                  return;
+                }
+                declareChatWinner(currentItem.itemId, user.id, declaringWinner.userId, declaringWinner.displayName, amount);
+                setDeclaringWinner(null);
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>✅ Confirm Winner</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ paddingVertical: 12, alignItems: 'center' }}
+              onPress={() => setDeclaringWinner(null)}
+            >
+              <Text style={{ color: '#6B7280', fontSize: 14 }}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>

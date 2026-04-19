@@ -220,5 +220,19 @@ export const useAuctionSocket = ({
   }, [auctionId]);
 
 
-  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer };
+  const startChatBid = useCallback((itemId: string, sellerId: string, displaySeconds: number) => {
+  socketRef.current?.emit('start-chat-bid', { auctionId, itemId, sellerId, displaySeconds });
+}, [auctionId]);
+
+  const declareChatWinner = useCallback((
+    itemId: string,
+    sellerId: string,
+    winnerId: string,
+    winnerName: string,
+    amount: number,
+  ) => {
+    socketRef.current?.emit('declare-chat-winner', { auctionId, itemId, sellerId, winnerId, winnerName, amount });
+  }, [auctionId]);
+
+  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner };
 };

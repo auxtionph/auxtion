@@ -45,6 +45,22 @@ interface TimerState {
   paused: boolean;
 }
 
+interface StartChatBidPayload {
+  auctionId: string;
+  itemId: string;
+  sellerId: string;
+  displaySeconds: number; // 0 = no timer
+}
+
+interface DeclareChatWinnerPayload {
+  auctionId: string;
+  itemId: string;
+  sellerId: string;
+  winnerId: string;
+  winnerName: string;
+  amount: number; // in centavos
+}
+
 @WebSocketGateway({
   cors: { origin: '*' },
   namespace: 'auctions',
@@ -475,6 +491,117 @@ export class BiddingGateway
     });
   }
 
+  @SubscribeMessage('start-chat-bid')
+  async handleStartChatBid(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: StartChatBidPayload,
+  ) {
+    const { auctionId, itemId, sellerId, displaySeconds } = payload;
+
+    const auction = await this.prisma.auction.findUnique({
+      where: { id: auctionId },
+    });
+    if (!auction || auction.sellerId !== sellerId) {
+      client.emit('error', { message: 'Unauthorized' });
+      return;
+    }
+
+    await this.biddingService.startItemBidding(sellerId, auctionId, itemId);
+
+    const item = await this.prisma.shopItem.findUnique({
+      where: { id: itemId },
+    });
+    if (!item) return;
+
+    // Broadcast item started with mode: chat
+    this.server.to(`auction:${auctionId}`).emit('item-started', {
+      itemId: item.id,
+      title: item.title,
+      currentPrice: item.price,
+      photos: item.photos,
+      mode: 'chat',
+      timestamp: Date.now(),
+    });
+
+    // Optional display-only timer — no auto-end
+    if (displaySeconds > 0) {
+      this.server.to(`auction:${auctionId}`).emit('timer-started', {
+        itemId,
+        remaining: displaySeconds,
+        counterbidSeconds: 0,
+      });
+      this.timerState.set(itemId, {
+        remaining: displaySeconds,
+        counterbidSeconds: 0,
+        auctionId,
+        itemId,
+        paused: false,
+      });
+      this.startDisplayCountdown(auctionId, itemId);
+    }
+
+    this.server.to(`auction:${auctionId}`).emit('shop-updated', {
+      auctionId,
+      timestamp: Date.now(),
+    });
+
+    this.logger.log(`Chat bid started: item ${itemId} in auction ${auctionId}`);
+  }
+
+  @SubscribeMessage('declare-chat-winner')
+  async handleDeclareChatWinner(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: DeclareChatWinnerPayload,
+  ) {
+    const { auctionId, itemId, sellerId, winnerId, winnerName, amount } =
+      payload;
+
+    const auction = await this.prisma.auction.findUnique({
+      where: { id: auctionId },
+    });
+    if (!auction || auction.sellerId !== sellerId) {
+      client.emit('error', { message: 'Unauthorized' });
+      return;
+    }
+
+    // Clear any display timer
+    this.clearTimer(itemId);
+
+    // Record the sale
+    await this.prisma.shopItem.update({
+      where: { id: itemId },
+      data: { status: 'SOLD' },
+    });
+
+    await this.prisma.bid.create({
+      data: {
+        itemId,
+        bidderId: winnerId,
+        auctionId,
+        amount,
+      },
+    });
+
+    this.server.to(`auction:${auctionId}`).emit('item-ended', {
+      itemId,
+      winner: {
+        userId: winnerId,
+        displayName: winnerName,
+        amount,
+      },
+      timestamp: Date.now(),
+    });
+
+    this.server.to(`auction:${auctionId}`).emit('shop-updated', {
+      auctionId,
+      timestamp: Date.now(),
+    });
+
+    this.logger.log(
+      `Chat bid winner declared: ${winnerName} won item ${itemId} at ${amount}`,
+    );
+  }
+
   @SubscribeMessage('chat-message')
   async handleChatMessage(
     @ConnectedSocket() client: Socket,
@@ -535,6 +662,36 @@ export class BiddingGateway
         if (existing) clearTimeout(existing);
         this.activeTimers.delete(itemId);
         void this.handleTimerExpired(auctionId, itemId);
+      } else {
+        const timeout = setTimeout(tick, 1000);
+        this.activeTimers.set(itemId, timeout);
+      }
+    };
+
+    const timeout = setTimeout(tick, 1000);
+    this.activeTimers.set(itemId, timeout);
+  }
+
+  private startDisplayCountdown(auctionId: string, itemId: string) {
+    const tick = () => {
+      const state = this.timerState.get(itemId);
+      if (!state || state.paused) return;
+
+      state.remaining -= 1;
+      this.server.to(`auction:${auctionId}`).emit('timer-update', {
+        itemId,
+        remaining: state.remaining,
+        isCounterbid: false,
+      });
+
+      if (state.remaining <= 0) {
+        this.activeTimers.delete(itemId);
+        this.timerState.delete(itemId);
+        // Emit timer-ended but do NOT auto-sell — seller declares winner manually
+        this.server.to(`auction:${auctionId}`).emit('timer-ended', {
+          itemId,
+          timestamp: Date.now(),
+        });
       } else {
         const timeout = setTimeout(tick, 1000);
         this.activeTimers.set(itemId, timeout);
