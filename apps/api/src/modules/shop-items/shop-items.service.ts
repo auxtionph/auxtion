@@ -28,6 +28,7 @@ export class ShopItemsService {
         minimumOffer,
         type: dto.type,
         queueOrder: dto.queueOrder ?? null,
+        originalPrice: dto.price,
       },
     });
   }
@@ -132,8 +133,9 @@ export class ShopItemsService {
     await this.prisma.shopItem.update({
       where: { id: itemId },
       data: {
-        status: ShopItemStatus.AVAILABLE,
-        queueOrder: null,
+        status: ShopItemStatus.QUEUED, // ← was AVAILABLE
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        price: item.originalPrice > 0 ? item.originalPrice : item.price, // ← reset price too
       },
     });
     return { success: true, message: 'Item reset to queue' };

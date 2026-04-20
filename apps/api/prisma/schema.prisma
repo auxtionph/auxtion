@@ -184,6 +184,7 @@ model ShopItem {
   queueOrder   Int?
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
+  originalPrice  Int  @default(0)
 
   seller            User               @relation(fields: [sellerId], references: [id])
   auction           Auction?           @relation(fields: [auctionId], references: [id])

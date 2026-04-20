@@ -159,10 +159,16 @@ export class BiddingService {
       throw new BadRequestException('You do not own this auction');
     }
 
-    // Set any current LIVE item back to QUEUED
+    // Reset any current LIVE item back to QUEUED
     await this.prisma.shopItem.updateMany({
       where: { auctionId, status: ShopItemStatus.LIVE },
       data: { status: ShopItemStatus.QUEUED },
+    });
+
+    // Get original price before clearing bids
+    const itemMeta = await this.prisma.shopItem.findUnique({
+      where: { id: itemId },
+      select: { originalPrice: true },
     });
 
     await this.prisma.bid.deleteMany({
@@ -171,10 +177,17 @@ export class BiddingService {
 
     await this.redis.del(`bid:${itemId}`);
 
-    // Set this item to LIVE
+    // Reset price to originalPrice + set LIVE
     const item = await this.prisma.shopItem.update({
       where: { id: itemId },
-      data: { status: ShopItemStatus.LIVE },
+      data: {
+        status: ShopItemStatus.LIVE,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        price:
+          itemMeta?.originalPrice && itemMeta.originalPrice > 0
+            ? itemMeta.originalPrice
+            : undefined, // no-op if originalPrice not set yet
+      },
     });
 
     return item;
