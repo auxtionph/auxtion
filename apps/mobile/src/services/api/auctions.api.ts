@@ -51,6 +51,21 @@ export const auctionsApi = {
     const response = await apiClient.patch(`/auctions/${id}/cancel`);
     return response.data.data;
   },
+
+  getActive: async (): Promise<{
+    id: string;
+    title: string;
+    streamUrl: string;
+    startTime: string;
+    shopItems: { id: string; title: string; status: string }[];
+  } | null> => {
+    try {
+      const response = await apiClient.get('/auctions/active');
+      return response.data.data ?? null;
+    } catch {
+      return null;
+    }
+  },
 };
 
 export interface AuctionFeedItem {
