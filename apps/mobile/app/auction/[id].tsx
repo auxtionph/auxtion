@@ -49,6 +49,15 @@ export default function AuctionDetailScreen() {
     void fetchAuction();
   }, [fetchAuction]));
 
+  // Auto-poll while auction is live so stale state clears automatically
+  useEffect(() => {
+    if (auction?.status !== 'LIVE') return;
+    const interval = setInterval(() => {
+      void fetchAuction();
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [auction?.status, fetchAuction]);
+
   const onRefresh = () => {
     setRefreshing(true);
     void fetchAuction();
@@ -221,7 +230,7 @@ export default function AuctionDetailScreen() {
                   Item Queue ({queuedItems.length})
                 </Text>
                 {/* Add Item button */}
-                {!isEnded && (
+                {isScheduled && (
                   <TouchableOpacity
                     style={{
                       backgroundColor: '#1A56DB', borderRadius: 999,
@@ -269,17 +278,27 @@ export default function AuctionDetailScreen() {
 
               {/* Queued Items */}
               {queuedItems.length === 0 && !liveItem ? (
-                <TouchableOpacity
-                  style={{
-                    borderWidth: 2, borderColor: '#1A56DB', borderStyle: 'dashed',
+                isScheduled ? (
+                  <TouchableOpacity
+                    style={{
+                      borderWidth: 2, borderColor: '#1A56DB', borderStyle: 'dashed',
+                      borderRadius: 16, padding: 24, alignItems: 'center',
+                    }}
+                    onPress={() => router.push(`/auction/${id}/items/add`)}
+                  >
+                    <Text style={{ fontSize: 32, marginBottom: 8 }}>📦</Text>
+                    <Text style={{ color: '#1A56DB', fontWeight: '600', fontSize: 14 }}>Add your first item</Text>
+                    <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 4 }}>Tap to add items to your auction queue</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={{
+                    borderWidth: 1, borderColor: '#1F2937',
                     borderRadius: 16, padding: 24, alignItems: 'center',
-                  }}
-                  onPress={() => router.push(`/auction/${id}/items/add`)}
-                >
-                  <Text style={{ fontSize: 32, marginBottom: 8 }}>📦</Text>
-                  <Text style={{ color: '#1A56DB', fontWeight: '600', fontSize: 14 }}>Add your first item</Text>
-                  <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 4 }}>Tap to add items to your auction queue</Text>
-                </TouchableOpacity>
+                  }}>
+                    <Text style={{ fontSize: 32, marginBottom: 8 }}>📦</Text>
+                    <Text style={{ color: '#4B5563', fontWeight: '600', fontSize: 14 }}>No items queued</Text>
+                  </View>
+                )
               ) : (
                 queuedItems.map((item, index) => (
                   <View
@@ -320,7 +339,7 @@ export default function AuctionDetailScreen() {
                     </View>
 
                     {/* Delete */}
-                    {!isEnded && (
+                    {isScheduled && (
                       <TouchableOpacity
                         style={{ padding: 8 }}
                         onPress={() => handleRemoveItem(item)}
@@ -543,7 +562,20 @@ export default function AuctionDetailScreen() {
             {isLive && (
               <TouchableOpacity
                 style={{ backgroundColor: '#DC2626', borderRadius: 16, paddingVertical: 18, alignItems: 'center' }}
-                onPress={() => router.push(`/auction/${id}/live`)}
+                onPress={async () => {
+                  // Re-validate auction is still live before entering
+                  try {
+                    const latest = await auctionsApi.getById(id);
+                    if (latest.status !== 'LIVE') {
+                      setAuction(latest); // update local state to reflect ended
+                      Alert.alert('Auction Ended', 'This live auction has already ended.');
+                      return;
+                    }
+                    router.push(`/auction/${id}/live`);
+                  } catch {
+                    Alert.alert('Error', 'Could not verify auction status. Please try again.');
+                  }
+                }}
               >
                 <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17 }}>🔴 Join Live Auction</Text>
                 <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>Tap to watch and bid</Text>
