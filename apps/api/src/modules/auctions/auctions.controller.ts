@@ -42,6 +42,12 @@ export class AuctionsController {
     return this.auctionsService.getScheduledSlots(sellerId, date);
   }
 
+  // With this:
+  @Get('active')
+  getActiveAuction(@CurrentUser() user: AuthUser) {
+    return this.auctionsService.getActiveAuction(user.id);
+  }
+
   // Get single auction
   @Get(':id')
   getAuctionById(@Param('id') id: string) {

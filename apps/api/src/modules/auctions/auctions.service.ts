@@ -374,4 +374,31 @@ export class AuctionsService {
       data: { status: AuctionStatus.CANCELLED },
     });
   }
+
+  async getActiveAuction(sellerId: string) {
+    const auction = await this.prisma.auction.findFirst({
+      where: {
+        sellerId,
+        status: AuctionStatus.LIVE,
+      },
+      select: {
+        id: true,
+        title: true,
+        streamUrl: true,
+        startTime: true,
+        shopItems: {
+          where: {
+            status: { in: ['LIVE', 'QUEUED'] },
+          },
+          select: {
+            id: true,
+            title: true,
+            status: true,
+          },
+        },
+      },
+    });
+
+    return auction ?? null;
+  }
 }
