@@ -61,6 +61,12 @@ interface DeclareChatWinnerPayload {
   amount: number; // in centavos
 }
 
+interface SkipChatItemPayload {
+  auctionId: string;
+  itemId: string;
+  sellerId: string;
+}
+
 @WebSocketGateway({
   cors: { origin: '*' },
   namespace: 'auctions',
@@ -629,6 +635,61 @@ export class BiddingGateway
       message: payload.message,
       timestamp,
     });
+  }
+
+  @SubscribeMessage('skip-chat-item')
+  async handleSkipChatItem(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: SkipChatItemPayload,
+  ) {
+    const { auctionId, itemId, sellerId } = payload;
+
+    const auction = await this.prisma.auction.findUnique({
+      where: { id: auctionId },
+    });
+    if (!auction || auction.sellerId !== sellerId) {
+      client.emit('error', { message: 'Unauthorized' });
+      return;
+    }
+
+    // Clear any display timer
+    this.clearTimer(itemId);
+
+    // Reset item back to QUEUED with original price
+    const item = await this.prisma.shopItem.findUnique({
+      where: { id: itemId },
+      select: { originalPrice: true, price: true },
+    });
+
+    await this.prisma.shopItem.update({
+      where: { id: itemId },
+      data: {
+        status: 'QUEUED',
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        price:
+          item?.originalPrice && item.originalPrice > 0
+            ? item.originalPrice
+            : (item?.price ?? 0),
+      },
+    });
+
+    // Clear any bids placed during this chat bid round
+    await this.prisma.bid.deleteMany({ where: { itemId } });
+    await this.biddingService['redis'].del(`bid:${itemId}`);
+
+    // Notify all clients — no winner
+    this.server.to(`auction:${auctionId}`).emit('item-ended', {
+      itemId,
+      winner: null,
+      timestamp: Date.now(),
+    });
+
+    this.server.to(`auction:${auctionId}`).emit('shop-updated', {
+      auctionId,
+      timestamp: Date.now(),
+    });
+
+    this.logger.log(`Chat item skipped: ${itemId} — reset to QUEUED`);
   }
 
   @SubscribeMessage('end-auction')

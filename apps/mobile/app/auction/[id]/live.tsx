@@ -262,7 +262,7 @@ export default function LiveAuctionRoom() {
     displayName: string;
     message: string;
   } | null>(null);
-  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner } = useAuctionSocket({
+  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner, skipChatItem } = useAuctionSocket({
     auctionId: id,
     userId: user?.id,
     onBidUpdate: useCallback((data: BidUpdateData) => {
@@ -1090,21 +1090,60 @@ export default function LiveAuctionRoom() {
           )
         )}
 
-        {/* Seller bottom: end live button */}
+        {/* Seller bottom controls */}
         {isSeller && (
-          <TouchableOpacity
-            style={{
-              backgroundColor: 'rgba(220,38,38,0.15)',
-              borderWidth: 1, borderColor: '#DC2626',
-              borderRadius: 16, paddingVertical: 14, alignItems: 'center',
-            }}
-            onPress={() => void handleLeave()}
-            activeOpacity={0.85}
-          >
-            <Text style={{ color: '#F87171', fontWeight: '700', fontSize: 15 }}>
-              End Live
-            </Text>
-          </TouchableOpacity>
+          <View style={{ gap: 8 }}>
+            {/* Skip Item — only during chat bid */}
+            {currentItem?.mode === 'chat' && (
+              <TouchableOpacity
+                style={{
+                  backgroundColor: 'rgba(245,158,11,0.15)',
+                  borderWidth: 1, borderColor: '#F59E0B',
+                  borderRadius: 16, paddingVertical: 12, alignItems: 'center',
+                }}
+                onPress={() => {
+                  Alert.alert(
+                    'Skip Item?',
+                    `No sale for "${currentItem.title}"? It will go back to the queue.`,
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Skip Item',
+                        style: 'destructive',
+                        onPress: () => {
+                          if (!currentItem || !user?.id) return;
+                          skipChatItem(currentItem.itemId, user.id);
+                        },
+                      },
+                    ]
+                  );
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 14 }}>
+                  ⏭ Skip Item — No Sale
+                </Text>
+                <Text style={{ color: '#92400E', fontSize: 11, marginTop: 2 }}>
+                  Item goes back to queue
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* End Live */}
+            <TouchableOpacity
+              style={{
+                backgroundColor: 'rgba(220,38,38,0.15)',
+                borderWidth: 1, borderColor: '#DC2626',
+                borderRadius: 16, paddingVertical: 14, alignItems: 'center',
+              }}
+              onPress={() => void handleLeave()}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: '#F87171', fontWeight: '700', fontSize: 15 }}>
+                End Live
+              </Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 

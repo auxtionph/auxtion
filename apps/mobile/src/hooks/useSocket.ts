@@ -234,5 +234,9 @@ export const useAuctionSocket = ({
     socketRef.current?.emit('declare-chat-winner', { auctionId, itemId, sellerId, winnerId, winnerName, amount });
   }, [auctionId]);
 
-  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner };
+  const skipChatItem = useCallback((itemId: string, sellerId: string) => {
+    socketRef.current?.emit('skip-chat-item', { auctionId, itemId, sellerId });
+  }, [auctionId]);
+
+  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner, skipChatItem };
 };
