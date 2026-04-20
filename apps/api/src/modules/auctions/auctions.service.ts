@@ -286,6 +286,19 @@ export class AuctionsService {
       throw new BadRequestException('Auction is not live');
     }
 
+    // Reset any LIVE item back to QUEUED with original price
+    // No winner — item was interrupted mid-auction
+    for (const item of auction.shopItems) {
+      await this.prisma.shopItem.update({
+        where: { id: item.id },
+        data: {
+          status: ShopItemStatus.QUEUED,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          price: item.originalPrice > 0 ? item.originalPrice : item.price,
+        },
+      });
+    }
+
     // End the auction
     const ended = await this.prisma.auction.update({
       where: { id: auctionId },
