@@ -246,8 +246,9 @@ export class BiddingGateway
     this.clearTimer(itemId);
     await this.biddingService.startItemBidding(sellerId, auctionId, itemId);
 
-    const item = await this.prisma.shopItem.findUnique({
+    const item = await this.prisma.shopItem.update({
       where: { id: itemId },
+      data: { mode: 'auction' },
     });
     if (!item) return;
 
@@ -514,8 +515,9 @@ export class BiddingGateway
 
     await this.biddingService.startItemBidding(sellerId, auctionId, itemId);
 
-    const item = await this.prisma.shopItem.findUnique({
+    const item = await this.prisma.shopItem.update({
       where: { id: itemId },
+      data: { mode: 'chat' },
     });
     if (!item) return;
 

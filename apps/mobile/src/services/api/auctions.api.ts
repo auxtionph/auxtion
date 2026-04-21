@@ -90,6 +90,7 @@ export interface AuctionFeedItem {
     status: string;
     queueOrder: number;
     minimumOffer: number;
+    mode?: 'auction' | 'chat';
   }[];
 }
 

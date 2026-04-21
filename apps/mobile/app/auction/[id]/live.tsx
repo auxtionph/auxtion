@@ -34,8 +34,9 @@ interface ChatMsg {
   displayName: string;
   message: string;
   timestamp: number;
-  type?: 'message' | 'item-divider';
+  type?: 'message' | 'item-divider' | 'system_winner';
   itemTitle?: string;
+  winnerAmount?: number;
 }
 
 interface CurrentItem {
@@ -228,7 +229,7 @@ export default function LiveAuctionRoom() {
             currentPrice: liveItem.price,
             photos: liveItem.photos,
             totalBids: 0,
-            mode: 'auction' as const,
+            mode: (liveItem.mode ?? 'auction') as 'auction' | 'chat',
           };
           // Apply pending bid state if it exists for this item
           const pending = pendingBidStateRef.current;
@@ -323,20 +324,41 @@ export default function LiveAuctionRoom() {
         mode: (data as any).mode ?? 'auction',
       });
     }, []),
+
     onItemEnded: useCallback((data: ItemEndedData) => {
       setSkipping(false);
-      if (data.winner) {
+      const winner = data.winner;
+      if (winner) {
+        const title = currentItemRef.current?.title ?? 'Item';
+        
         setSaleToast({
-          winner: data.winner.displayName,
-          amount: data.winner.amount,
-          title: currentItemRef.current?.title ?? 'Item',
+          winner: winner.displayName,
+          amount: winner.amount,
+          title,
         });
         setTimeout(() => setSaleToast(null), 4000);
+
+        setChatMessages(prev => {
+          const alreadyInjected = prev.some(
+            m => m.type === 'system_winner' && m.itemTitle === title
+          );
+          if (alreadyInjected) return prev;
+          return [...prev, {
+            id: `winner-${data.itemId}-${Date.now()}`,
+            userId: '__system__',
+            displayName: '',
+            message: winner.displayName,
+            timestamp: Date.now(),
+            type: 'system_winner',
+            itemTitle: title,
+            winnerAmount: winner.amount,
+          }];
+        });
       }
+
       setCurrentItem(null);
       setWinnerBanner(null);
 
-      // ← Move item to SOLD in local auction state + store winner info
       setAuction(prev => {
         if (!prev) return prev;
         return {
@@ -349,14 +371,14 @@ export default function LiveAuctionRoom() {
         };
       });
 
-      // Store winner info separately for display in sold tab
-      if (data.winner) {
+      if (winner) {
         setSoldItemWinners(prev => ({
           ...prev,
-          [data.itemId]: data.winner!,
+          [data.itemId]: winner,
         }));
       }
     }, []),
+
     onViewerCount: useCallback((data: { count: number }) => {
       setViewerCount(data.count);
     }, []),
@@ -909,14 +931,19 @@ export default function LiveAuctionRoom() {
         <FlatList
           ref={chatRef}
           data={(() => {
-            const real = chatMessages.filter(m => m.type !== 'item-divider').slice(-20);
+            const real = chatMessages
+              .filter(m => m.type !== 'item-divider' && m.type !== 'system_winner')
+              .slice(-20);
             const realIds = new Set(real.map(m => m.id));
-            return chatMessages.filter(m => m.type === 'item-divider' || realIds.has(m.id));
+            return chatMessages.filter(
+              m => m.type === 'item-divider' || m.type === 'system_winner' || realIds.has(m.id)
+            );
           })()}
           keyExtractor={item => item.id}
           style={{ paddingHorizontal: 16 }}
           contentContainerStyle={{ justifyContent: 'flex-end', flexGrow: 1 }}
           onContentSizeChange={() => chatRef.current?.scrollToEnd({ animated: true })}
+          
           renderItem={({ item }) => {
             if (item.type === 'item-divider') {
               return (
@@ -934,6 +961,33 @@ export default function LiveAuctionRoom() {
                     </Text>
                   </View>
                   <View style={{ flex: 1, height: 1, backgroundColor: '#374151' }} />
+                </View>
+              );
+            }
+            if (item.type === 'system_winner') {
+              return (
+                <View style={{
+                  marginVertical: 8,
+                  marginHorizontal: 4,
+                  backgroundColor: 'rgba(245,158,11,0.15)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(245,158,11,0.4)',
+                  borderRadius: 14,
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 10,
+                }}>
+                  <Text style={{ fontSize: 22 }}>🏆</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#F59E0B', fontWeight: '800', fontSize: 13 }}>
+                      {item.message} won!
+                    </Text>
+                    <Text style={{ color: 'rgba(245,158,11,0.75)', fontSize: 11, marginTop: 2 }}>
+                      {item.itemTitle} — {formatPHP(item.winnerAmount ?? 0)}
+                    </Text>
+                  </View>
                 </View>
               );
             }
@@ -2260,6 +2314,20 @@ export default function LiveAuctionRoom() {
                   Alert.alert('Enter amount', 'Please enter the winning bid amount.');
                   return;
                 }
+                
+                // Inject winner chat message immediately (Mode 2 — server will also fire onItemEnded)
+                // We inject here for instant feedback; onItemEnded deduplicates via unique id
+                setChatMessages(prev => [...prev, {
+                  id: `winner-chat-${currentItem.itemId}-${Date.now()}`,
+                  userId: '__system__',
+                  displayName: '',
+                  message: declaringWinner.displayName,
+                  timestamp: Date.now(),
+                  type: 'system_winner',
+                  itemTitle: currentItem.title,
+                  winnerAmount: amount,
+                }]);
+
                 declareChatWinner(currentItem.itemId, user.id, declaringWinner.userId, declaringWinner.displayName, amount);
                 setDeclaringWinner(null);
               }}

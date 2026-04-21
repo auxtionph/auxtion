@@ -182,11 +182,12 @@ export class BiddingService {
       where: { id: itemId },
       data: {
         status: ShopItemStatus.LIVE,
+        mode: 'auction', // gateway overrides to 'chat' if needed
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         price:
           itemMeta?.originalPrice && itemMeta.originalPrice > 0
             ? itemMeta.originalPrice
-            : undefined, // no-op if originalPrice not set yet
+            : undefined,
       },
     });
 
