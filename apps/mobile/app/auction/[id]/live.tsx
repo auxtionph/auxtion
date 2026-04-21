@@ -504,9 +504,10 @@ export default function LiveAuctionRoom() {
       if (mode === 'buynow') {
         Alert.alert('Listed! 🏷️', `${newItem.title} is now available for buyers to purchase.`);
       }
-    } catch {
+   } catch {
       Alert.alert('Error', 'Failed to add item. Try again.');
-      // Revert form on error
+      setShowStartItem(false);
+      setSelectedItem(null);
       setNewItemTitle(title);
       setNewItemPrice(String(price));
       setShowAddItem(true);
