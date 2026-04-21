@@ -24,6 +24,7 @@ import { formatPHP } from '@auxtion/utils';
 import { useAuthStore } from '../../../src/stores/auth.store';
 import { useHMS } from '../../../src/hooks/useHMS';
 import { HMSVideoView } from '../../../src/components/stream/HMSView';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -190,6 +191,9 @@ export default function LiveAuctionRoom() {
   const [broadcasterReconnecting, setBroadcasterReconnecting] = useState(false);
   const [viewerConnecting, setViewerConnecting] = useState(false);
   const pendingBidStateRef = useRef<BidUpdateData | null>(null);
+  const [skipping, setSkipping] = useState(false);
+  const insets = useSafeAreaInsets();
+
 
   useEffect(() => {
     currentItemRef.current = currentItem;
@@ -203,10 +207,13 @@ export default function LiveAuctionRoom() {
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const show = Keyboard.addListener(showEvent, e => setKeyboardHeight(e.endCoordinates.height));
+    const show = Keyboard.addListener(showEvent, e => {
+      // On iOS keyboardWillShow already accounts for safe area
+      setKeyboardHeight(e.endCoordinates.height - (Platform.OS === 'ios' ? insets.bottom : 0));
+    });
     const hide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
     return () => { show.remove(); hide.remove(); };
-  }, []);
+  }, [insets.bottom]);
 
   useEffect(() => {
     void auctionsApi.getById(id).then(data => {
@@ -317,6 +324,7 @@ export default function LiveAuctionRoom() {
       });
     }, []),
     onItemEnded: useCallback((data: ItemEndedData) => {
+      setSkipping(false);
       if (data.winner) {
         setSaleToast({
           winner: data.winner.displayName,
@@ -648,9 +656,27 @@ export default function LiveAuctionRoom() {
       </View>
     );
   };
+  
 
-  // Right-side controls shift up when item bar is visible
-  const rightControlsBottom = currentItem ? 230 : 190;
+  // ── Responsive layout calculations ─────────────────────────────── ← ADD HERE
+  const BOTTOM_PADDING = keyboardHeight > 0 ? 12 : insets.bottom + 8;
+  const CHAT_ROW_HEIGHT = 60;
+  const SELLER_BUTTON_HEIGHT = (() => {
+    if (!isSeller) return 0;
+    const skipHeight = currentItem?.mode === 'chat' ? 56 : 0;
+    const gapHeight = currentItem?.mode === 'chat' ? 8 : 0;
+    return skipHeight + gapHeight + 52;
+  })();
+  const BUYER_BUTTON_HEIGHT = (() => {
+    if (isSeller) return 0;
+    if (!currentItem) return 56;
+    if (currentItem.mode === 'chat') return 68;
+    return 68;
+  })();
+  const ACTION_HEIGHT = isSeller ? SELLER_BUTTON_HEIGHT : BUYER_BUTTON_HEIGHT;
+  const BOTTOM_BAR_HEIGHT = BOTTOM_PADDING + 12 + CHAT_ROW_HEIGHT + ACTION_HEIGHT;
+  const ITEM_BAR_BOTTOM = BOTTOM_BAR_HEIGHT + 8;
+  const CONTROLS_BOTTOM = ITEM_BAR_BOTTOM + (currentItem ? 76 : 0);
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -663,14 +689,16 @@ export default function LiveAuctionRoom() {
       {/* ── Top Bar: seller info + close ── */}
       <View style={{
         position: 'absolute', top: 0, left: 0, right: 0,
-        paddingTop: 56, paddingHorizontal: 16,
+        paddingTop: insets.top + 12, paddingHorizontal: 16,
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
       }}>
         {/* Left: avatar + LIVE + viewers */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 }}>
           <View style={{
             flexDirection: 'row', alignItems: 'center', gap: 8,
-            backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.12)',
+            borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+            borderRadius: 999,
             paddingHorizontal: 10, paddingVertical: 6,
           }}>
             <View style={{
@@ -697,7 +725,9 @@ export default function LiveAuctionRoom() {
 
           {viewerCount > 0 && (
             <View style={{
-              backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999,
+              backgroundColor: 'rgba(255,255,255,0.12)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+              borderRadius: 999,
               paddingHorizontal: 10, paddingVertical: 6,
             }}>
               <Text style={{ color: '#fff', fontSize: 11 }}>👁 {viewerCount}</Text>
@@ -708,7 +738,9 @@ export default function LiveAuctionRoom() {
         {/* Right: close only — seller controls moved to right side panel */}
         <TouchableOpacity
           style={{
-            backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.15)',
+            borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+            borderRadius: 999,
             width: 36, height: 36, alignItems: 'center', justifyContent: 'center',
           }}
           onPress={() => void handleLeave()}
@@ -717,131 +749,151 @@ export default function LiveAuctionRoom() {
         </TouchableOpacity>
       </View>
 
-      {/* ── Right Side Seller Controls (Whatnot-style vertical stack) ── */}
-      {isSeller && hms.isJoined && (
+      {/* ── Right Side Seller Controls ── */}
+      {isSeller && hms.isJoined && keyboardHeight === 0 && (
         <View style={{
           position: 'absolute',
           right: 12,
-          bottom: rightControlsBottom + keyboardHeight,
+          bottom: CONTROLS_BOTTOM,
           alignItems: 'center',
-          gap: 20,
+          gap: 12,
         }}>
-
           {/* Mute */}
           <TouchableOpacity
-            style={{ alignItems: 'center', gap: 4 }}
+            style={{ alignItems: 'center', gap: 3 }}
             onPress={() => void hms.toggleMute()}
             activeOpacity={0.75}
           >
             <View style={{
-              width: 44, height: 44, borderRadius: 22,
-              backgroundColor: hms.isMuted ? 'rgba(220,38,38,0.85)' : 'rgba(0,0,0,0.60)',
+              width: 38, height: 38, borderRadius: 19,
+              backgroundColor: hms.isMuted
+                ? 'rgba(220,38,38,0.75)'
+                : 'rgba(255,255,255,0.15)',
+              borderWidth: 1,
+              borderColor: hms.isMuted
+                ? 'rgba(220,38,38,0.5)'
+                : 'rgba(255,255,255,0.25)',
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <Text style={{ fontSize: 20 }}>{hms.isMuted ? '🔇' : '🎙️'}</Text>
+              <Text style={{ fontSize: 16 }}>{hms.isMuted ? '🔇' : '🎙️'}</Text>
             </View>
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>
+            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>
               {hms.isMuted ? 'Unmute' : 'Mute'}
             </Text>
           </TouchableOpacity>
 
           {/* Camera */}
           <TouchableOpacity
-            style={{ alignItems: 'center', gap: 4 }}
+            style={{ alignItems: 'center', gap: 3 }}
             onPress={() => void hms.toggleCamera()}
             activeOpacity={0.75}
           >
             <View style={{
-              width: 44, height: 44, borderRadius: 22,
-              backgroundColor: hms.isCameraOff ? 'rgba(220,38,38,0.85)' : 'rgba(0,0,0,0.60)',
+              width: 38, height: 38, borderRadius: 19,
+              backgroundColor: hms.isCameraOff
+                ? 'rgba(220,38,38,0.75)'
+                : 'rgba(255,255,255,0.15)',
+              borderWidth: 1,
+              borderColor: hms.isCameraOff
+                ? 'rgba(220,38,38,0.5)'
+                : 'rgba(255,255,255,0.25)',
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <Text style={{ fontSize: 20 }}>{hms.isCameraOff ? '📵' : '📹'}</Text>
+              <Text style={{ fontSize: 16 }}>{hms.isCameraOff ? '📵' : '📹'}</Text>
             </View>
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>
+            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>
               {hms.isCameraOff ? 'Start' : 'Stop'}
             </Text>
           </TouchableOpacity>
 
           {/* Flip */}
           <TouchableOpacity
-            style={{ alignItems: 'center', gap: 4 }}
+            style={{ alignItems: 'center', gap: 3 }}
             onPress={() => void hms.switchCamera()}
             activeOpacity={0.75}
           >
             <View style={{
-              width: 44, height: 44, borderRadius: 22,
-              backgroundColor: 'rgba(0,0,0,0.60)',
+              width: 38, height: 38, borderRadius: 19,
+              backgroundColor: 'rgba(255,255,255,0.15)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <Text style={{ fontSize: 20 }}>🔄</Text>
+              <Text style={{ fontSize: 16 }}>🔄</Text>
             </View>
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>Flip</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>Flip</Text>
           </TouchableOpacity>
 
           {/* Shop */}
           <TouchableOpacity
-            style={{ alignItems: 'center', gap: 4 }}
+            style={{ alignItems: 'center', gap: 3 }}
             onPress={() => setShowShop(true)}
             activeOpacity={0.75}
           >
             <View style={{
-              width: 44, height: 44, borderRadius: 22,
-              backgroundColor: 'rgba(0,0,0,0.60)',
+              width: 38, height: 38, borderRadius: 19,
+              backgroundColor: 'rgba(255,255,255,0.15)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <Text style={{ fontSize: 20 }}>🛍️</Text>
+              <Text style={{ fontSize: 16 }}>🛍️</Text>
             </View>
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>Shop</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>Shop</Text>
           </TouchableOpacity>
-
         </View>
       )}
 
       {/* ── Right Side Viewer Controls ── */}
-      {!isSeller && (
+      {!isSeller && keyboardHeight === 0 && (
         <View style={{
           position: 'absolute',
           right: 12,
-          bottom: (currentItem ? 230 : 190) + keyboardHeight,
+          bottom: CONTROLS_BOTTOM,
           alignItems: 'center',
-          gap: 20,
+          gap: 12,
         }}>
           {/* Share */}
           <TouchableOpacity style={{ alignItems: 'center', gap: 4 }} activeOpacity={0.75}>
-            <View style={{
-              width: 44, height: 44, borderRadius: 22,
-              backgroundColor: 'rgba(0,0,0,0.60)',
-              alignItems: 'center', justifyContent: 'center',
-            }}>
-              <Text style={{ fontSize: 20 }}>↑</Text>
-            </View>
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>Share</Text>
-          </TouchableOpacity>
+            {/* Share */}
+            <TouchableOpacity style={{ alignItems: 'center', gap: 3 }} activeOpacity={0.75}>
+              <View style={{
+                width: 38, height: 38, borderRadius: 19,
+                backgroundColor: 'rgba(255,255,255,0.15)',
+                borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Text style={{ fontSize: 16 }}>↑</Text>
+              </View>
+              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>Share</Text>
+            </TouchableOpacity>
 
-          {/* Shop */}
-          <TouchableOpacity
-            style={{ alignItems: 'center', gap: 4 }}
-            onPress={() => setShowShop(true)}
-            activeOpacity={0.75}
-          >
-            <View style={{
-              width: 44, height: 44, borderRadius: 22,
-              backgroundColor: 'rgba(0,0,0,0.60)',
-              alignItems: 'center', justifyContent: 'center',
-            }}>
-              <Text style={{ fontSize: 20 }}>🛍️</Text>
-              {biddingItems.length > 0 && (
-                <View style={{
-                  position: 'absolute', top: -2, right: -2,
-                  backgroundColor: '#DC2626', borderRadius: 999,
-                  width: 16, height: 16, alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>{biddingItems.length}</Text>
-                </View>
-              )}
-            </View>
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>Shop</Text>
+            {/* Shop */}
+            <TouchableOpacity
+              style={{ alignItems: 'center', gap: 3 }}
+              onPress={() => setShowShop(true)}
+              activeOpacity={0.75}
+            >
+              <View style={{
+                width: 38, height: 38, borderRadius: 19,
+                backgroundColor: 'rgba(255,255,255,0.15)',
+                borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Text style={{ fontSize: 16 }}>🛍️</Text>
+                {biddingItems.length > 0 && (
+                  <View style={{
+                    position: 'absolute', top: -2, right: -2,
+                    backgroundColor: '#DC2626', borderRadius: 999,
+                    width: 14, height: 14,
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Text style={{ color: '#fff', fontSize: 8, fontWeight: '700' }}>
+                      {biddingItems.length}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>Shop</Text>
+            </TouchableOpacity>
           </TouchableOpacity>
         </View>
       )}
@@ -851,7 +903,7 @@ export default function LiveAuctionRoom() {
         position: 'absolute',
         left: 0,
         right: isSeller ? 68 : 68, // indent right for both seller and viewer controls
-        bottom: (currentItem ? 260 : 160) + keyboardHeight,
+        bottom: CHAT_ROW_HEIGHT + ACTION_HEIGHT + BOTTOM_PADDING + 12 + (currentItem ? 84 : 8) + keyboardHeight,
         height: 200,
       }}>
         <FlatList
@@ -922,7 +974,12 @@ export default function LiveAuctionRoom() {
 
       {/* ── Current Item Bar ── */}
       {currentItem && (
-       <View style={{ position: 'absolute', left: 16, right: 16, bottom: 152 + keyboardHeight }}>
+        <View style={{ 
+          position: 'absolute', 
+          left: 16, right: 16, 
+          // Push up more when seller has skip button showing
+          bottom: (isSeller && currentItem.mode === 'chat' ? 210 : 152) + keyboardHeight 
+        }}>
           <View style={{
             backgroundColor: 'rgba(0,0,0,0.70)', borderRadius: 16,
             paddingHorizontal: 16, paddingVertical: 12,
@@ -974,7 +1031,7 @@ export default function LiveAuctionRoom() {
       {/* ── Bottom Controls ── */}
       <View style={{
         position: 'absolute', bottom: keyboardHeight, left: 0, right: 0,
-        paddingHorizontal: 16, paddingBottom: keyboardHeight > 0 ? 12 : 40, paddingTop: 12,
+        paddingBottom: BOTTOM_PADDING, paddingTop: 12,
       }}>
         {/* Chat input row */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -1097,10 +1154,12 @@ export default function LiveAuctionRoom() {
             {currentItem?.mode === 'chat' && (
               <TouchableOpacity
                 style={{
-                  backgroundColor: 'rgba(245,158,11,0.15)',
-                  borderWidth: 1, borderColor: '#F59E0B',
+                  backgroundColor: skipping ? 'rgba(107,114,128,0.15)' : 'rgba(245,158,11,0.15)',
+                  borderWidth: 1, borderColor: skipping ? '#6B7280' : '#F59E0B',
                   borderRadius: 16, paddingVertical: 12, alignItems: 'center',
+                  opacity: skipping ? 0.6 : 1,
                 }}
+                disabled={skipping}
                 onPress={() => {
                   Alert.alert(
                     'Skip Item?',
@@ -1112,7 +1171,10 @@ export default function LiveAuctionRoom() {
                         style: 'destructive',
                         onPress: () => {
                           if (!currentItem || !user?.id) return;
+                          setSkipping(true);
                           skipChatItem(currentItem.itemId, user.id);
+                          // Reset after 3s fallback in case socket doesn't respond
+                          setTimeout(() => setSkipping(false), 3000);
                         },
                       },
                     ]
@@ -1120,12 +1182,18 @@ export default function LiveAuctionRoom() {
                 }}
                 activeOpacity={0.85}
               >
-                <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 14 }}>
-                  ⏭ Skip Item — No Sale
-                </Text>
-                <Text style={{ color: '#92400E', fontSize: 11, marginTop: 2 }}>
-                  Item goes back to queue
-                </Text>
+                {skipping ? (
+                  <ActivityIndicator color="#F59E0B" size="small" />
+                ) : (
+                  <>
+                    <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 14 }}>
+                      ⏭ Skip Item — No Sale
+                    </Text>
+                    <Text style={{ color: '#92400E', fontSize: 11, marginTop: 2 }}>
+                      Item goes back to queue
+                    </Text>
+                  </>
+                )}
               </TouchableOpacity>
             )}
 
@@ -1551,7 +1619,7 @@ export default function LiveAuctionRoom() {
       {isSeller && pendingOffer && (
         <View style={{
           position: 'absolute',
-          top: 100, left: 16, right: 16,
+          top: insets.top + 16, left: 16, right: 16,
           backgroundColor: '#1F2937',
           borderRadius: 16, padding: 16,
           borderWidth: 1, borderColor: '#374151',
@@ -1615,7 +1683,7 @@ export default function LiveAuctionRoom() {
       {saleToast && (
         <View style={{
           position: 'absolute',
-          top: 100, left: 24, right: 24,
+          top: insets.top + 16, left: 24, right: 24,
           backgroundColor: 'rgba(16,185,129,0.95)',
           borderRadius: 16, padding: 16,
           flexDirection: 'row', alignItems: 'center', gap: 12,
