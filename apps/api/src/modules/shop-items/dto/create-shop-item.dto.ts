@@ -12,7 +12,7 @@ import { ShopItemType } from '@prisma/client';
 
 export class CreateShopItemDto {
   @IsString()
-  @MinLength(2)
+  @MinLength(1)
   @MaxLength(100)
   title: string;
 
