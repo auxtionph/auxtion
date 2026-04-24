@@ -1338,6 +1338,10 @@ export default function LiveAuctionRoom() {
                   activeOpacity={isSeller && item.status !== 'LIVE' ? 0.7 : 1}
                   onPress={() => {
                     if (isSeller && item.status !== 'LIVE') {
+                      if (currentItem) {
+                        Alert.alert('Item Already Running', 'End or skip the current item before starting a new one.');
+                        return;
+                      }
                       setSelectedItem({ id: item.id, title: item.title, price: item.price });
                       setShowStartItem(true);
                       setShowShop(false);
@@ -1347,6 +1351,8 @@ export default function LiveAuctionRoom() {
                     flexDirection: 'row', alignItems: 'center', gap: 12,
                     backgroundColor: '#1F2937', borderRadius: 12,
                     padding: 12, marginBottom: 8,
+                    opacity: isSeller && item.status === 'QUEUED' && currentItem ? 0.4 : 1,
+
                   }}
                 >
                   <View style={{
@@ -1886,11 +1892,18 @@ export default function LiveAuctionRoom() {
 
             <TouchableOpacity
               style={{
-                backgroundColor: newItemTitle.trim() && newItemPrice ? '#DC2626' : '#374151',
+                backgroundColor: newItemTitle.trim() && newItemPrice && !currentItem ? '#DC2626' : '#374151',
                 borderRadius: 14, paddingVertical: 16, alignItems: 'center',
                 marginBottom: 10,
+                opacity: currentItem ? 0.4 : 1,
               }}
-              onPress={() => void handleAddItemLive('now')}
+              onPress={() => {
+                if (currentItem) {
+                  Alert.alert('Item Already Running', 'End or skip the current item before running a new one.');
+                  return;
+                }
+                void handleAddItemLive('now');
+              }}
               disabled={!newItemTitle.trim() || !newItemPrice || addingItem}
             >
               {addingItem ? (
