@@ -17,7 +17,7 @@ export class CreateShopItemDto {
   title: string;
 
   @IsString()
-  @MinLength(10)
+  @MinLength(1)
   @MaxLength(1000)
   description: string;
 

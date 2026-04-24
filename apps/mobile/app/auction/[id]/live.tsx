@@ -469,7 +469,7 @@ export default function LiveAuctionRoom() {
 
       const newItem = await shopItemsApi.create({
         title,
-        description: `${title} - item`,
+        description: `${title} - live auction item`,
         photos: [],
         price: itemPrice,
         type: mode === 'buynow' ? 'BUY_NOW' : 'AUCTION',
@@ -504,10 +504,9 @@ export default function LiveAuctionRoom() {
       if (mode === 'buynow') {
         Alert.alert('Listed! 🏷️', `${newItem.title} is now available for buyers to purchase.`);
       }
-   } catch {
+    } catch {
       Alert.alert('Error', 'Failed to add item. Try again.');
-      setShowStartItem(false);
-      setSelectedItem(null);
+      // Revert form on error
       setNewItemTitle(title);
       setNewItemPrice(String(price));
       setShowAddItem(true);
