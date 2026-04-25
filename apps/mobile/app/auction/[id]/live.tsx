@@ -194,7 +194,7 @@ export default function LiveAuctionRoom() {
   const pendingBidStateRef = useRef<BidUpdateData | null>(null);
   const [skipping, setSkipping] = useState(false);
   const insets = useSafeAreaInsets();
-  const [soldSubTab, setSoldSubTab] = useState<'all' | 'auction' | 'chat'>('all');
+  const [soldSubTab, setSoldSubTab] = useState<'all' | 'auction' | 'chat' | 'buynow'>('all');
   const [soldSort, setSoldSort] = useState<'recent' | 'high' | 'low'>('recent');
 
 
@@ -1302,7 +1302,7 @@ export default function LiveAuctionRoom() {
         animationType="slide"
         transparent
         onRequestClose={() => { setShowShop(false); setSoldSubTab('all'); setSoldSort('recent'); }}      >
-          
+
         <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => { setShowShop(false); setSoldSubTab('all'); setSoldSort('recent'); }} />
         <View style={{
           backgroundColor: '#111827',
@@ -1411,12 +1411,14 @@ export default function LiveAuctionRoom() {
 
             {/* ── Sold Tab ── */}
             {shopTab === 'sold' && (() => {
-              // Sub-tab filter
+              // Split by type first, then mode
               const filtered = soldItems.filter(i => {
+                const isBuyNow = i.type === 'BUY_NOW';
                 const mode = soldItemWinners[i.id]?.mode ?? i.mode ?? 'auction';
-                if (soldSubTab === 'auction') return mode === 'auction';
-                if (soldSubTab === 'chat') return mode === 'chat';
-                return true;
+                if (soldSubTab === 'buynow') return isBuyNow;
+                if (soldSubTab === 'auction') return !isBuyNow && mode === 'auction';
+                if (soldSubTab === 'chat') return !isBuyNow && mode === 'chat';
+                return true; // 'all'
               });
 
               // Sort
@@ -1425,37 +1427,55 @@ export default function LiveAuctionRoom() {
                 const bAmount = soldItemWinners[b.id]?.amount ?? b.price;
                 if (soldSort === 'high') return bAmount - aAmount;
                 if (soldSort === 'low') return aAmount - bAmount;
-                return 0; // recent = insertion order
+                return 0;
               });
+
+              // Counts for badges
+              const auctionCount = soldItems.filter(i => i.type !== 'BUY_NOW' && (soldItemWinners[i.id]?.mode ?? i.mode ?? 'auction') === 'auction').length;
+              const chatCount = soldItems.filter(i => i.type !== 'BUY_NOW' && (soldItemWinners[i.id]?.mode ?? i.mode ?? 'auction') === 'chat').length;
+              const buyNowCount = soldItems.filter(i => i.type === 'BUY_NOW').length;
 
               return (
                 <>
                   {/* Sub-tabs + sort row */}
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 6 }}>
-                    {/* Sub-tabs */}
-                    <View style={{ flexDirection: 'row', gap: 6, flex: 1 }}>
-                      {([
-                        { key: 'all', label: 'All' },
-                        { key: 'auction', label: '🔨 Swipe' },
-                        { key: 'chat', label: '💬 Chat' },
-                      ] as const).map(t => (
-                        <TouchableOpacity
-                          key={t.key}
-                          style={{
-                            paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
-                            backgroundColor: soldSubTab === t.key ? '#374151' : 'transparent',
-                            borderWidth: 1,
-                            borderColor: soldSubTab === t.key ? '#4B5563' : '#1F2937',
-                          }}
-                          onPress={() => setSoldSubTab(t.key)}
-                        >
-                          <Text style={{
-                            color: soldSubTab === t.key ? '#fff' : '#6B7280',
-                            fontSize: 12, fontWeight: '600',
-                          }}>{t.label}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', gap: 6 }}>
+                        {([
+                          { key: 'all', label: 'All', count: soldItems.length },
+                          { key: 'auction', label: '🔨 Swipe', count: auctionCount },
+                          { key: 'chat', label: '💬 Chat', count: chatCount },
+                          { key: 'buynow', label: '🏷️ Buy Now', count: buyNowCount },
+                        ] as const).map(t => (
+                          <TouchableOpacity
+                            key={t.key}
+                            style={{
+                              flexDirection: 'row', alignItems: 'center', gap: 4,
+                              paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+                              backgroundColor: soldSubTab === t.key ? '#374151' : 'transparent',
+                              borderWidth: 1,
+                              borderColor: soldSubTab === t.key ? '#4B5563' : '#1F2937',
+                            }}
+                            onPress={() => setSoldSubTab(t.key)}
+                          >
+                            <Text style={{
+                              color: soldSubTab === t.key ? '#fff' : '#6B7280',
+                              fontSize: 12, fontWeight: '600',
+                            }}>{t.label}</Text>
+                            {t.count > 0 && (
+                              <View style={{
+                                backgroundColor: soldSubTab === t.key ? '#6B7280' : '#1F2937',
+                                borderRadius: 999, minWidth: 16, height: 16,
+                                alignItems: 'center', justifyContent: 'center',
+                                paddingHorizontal: 4,
+                              }}>
+                                <Text style={{ color: '#9CA3AF', fontSize: 9, fontWeight: '700' }}>{t.count}</Text>
+                              </View>
+                            )}
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </ScrollView>
 
                     {/* Sort pill */}
                     <TouchableOpacity
@@ -1481,11 +1501,12 @@ export default function LiveAuctionRoom() {
                   {/* Items */}
                   {sorted.length === 0 ? (
                     <View style={{ alignItems: 'center', paddingVertical: 32 }}>
-                      <Text style={{ color: '#4B5563', fontSize: 13 }}>No items sold yet</Text>
+                      <Text style={{ color: '#4B5563', fontSize: 13 }}>No items here yet</Text>
                     </View>
                   ) : sorted.map(item => {
                     const winner = soldItemWinners[item.id];
-                    const itemMode = winner?.mode ?? item.mode ?? 'auction';
+                    const isBuyNow = item.type === 'BUY_NOW';
+                    const itemMode = isBuyNow ? 'buynow' : (winner?.mode ?? item.mode ?? 'auction');
                     return (
                       <View
                         key={item.id}
@@ -1515,26 +1536,45 @@ export default function LiveAuctionRoom() {
                               <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '700' }}>
                                 ✅ {formatPHP(winner.amount)}
                               </Text>
-                              <Text style={{ color: '#6B7280', fontSize: 11 }}>
-                                Won by {winner.displayName}
-                              </Text>
+                              {!isBuyNow && winner.displayName && winner.displayName !== 'Unknown' && (
+                                <Text style={{ color: '#6B7280', fontSize: 11 }}>
+                                  Won by {winner.displayName}
+                                </Text>
+                              )}
+                              {isBuyNow && (
+                                <Text style={{ color: '#6B7280', fontSize: 11 }}>
+                                  {winner.displayName && winner.displayName !== 'Unknown'
+                                    ? `Bought by ${winner.displayName}`
+                                    : 'Fixed price purchase'}
+                                </Text>
+                              )}
                             </>
                           ) : (
-                            <Text style={{ color: '#10B981', fontSize: 12 }}>✅ Sold</Text>
+                            <Text style={{ color: '#10B981', fontSize: 12 }}>
+                              ✅ {isBuyNow ? 'Purchased' : 'Sold'}
+                            </Text>
                           )}
                         </View>
                         {/* Mode badge */}
                         <View style={{
-                          backgroundColor: itemMode === 'chat' ? 'rgba(124,58,237,0.15)' : 'rgba(26,86,219,0.15)',
                           borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4,
                           borderWidth: 1,
-                          borderColor: itemMode === 'chat' ? 'rgba(124,58,237,0.4)' : 'rgba(26,86,219,0.4)',
+                          backgroundColor: isBuyNow
+                            ? 'rgba(16,185,129,0.15)'
+                            : itemMode === 'chat'
+                              ? 'rgba(124,58,237,0.15)'
+                              : 'rgba(26,86,219,0.15)',
+                          borderColor: isBuyNow
+                            ? 'rgba(16,185,129,0.4)'
+                            : itemMode === 'chat'
+                              ? 'rgba(124,58,237,0.4)'
+                              : 'rgba(26,86,219,0.4)',
                         }}>
                           <Text style={{
                             fontSize: 10, fontWeight: '700',
-                            color: itemMode === 'chat' ? '#A78BFA' : '#60A5FA',
+                            color: isBuyNow ? '#10B981' : itemMode === 'chat' ? '#A78BFA' : '#60A5FA',
                           }}>
-                            {itemMode === 'chat' ? '💬' : '🔨'}
+                            {isBuyNow ? '🏷️' : itemMode === 'chat' ? '💬' : '🔨'}
                           </Text>
                         </View>
                       </View>
