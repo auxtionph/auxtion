@@ -126,9 +126,11 @@ export class OffersService {
   async acceptOffer(sellerId: string, offerId: string) {
     const offer = await this.prisma.offer.findUnique({
       where: { id: offerId },
-      include: { item: true },
+      include: {
+        item: true,
+        buyer: { select: { displayName: true } },
+      },
     });
-
     if (!offer) throw new NotFoundException('Offer not found');
     if (offer.sellerId !== sellerId)
       throw new ForbiddenException('You do not own this offer');
@@ -168,6 +170,7 @@ export class OffersService {
         status: 'ACCEPTED',
         itemTitle: offer.item.title,
         amount: offer.amount,
+        buyerName: offer.buyer?.displayName ?? 'Buyer',
       });
       this.biddingGateway.emitToAuction(activeAuction.id, 'shop-updated', {
         auctionId: activeAuction.id,

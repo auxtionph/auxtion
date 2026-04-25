@@ -62,7 +62,7 @@ interface UseSocketOptions {
   onTimerEnded?: (data: { itemId: string }) => void;
   onShopUpdated?: (data: { auctionId: string; timestamp: number }) => void;
   onOfferReceived?: (data: { offerId: string; itemId: string; itemTitle: string; buyerName: string; amount: number; timestamp: number }) => void;
-  onOfferResponded?: (data: { offerId: string; status: string; itemTitle: string; amount: number }) => void;
+  onOfferResponded?: (data: { offerId: string; status: string; itemTitle: string; amount: number; buyerName?: string }) => void;
   onTimerPaused?: (data: { itemId: string; remaining: number; reason: string }) => void;
   onTimerResumed?: (data: { itemId: string; remaining: number }) => void;
 }

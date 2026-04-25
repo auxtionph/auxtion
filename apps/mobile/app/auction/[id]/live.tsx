@@ -169,6 +169,7 @@ export default function LiveAuctionRoom() {
   const [newItemTitle, setNewItemTitle] = useState('');
   const [newItemPrice, setNewItemPrice] = useState('');
   const [addingItem, setAddingItem] = useState(false);
+  const [newAddMode, setNewAddMode] = useState<'queue' | 'now' | 'buynow'>('queue');
   const [showCustomBid, setShowCustomBid] = useState(false);
   const [customBidInput, setCustomBidInput] = useState('');
   const [winnerBanner, setWinnerBanner] = useState<string | null>(null);
@@ -465,14 +466,26 @@ export default function LiveAuctionRoom() {
       if (showShopRef.current) setShopTab('offers');
     }, [isSeller]),
 
-    onOfferResponded: useCallback((data: { offerId: string; status: string; itemTitle: string; amount: number }) => {
-      if (isSeller) return;
-      Alert.alert(
-        data.status === 'ACCEPTED' ? '🎉 Offer Accepted!' : '❌ Offer Declined',
-        data.status === 'ACCEPTED'
-          ? `Your offer of ${formatPHP(data.amount)} for ${data.itemTitle} was accepted!`
-          : `Your offer for ${data.itemTitle} was declined.`
-      );
+    onOfferResponded: useCallback((data: { offerId: string; status: string; itemTitle: string; amount: number; buyerName?: string }) => {
+      if (data.status === 'ACCEPTED') {
+        if (!isSeller) {
+          setChatMessages(prev => [...prev, {
+            id: `offer-accepted-${data.offerId}-${Date.now()}`,
+            userId: '__system__',
+            displayName: '',
+            message: '',
+            timestamp: Date.now(),
+            type: 'system_offer',
+            itemTitle: data.itemTitle,
+            winnerAmount: data.amount,
+            buyerName: `✅ ${data.buyerName ?? 'Buyer'}`,
+          }]);
+        }
+        return;
+      }
+      if (!isSeller) {
+        Alert.alert('❌ Offer Declined', `Your offer for ${data.itemTitle} was declined.`);
+      }
     }, [isSeller]),
 
     onTimerPaused: useCallback(() => {
@@ -1026,13 +1039,19 @@ export default function LiveAuctionRoom() {
             }
 
             if (item.type === 'system_offer') {
+              const isAccepted = item.buyerName?.startsWith('✅');
+              const displayName = isAccepted ? item.buyerName?.replace('✅ ', '') : item.buyerName;
               return (
                 <View style={{
                   marginVertical: 6,
                   marginHorizontal: 4,
-                  backgroundColor: 'rgba(245,158,11,0.08)',
+                  backgroundColor: isAccepted
+                    ? 'rgba(16,185,129,0.1)'
+                    : 'rgba(245,158,11,0.08)',
                   borderWidth: 1,
-                  borderColor: 'rgba(245,158,11,0.25)',
+                  borderColor: isAccepted
+                    ? 'rgba(16,185,129,0.35)'
+                    : 'rgba(245,158,11,0.25)',
                   borderRadius: 12,
                   paddingHorizontal: 12,
                   paddingVertical: 8,
@@ -1040,13 +1059,31 @@ export default function LiveAuctionRoom() {
                   alignItems: 'center',
                   gap: 8,
                 }}>
-                  <Text style={{ fontSize: 16 }}>💰</Text>
-                  <Text style={{ color: 'rgba(245,158,11,0.9)', fontSize: 11, flex: 1 }}>
-                    <Text style={{ fontWeight: '700' }}>{item.buyerName}</Text>
-                    {' offered '}
-                    <Text style={{ fontWeight: '700' }}>{formatPHP(item.winnerAmount ?? 0)}</Text>
-                    {' for '}
-                    <Text style={{ fontWeight: '600' }}>{item.itemTitle}</Text>
+                  <Text style={{ fontSize: 15 }}>{isAccepted ? '🤝' : '💰'}</Text>
+                  <Text style={{
+                    color: isAccepted
+                      ? 'rgba(16,185,129,0.9)'
+                      : 'rgba(245,158,11,0.9)',
+                    fontSize: 11, flex: 1,
+                  }}>
+                    {isAccepted ? (
+                      <>
+                        <Text style={{ fontWeight: '700' }}>{displayName}</Text>
+                        {`'s offer of `}
+                        <Text style={{ fontWeight: '700' }}>{formatPHP(item.winnerAmount ?? 0)}</Text>
+                        {` for `}
+                        <Text style={{ fontWeight: '600' }}>{item.itemTitle}</Text>
+                        {` was accepted 🎉`}
+                      </>
+                    ) : (
+                      <>
+                        <Text style={{ fontWeight: '700' }}>{item.buyerName}</Text>
+                        {' offered '}
+                        <Text style={{ fontWeight: '700' }}>{formatPHP(item.winnerAmount ?? 0)}</Text>
+                        {' for '}
+                        <Text style={{ fontWeight: '600' }}>{item.itemTitle}</Text>
+                      </>
+                    )}
                   </Text>
                 </View>
               );
@@ -1377,41 +1414,52 @@ export default function LiveAuctionRoom() {
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17, paddingHorizontal: 24, marginBottom: 16 }}>
             Shop
           </Text>
-          <View style={{ flexDirection: 'row', paddingHorizontal: 24, marginBottom: 16, gap: 8 }}>
-            {(['bidding', 'buynow', 'sold', ...(isSeller ? ['offers'] : [])] as ('bidding' | 'buynow' | 'sold' | 'offers')[]).map((tab) => (
-              <TouchableOpacity
-                key={tab}
-                style={{
-                  paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999,
-                  backgroundColor: shopTab === tab ? '#1A56DB' : '#1F2937',
-                }}
-                onPress={() => setShopTab(tab)}
-              >
-                <Text style={{
-                  fontSize: 13, fontWeight: '600',
-                  color: shopTab === tab ? '#fff' : '#9CA3AF',
-                }}>
-                  {tab === 'bidding' ? '🔨 Bidding' : tab === 'buynow' ? '🏷️ Buy Now' : tab === 'sold' ? '✅ Sold' : (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: shopTab === 'offers' ? '#fff' : '#9CA3AF' }}>
-                        💰 Offers
+          {/* Shop tabs — icon grid, always fits any screen width */}
+          <View style={{
+            flexDirection: 'row', paddingHorizontal: 24,
+            marginBottom: 16, gap: 8,
+          }}>
+            {(([
+              { key: 'bidding', icon: '🔨', label: 'Bidding' },
+              { key: 'buynow', icon: '🏷️', label: 'Buy Now' },
+              { key: 'sold', icon: '✅', label: 'Sold' },
+              ...(isSeller ? [{ key: 'offers', icon: '💰', label: 'Offers' }] : []),
+            ]) as { key: 'bidding' | 'buynow' | 'sold' | 'offers'; icon: string; label: string }[]).map(tab => {
+              const active = shopTab === tab.key;
+              const hasOffersbadge = tab.key === 'offers' && pendingOffers.length > 0;
+              return (
+                <TouchableOpacity
+                  key={tab.key}
+                  style={{
+                    flex: 1, alignItems: 'center', paddingVertical: 10,
+                    borderRadius: 14,
+                    backgroundColor: active ? '#1A56DB' : '#1F2937',
+                    borderWidth: 1,
+                    borderColor: active ? '#1A56DB' : '#374151',
+                    position: 'relative',
+                  }}
+                  onPress={() => setShopTab(tab.key)}
+                >
+                  <Text style={{ fontSize: 18, marginBottom: 3 }}>{tab.icon}</Text>
+                  <Text style={{
+                    fontSize: 10, fontWeight: '700',
+                    color: active ? '#fff' : '#6B7280',
+                  }}>{tab.label}</Text>
+                  {hasOffersbadge && (
+                    <View style={{
+                      position: 'absolute', top: 6, right: 6,
+                      backgroundColor: '#DC2626', borderRadius: 999,
+                      minWidth: 14, height: 14, paddingHorizontal: 3,
+                      alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Text style={{ color: '#fff', fontSize: 8, fontWeight: '700' }}>
+                        {pendingOffers.length}
                       </Text>
-                      {pendingOffers.length > 0 && (
-                        <View style={{
-                          backgroundColor: '#DC2626', borderRadius: 999,
-                          minWidth: 16, height: 16, paddingHorizontal: 4,
-                          alignItems: 'center', justifyContent: 'center',
-                        }}>
-                          <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>
-                            {pendingOffers.length}
-                          </Text>
-                        </View>
-                      )}
                     </View>
                   )}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
           {isSeller && shopTab === 'bidding' && (
@@ -1515,63 +1563,60 @@ export default function LiveAuctionRoom() {
 
               return (
                 <>
-                  {/* Sub-tabs + sort row */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 6 }}>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
-                      <View style={{ flexDirection: 'row', gap: 6 }}>
-                        {([
-                          { key: 'all', label: 'All', count: soldItems.length },
-                          { key: 'auction', label: '🔨 Swipe', count: auctionCount },
-                          { key: 'chat', label: '💬 Chat', count: chatCount },
-                          { key: 'buynow', label: '🏷️ Buy Now', count: buyNowCount },
-                        ] as const).map(t => (
-                          <TouchableOpacity
-                            key={t.key}
-                            style={{
-                              flexDirection: 'row', alignItems: 'center', gap: 4,
-                              paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
-                              backgroundColor: soldSubTab === t.key ? '#374151' : 'transparent',
-                              borderWidth: 1,
-                              borderColor: soldSubTab === t.key ? '#4B5563' : '#1F2937',
-                            }}
-                            onPress={() => setSoldSubTab(t.key)}
-                          >
-                            <Text style={{
-                              color: soldSubTab === t.key ? '#fff' : '#6B7280',
-                              fontSize: 12, fontWeight: '600',
-                            }}>{t.label}</Text>
-                            {t.count > 0 && (
-                              <View style={{
-                                backgroundColor: soldSubTab === t.key ? '#6B7280' : '#1F2937',
-                                borderRadius: 999, minWidth: 16, height: 16,
-                                alignItems: 'center', justifyContent: 'center',
-                                paddingHorizontal: 4,
-                              }}>
-                                <Text style={{ color: '#9CA3AF', fontSize: 9, fontWeight: '700' }}>{t.count}</Text>
-                              </View>
-                            )}
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </ScrollView>
+                  {/* Filter + sort — two cycling pills */}
+                  <View style={{
+                    flexDirection: 'row', gap: 8, marginBottom: 14, alignItems: 'center',
+                  }}>
+                    {/* Filter pill — cycles through modes */}
+                    <TouchableOpacity
+                      style={{
+                        flex: 1, flexDirection: 'row', alignItems: 'center',
+                        justifyContent: 'space-between',
+                        backgroundColor: soldSubTab !== 'all' ? 'rgba(26,86,219,0.15)' : '#1F2937',
+                        borderWidth: 1,
+                        borderColor: soldSubTab !== 'all' ? '#1A56DB' : '#374151',
+                        borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
+                      }}
+                      onPress={() => setSoldSubTab(s =>
+                        s === 'all' ? 'auction' : s === 'auction' ? 'chat' : s === 'chat' ? 'buynow' : 'all'
+                      )}
+                    >
+                      <Text style={{
+                        color: soldSubTab !== 'all' ? '#60A5FA' : '#6B7280',
+                        fontSize: 13, fontWeight: '700',
+                      }}>
+                        {soldSubTab === 'all' ? 'All modes'
+                          : soldSubTab === 'auction' ? '🔨 Swipe'
+                          : soldSubTab === 'chat' ? '💬 Chat'
+                          : '🏷️ Buy Now'}
+                      </Text>
+                      <Text style={{ color: '#4B5563', fontSize: 11 }}>⇄</Text>
+                    </TouchableOpacity>
 
                     {/* Sort pill */}
                     <TouchableOpacity
                       style={{
-                        flexDirection: 'row', alignItems: 'center', gap: 4,
-                        paddingHorizontal: 10, paddingVertical: 6,
-                        backgroundColor: '#1F2937', borderRadius: 999,
-                        borderWidth: 1, borderColor: '#374151',
+                        flexDirection: 'row', alignItems: 'center', gap: 6,
+                        backgroundColor: soldSort !== 'recent' ? 'rgba(245,158,11,0.1)' : '#1F2937',
+                        borderWidth: 1,
+                        borderColor: soldSort !== 'recent' ? '#F59E0B' : '#374151',
+                        borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
                       }}
                       onPress={() => setSoldSort(s =>
                         s === 'recent' ? 'high' : s === 'high' ? 'low' : 'recent'
                       )}
                     >
-                      <Text style={{ fontSize: 10 }}>
-                        {soldSort === 'recent' ? '🕐' : soldSort === 'high' ? '↓' : '↑'}
+                      <Text style={{
+                        color: soldSort !== 'recent' ? '#F59E0B' : '#6B7280',
+                        fontSize: 13, fontWeight: '700',
+                      }}>
+                        {soldSort === 'recent' ? '↕' : soldSort === 'high' ? '↓' : '↑'}
                       </Text>
-                      <Text style={{ color: '#9CA3AF', fontSize: 11, fontWeight: '600' }}>
-                        {soldSort === 'recent' ? 'Recent' : soldSort === 'high' ? 'High' : 'Low'}
+                      <Text style={{
+                        color: soldSort !== 'recent' ? '#F59E0B' : '#6B7280',
+                        fontSize: 12, fontWeight: '600',
+                      }}>
+                        {soldSort === 'recent' ? 'Sort' : soldSort === 'high' ? 'High' : 'Low'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -1706,7 +1751,19 @@ export default function LiveAuctionRoom() {
                             await apiClient.patch(`/offers/${offer.offerId}/accept`);
                             setPendingOffers(prev => prev.filter(o => o.offerId !== offer.offerId));
                             void auctionsApi.getById(id).then(setAuction);
-                            Alert.alert('✅ Accepted', `You accepted the offer from ${offer.buyerName}.`);
+                            setShowShop(false);
+                            // Inject accepted system message into chat — no blocking Alert
+                            setChatMessages(prev => [...prev, {
+                              id: `offer-accepted-${offer.offerId}-${Date.now()}`,
+                              userId: '__system__',
+                              displayName: '',
+                              message: '',
+                              timestamp: Date.now(),
+                              type: 'system_offer',
+                              itemTitle: offer.itemTitle,
+                              winnerAmount: offer.amount,
+                              buyerName: `✅ ${offer.buyerName}`,
+                            }]);
                           } catch {
                             Alert.alert('Error', 'Failed to accept offer.');
                           }
@@ -1891,137 +1948,202 @@ export default function LiveAuctionRoom() {
 
       {/* ── Start Item Modal (seller only) ── */}
       <Modal visible={showStartItem} transparent animationType="slide" onRequestClose={() => setShowStartItem(false)}>
-      <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowStartItem(false)} />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView
-          style={{ backgroundColor: '#111827', borderTopLeftRadius: 24, borderTopRightRadius: 24 }}
-          contentContainerStyle={{ padding: 24, paddingBottom: 48 }}
-          keyboardShouldPersistTaps="handled"
-        >
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 4 }}>Start Item</Text>
-          <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 20 }} numberOfLines={1}>{selectedItem?.title}</Text>
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowStartItem(false)} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={{
+            backgroundColor: '#111827',
+            borderTopLeftRadius: 24, borderTopRightRadius: 24,
+            paddingHorizontal: 24, paddingTop: 20, paddingBottom: 48,
+          }}>
+            {/* Handle + item title */}
+            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: '#374151', marginBottom: 16 }} />
+              <Text style={{ color: '#9CA3AF', fontSize: 12, marginBottom: 4 }}>Starting</Text>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17 }} numberOfLines={1}>
+                {selectedItem?.title}
+              </Text>
+            </View>
 
-          {/* Mode selector */}
-          <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8 }}>BIDDING MODE</Text>
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 24 }}>
-            <TouchableOpacity
-              style={{
-                flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center',
-                backgroundColor: itemMode === 'auction' ? '#1A56DB' : '#1F2937',
-                borderWidth: 1, borderColor: itemMode === 'auction' ? '#1A56DB' : '#374151',
-              }}
-              onPress={() => setItemMode('auction')}
-            >
-              <Text style={{ fontSize: 22, marginBottom: 4 }}>🔨</Text>
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Swipe Auction</Text>
-              <Text style={{ color: '#9CA3AF', fontSize: 10, marginTop: 2, textAlign: 'center' }}>Timer · auto increments</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={{
-                flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center',
-                backgroundColor: itemMode === 'chat' ? '#7C3AED' : '#1F2937',
-                borderWidth: 1, borderColor: itemMode === 'chat' ? '#7C3AED' : '#374151',
-              }}
-              onPress={() => setItemMode('chat')}
-            >
-              <Text style={{ fontSize: 22, marginBottom: 4 }}>💬</Text>
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Chat Bid</Text>
-              <Text style={{ color: '#9CA3AF', fontSize: 10, marginTop: 2, textAlign: 'center' }}>Buyers bid in chat</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Auction-only options */}
-          {itemMode === 'auction' && (
-            <>
-
-          <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8 }}>START TIME (seconds)</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-            {[5, 10, 15, 30, 60].map(s => (
+            {/* Mode selector */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 24 }}>
               <TouchableOpacity
-                key={s}
-                style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: startSeconds === s && !customStartSeconds ? '#1A56DB' : '#1F2937' }}
-                onPress={() => { setStartSeconds(s); setCustomStartSeconds(false); }}
+                style={{
+                  flex: 1, paddingVertical: 14, borderRadius: 14, alignItems: 'center',
+                  backgroundColor: itemMode === 'auction' ? 'rgba(26,86,219,0.2)' : '#1F2937',
+                  borderWidth: 1, borderColor: itemMode === 'auction' ? '#1A56DB' : '#2D3748',
+                }}
+                onPress={() => setItemMode('auction')}
               >
-                <Text style={{ color: '#fff', fontWeight: '600' }}>{s}s</Text>
+                <Text style={{ fontSize: 22, marginBottom: 4 }}>🔨</Text>
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Swipe</Text>
+                <Text style={{ color: '#6B7280', fontSize: 10, marginTop: 2 }}>Timer · auto bid</Text>
               </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: customStartSeconds ? '#1A56DB' : '#1F2937' }}
-              onPress={() => setCustomStartSeconds(true)}
-            >
-              <Text style={{ color: '#fff', fontWeight: '600' }}>Custom</Text>
-            </TouchableOpacity>
-          </View>
-          {customStartSeconds && (
-            <TextInput
-              style={{ backgroundColor: '#1F2937', borderRadius: 10, padding: 12, color: '#fff', fontSize: 15, marginBottom: 12 }}
-              placeholder="Enter seconds..."
-              placeholderTextColor="#4B5563"
-              keyboardType="numeric"
-              onChangeText={t => setStartSeconds(parseInt(t) || 30)}
-            />
-          )}
-
-          <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8 }}>COUNTERBID WINDOW (seconds)</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-            {[3, 5, 7, 10, 15].map(s => (
               <TouchableOpacity
-                key={s}
-                style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: startCounterbid === s && !customCounterbid ? '#F59E0B' : '#1F2937' }}
-                onPress={() => { setStartCounterbid(s); setCustomCounterbid(false); }}
+                style={{
+                  flex: 1, paddingVertical: 14, borderRadius: 14, alignItems: 'center',
+                  backgroundColor: itemMode === 'chat' ? 'rgba(124,58,237,0.2)' : '#1F2937',
+                  borderWidth: 1, borderColor: itemMode === 'chat' ? '#7C3AED' : '#2D3748',
+                }}
+                onPress={() => setItemMode('chat')}
               >
-                <Text style={{ color: '#fff', fontWeight: '600' }}>{s}s</Text>
+                <Text style={{ fontSize: 22, marginBottom: 4 }}>💬</Text>
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Chat Bid</Text>
+                <Text style={{ color: '#6B7280', fontSize: 10, marginTop: 2 }}>Buyers type bids</Text>
               </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: customCounterbid ? '#F59E0B' : '#1F2937' }}
-              onPress={() => setCustomCounterbid(true)}
-            >
-              <Text style={{ color: '#fff', fontWeight: '600' }}>Custom</Text>
-            </TouchableOpacity>
-          </View>
-          {customCounterbid && (
-            <TextInput
-              style={{ backgroundColor: '#1F2937', borderRadius: 10, padding: 12, color: '#fff', fontSize: 15, marginBottom: 20 }}
-              placeholder="Enter seconds..."
-              placeholderTextColor="#4B5563"
-              keyboardType="numeric"
-              onChangeText={t => setStartCounterbid(parseInt(t) || 5)}
-            />
-          )}
+            </View>
 
-          </>
-          )}
+            {/* Swipe mode settings */}
+            {itemMode === 'auction' && (
+              <View style={{ gap: 16, marginBottom: 24 }}>
+                {/* Start time */}
+                <View>
+                  <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '600', marginBottom: 8, letterSpacing: 0.5 }}>
+                    START TIME
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {[10, 15, 30, 60].map(s => (
+                      <TouchableOpacity
+                        key={s}
+                        style={{
+                          flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+                          backgroundColor: startSeconds === s && !customStartSeconds ? '#1A56DB' : '#1F2937',
+                          borderWidth: 1,
+                          borderColor: startSeconds === s && !customStartSeconds ? '#1A56DB' : '#2D3748',
+                        }}
+                        onPress={() => { setStartSeconds(s); setCustomStartSeconds(false); }}
+                      >
+                        <Text style={{
+                          color: startSeconds === s && !customStartSeconds ? '#fff' : '#6B7280',
+                          fontWeight: '700', fontSize: 13,
+                        }}>{s}s</Text>
+                      </TouchableOpacity>
+                    ))}
+                    <TouchableOpacity
+                      style={{
+                        flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+                        backgroundColor: customStartSeconds ? '#1A56DB' : '#1F2937',
+                        borderWidth: 1, borderColor: customStartSeconds ? '#1A56DB' : '#2D3748',
+                      }}
+                      onPress={() => setCustomStartSeconds(v => !v)}
+                    >
+                      <Text style={{
+                        color: customStartSeconds ? '#fff' : '#6B7280',
+                        fontWeight: '700', fontSize: 13,
+                      }}>···</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {customStartSeconds && (
+                    <TextInput
+                      style={{
+                        backgroundColor: '#1F2937', borderRadius: 10,
+                        borderWidth: 1, borderColor: '#1A56DB',
+                        paddingHorizontal: 14, paddingVertical: 10,
+                        color: '#fff', fontSize: 14, marginTop: 8,
+                      }}
+                      placeholder="Custom seconds..."
+                      placeholderTextColor="#4B5563"
+                      keyboardType="numeric"
+                      onChangeText={t => setStartSeconds(parseInt(t) || 30)}
+                    />
+                  )}
+                </View>
 
-          {/* Chat-only options */}
-          {itemMode === 'chat' && (
-            <>
-              <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8 }}>DISPLAY TIMER (optional)</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-                {[0, 30, 60, 90, 120].map(s => (
-                  <TouchableOpacity
-                    key={s}
-                    style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, alignItems: 'center', backgroundColor: startSeconds === s ? '#7C3AED' : '#1F2937' }}
-                    onPress={() => setStartSeconds(s)}
-                  >
-                    <Text style={{ color: '#fff', fontWeight: '600' }}>{s === 0 ? 'None' : `${s}s`}</Text>
-                  </TouchableOpacity>
-                ))}
+                {/* Counterbid window */}
+                <View>
+                  <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '600', marginBottom: 8, letterSpacing: 0.5 }}>
+                    COUNTERBID WINDOW
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {[3, 5, 7, 10].map(s => (
+                      <TouchableOpacity
+                        key={s}
+                        style={{
+                          flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+                          backgroundColor: startCounterbid === s && !customCounterbid ? '#F59E0B' : '#1F2937',
+                          borderWidth: 1,
+                          borderColor: startCounterbid === s && !customCounterbid ? '#F59E0B' : '#2D3748',
+                        }}
+                        onPress={() => { setStartCounterbid(s); setCustomCounterbid(false); }}
+                      >
+                        <Text style={{
+                          color: startCounterbid === s && !customCounterbid ? '#111827' : '#6B7280',
+                          fontWeight: '700', fontSize: 13,
+                        }}>{s}s</Text>
+                      </TouchableOpacity>
+                    ))}
+                    <TouchableOpacity
+                      style={{
+                        flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+                        backgroundColor: customCounterbid ? '#F59E0B' : '#1F2937',
+                        borderWidth: 1, borderColor: customCounterbid ? '#F59E0B' : '#2D3748',
+                      }}
+                      onPress={() => setCustomCounterbid(v => !v)}
+                    >
+                      <Text style={{
+                        color: customCounterbid ? '#111827' : '#6B7280',
+                        fontWeight: '700', fontSize: 13,
+                      }}>···</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {customCounterbid && (
+                    <TextInput
+                      style={{
+                        backgroundColor: '#1F2937', borderRadius: 10,
+                        borderWidth: 1, borderColor: '#F59E0B',
+                        paddingHorizontal: 14, paddingVertical: 10,
+                        color: '#fff', fontSize: 14, marginTop: 8,
+                      }}
+                      placeholder="Custom seconds..."
+                      placeholderTextColor="#4B5563"
+                      keyboardType="numeric"
+                      onChangeText={t => setStartCounterbid(parseInt(t) || 5)}
+                    />
+                  )}
+                </View>
               </View>
-              <View style={{ backgroundColor: '#1F2937', borderRadius: 12, padding: 14, marginBottom: 24, flexDirection: 'row', gap: 10, alignItems: 'flex-start' }}>
-                <Text style={{ fontSize: 16 }}>💡</Text>
-                <Text style={{ color: '#6B7280', fontSize: 12, flex: 1, lineHeight: 18 }}>
-                  Buyers bid by typing in chat. Tap a chat message to declare the winner when bidding ends.
+            )}
+
+            {/* Chat mode settings */}
+            {itemMode === 'chat' && (
+              <View style={{ marginBottom: 24 }}>
+                <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '600', marginBottom: 8, letterSpacing: 0.5 }}>
+                  DISPLAY TIMER (OPTIONAL)
                 </Text>
+                <View style={{ flexDirection: 'row', gap: 6, marginBottom: 12 }}>
+                  {[0, 30, 60, 120].map(s => (
+                    <TouchableOpacity
+                      key={s}
+                      style={{
+                        flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+                        backgroundColor: startSeconds === s ? '#7C3AED' : '#1F2937',
+                        borderWidth: 1, borderColor: startSeconds === s ? '#7C3AED' : '#2D3748',
+                      }}
+                      onPress={() => setStartSeconds(s)}
+                    >
+                      <Text style={{
+                        color: startSeconds === s ? '#fff' : '#6B7280',
+                        fontWeight: '700', fontSize: 13,
+                      }}>{s === 0 ? 'None' : `${s}s`}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <View style={{
+                  flexDirection: 'row', gap: 10, alignItems: 'flex-start',
+                  backgroundColor: '#1F2937', borderRadius: 12, padding: 12,
+                }}>
+                  <Text style={{ fontSize: 14 }}>💡</Text>
+                  <Text style={{ color: '#4B5563', fontSize: 12, flex: 1, lineHeight: 18 }}>
+                    Buyers bid by typing in chat. Tap a message to crown the winner.
+                  </Text>
+                </View>
               </View>
-            </>
-          )}
+            )}
 
-          {/* Start button */}
+            {/* Start button */}
             <TouchableOpacity
               style={{
-                backgroundColor: itemMode === 'auction' ? '#DC2626' : '#7C3AED',
                 borderRadius: 14, paddingVertical: 16, alignItems: 'center',
+                backgroundColor: itemMode === 'auction' ? '#1A56DB' : '#7C3AED',
                 opacity: selectedItem?.id === '__pending__' ? 0.5 : 1,
               }}
               onPress={() => {
@@ -2029,7 +2151,6 @@ export default function LiveAuctionRoom() {
                   Alert.alert('Please wait', 'Item is still being created...');
                   return;
                 }
-                // Optimistic — seller sees item bar immediately, no socket round-trip wait
                 const optimistic: CurrentItem = {
                   itemId: selectedItem.id,
                   title: selectedItem.title,
@@ -2057,14 +2178,13 @@ export default function LiveAuctionRoom() {
                 setShowStartItem(false);
               }}
             >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
-                {itemMode === 'auction' ? `🔨 Start Bidding — ${startSeconds}s` : '💬 Start Chat Bid'}
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+                {itemMode === 'auction'
+                  ? `🔨 Start — ${startSeconds}s · ${startCounterbid}s counterbid`
+                  : '💬 Start Chat Bid'}
               </Text>
-              {itemMode === 'auction' && (
-                <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>Counterbid resets at {startCounterbid}s</Text>
-              )}
             </TouchableOpacity>
-          </ScrollView>
+          </View>
         </KeyboardAvoidingView>
       </Modal>
 
@@ -2152,25 +2272,23 @@ export default function LiveAuctionRoom() {
           <View style={{
             backgroundColor: '#111827',
             borderTopLeftRadius: 24, borderTopRightRadius: 24,
-            padding: 24, paddingBottom: 48,
+            paddingHorizontal: 24, paddingTop: 20, paddingBottom: 48,
           }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>📦 Add Item</Text>
-              <TouchableOpacity onPress={() => setShowAddItem(false)}>
-                <Text style={{ color: '#6B7280', fontSize: 16 }}>✕</Text>
-              </TouchableOpacity>
+            {/* Handle + header */}
+            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: '#374151', marginBottom: 16 }} />
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>Add Item</Text>
             </View>
 
-            <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase' }}>
-              Item Title *
-            </Text>
+            {/* Title input */}
             <TextInput
               style={{
-                backgroundColor: '#1F2937', borderRadius: 12,
-                borderWidth: 1, borderColor: newItemTitle ? '#1A56DB' : '#374151',
-                padding: 14, color: '#fff', fontSize: 15, marginBottom: 16,
+                backgroundColor: '#1F2937', borderRadius: 14,
+                borderWidth: 1, borderColor: newItemTitle ? '#1A56DB' : '#2D3748',
+                paddingHorizontal: 16, paddingVertical: 14,
+                color: '#fff', fontSize: 15, marginBottom: 10,
               }}
-              placeholder="e.g. Nike Air Jordan 1"
+              placeholder="Item title"
               placeholderTextColor="#4B5563"
               value={newItemTitle}
               onChangeText={setNewItemTitle}
@@ -2178,86 +2296,100 @@ export default function LiveAuctionRoom() {
               autoFocus
             />
 
-            <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase' }}>
-              Starting Price (₱) *
-            </Text>
+            {/* Price input */}
             <View style={{
-              backgroundColor: '#1F2937', borderRadius: 12,
-              borderWidth: 1, borderColor: newItemPrice ? '#1A56DB' : '#374151',
+              backgroundColor: '#1F2937', borderRadius: 14,
+              borderWidth: 1, borderColor: newItemPrice ? '#1A56DB' : '#2D3748',
               flexDirection: 'row', alignItems: 'center',
-              paddingHorizontal: 14, marginBottom: 24,
+              paddingHorizontal: 16, marginBottom: 20,
             }}>
-              <Text style={{ color: '#6B7280', fontSize: 16, marginRight: 8 }}>₱</Text>
+              <Text style={{ color: '#4B5563', fontSize: 15, marginRight: 6, fontWeight: '600' }}>₱</Text>
               <TextInput
-                style={{ flex: 1, color: '#fff', fontSize: 18, fontWeight: '600', paddingVertical: 14 }}
-                placeholder="0"
+                style={{ flex: 1, color: '#fff', fontSize: 15, paddingVertical: 14 }}
+                placeholder="Starting price"
                 placeholderTextColor="#4B5563"
                 value={newItemPrice}
                 onChangeText={t => setNewItemPrice(t.replace(/[^0-9]/g, ''))}
                 keyboardType="numeric"
               />
+              {newItemPrice.length > 0 && (
+                <Text style={{ color: '#6B7280', fontSize: 12 }}>
+                  {formatPHP(parseInt(newItemPrice) * 100)}
+                </Text>
+              )}
             </View>
 
-            <TouchableOpacity
-              style={{
-                backgroundColor: newItemTitle.trim() && newItemPrice ? '#1A56DB' : '#374151',
-                borderRadius: 14, paddingVertical: 16, alignItems: 'center',
-                marginBottom: 10,
-              }}
-              onPress={() => void handleAddItemLive('queue')}
-              disabled={!newItemTitle.trim() || !newItemPrice || addingItem}
-            >
-              {addingItem ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>📦 Add to Queue</Text>
-                  <Text style={{ color: '#BFDBFE', fontSize: 12, marginTop: 2 }}>Seller starts it manually later</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            {/* Mode selector */}
+            <View style={{
+              flexDirection: 'row', gap: 8, marginBottom: 20,
+            }}>
+              {([
+                { mode: 'queue', icon: '📦', label: 'Queue', sub: 'Start later' },
+                { mode: 'now', icon: '🔨', label: 'Run Now', sub: 'Start immediately' },
+                { mode: 'buynow', icon: '🏷️', label: 'Buy Now', sub: 'Fixed price' },
+              ] as const).map(opt => {
+                const active = (() => {
+                  if (opt.mode === 'queue') return !currentItem && newAddMode === 'queue';
+                  return newAddMode === opt.mode;
+                })();
+                const disabled = opt.mode === 'now' && !!currentItem;
+                return (
+                  <TouchableOpacity
+                    key={opt.mode}
+                    style={{
+                      flex: 1, alignItems: 'center', paddingVertical: 12,
+                      borderRadius: 14, borderWidth: 1,
+                      backgroundColor: active
+                        ? opt.mode === 'now' ? 'rgba(220,38,38,0.15)'
+                          : opt.mode === 'buynow' ? 'rgba(6,95,70,0.3)'
+                          : 'rgba(26,86,219,0.15)'
+                        : '#1F2937',
+                      borderColor: active
+                        ? opt.mode === 'now' ? '#DC2626'
+                          : opt.mode === 'buynow' ? '#10B981'
+                          : '#1A56DB'
+                        : '#2D3748',
+                      opacity: disabled ? 0.35 : 1,
+                    }}
+                    onPress={() => {
+                      if (disabled) {
+                        Alert.alert('Item Running', 'End or skip the current item first.');
+                        return;
+                      }
+                      setNewAddMode(opt.mode);
+                    }}
+                    disabled={addingItem}
+                  >
+                    <Text style={{ fontSize: 20, marginBottom: 4 }}>{opt.icon}</Text>
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{opt.label}</Text>
+                    <Text style={{ color: '#6B7280', fontSize: 10, marginTop: 2 }}>{opt.sub}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
 
+            {/* Confirm button */}
             <TouchableOpacity
               style={{
-                backgroundColor: newItemTitle.trim() && newItemPrice && !currentItem ? '#DC2626' : '#374151',
                 borderRadius: 14, paddingVertical: 16, alignItems: 'center',
-                marginBottom: 10,
-                opacity: currentItem ? 0.4 : 1,
+                backgroundColor: newItemTitle.trim() && newItemPrice
+                  ? newAddMode === 'now' ? '#DC2626'
+                    : newAddMode === 'buynow' ? '#065F46'
+                    : '#1A56DB'
+                  : '#1F2937',
+                opacity: !newItemTitle.trim() || !newItemPrice || addingItem ? 0.5 : 1,
               }}
-              onPress={() => {
-                if (currentItem) {
-                  Alert.alert('Item Already Running', 'End or skip the current item before running a new one.');
-                  return;
-                }
-                void handleAddItemLive('now');
-              }}
+              onPress={() => void handleAddItemLive(newAddMode)}
               disabled={!newItemTitle.trim() || !newItemPrice || addingItem}
             >
               {addingItem ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <>
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>🔨 Run Now</Text>
-                  <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>Add and start bidding immediately</Text>
-                </>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={{
-                backgroundColor: newItemTitle.trim() && newItemPrice ? '#065F46' : '#374151',
-                borderRadius: 14, paddingVertical: 16, alignItems: 'center',
-              }}
-              onPress={() => void handleAddItemLive('buynow')}
-              disabled={!newItemTitle.trim() || !newItemPrice || addingItem}
-            >
-              {addingItem ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>🏷️ List as Buy Now</Text>
-                  <Text style={{ color: '#6EE7B7', fontSize: 12, marginTop: 2 }}>Fixed price — buyers purchase directly</Text>
-                </>
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+                  {newAddMode === 'now' ? '🔨 Run Now'
+                    : newAddMode === 'buynow' ? '🏷️ List as Buy Now'
+                    : '📦 Add to Queue'}
+                </Text>
               )}
             </TouchableOpacity>
           </View>
