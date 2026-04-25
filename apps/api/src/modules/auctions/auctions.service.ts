@@ -407,6 +407,7 @@ export class AuctionsService {
             id: true,
             title: true,
             status: true,
+            mode: true,
           },
         },
       },

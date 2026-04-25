@@ -219,6 +219,24 @@ export default function LiveAuctionRoom() {
   useEffect(() => {
     void auctionsApi.getById(id).then(data => {
       setAuction(data);
+      // Seed sold items from DB — captures mode for items sold before joining
+      const soldFromDb = data.shopItems.filter(i => i.status === 'SOLD');
+      if (soldFromDb.length > 0) {
+        setSoldItemWinners(prev => {
+          const seeded = { ...prev };
+          soldFromDb.forEach(item => {
+            if (!seeded[item.id]) {
+              seeded[item.id] = {
+                userId: '',
+                displayName: 'Unknown',
+                amount: item.price,
+                mode: item.mode ?? 'auction',
+              };
+            }
+          });
+          return seeded;
+        });
+      }
       const liveItem = data.shopItems.find(i => i.status === 'LIVE');
       if (liveItem) {
         setCurrentItem(prev => {
@@ -257,6 +275,7 @@ export default function LiveAuctionRoom() {
     userId: string;
     displayName: string;
     amount: number;
+    mode: 'auction' | 'chat';
   }>>({});
 
   const [saleToast, setSaleToast] = useState<{ winner: string; amount: number; title: string } | null>(null);
@@ -374,7 +393,10 @@ export default function LiveAuctionRoom() {
       if (winner) {
         setSoldItemWinners(prev => ({
           ...prev,
-          [data.itemId]: winner,
+          [data.itemId]: {
+            ...winner,
+            mode: currentItemRef.current?.mode ?? 'auction',
+          },
         }));
       }
     }, []),
@@ -489,6 +511,7 @@ export default function LiveAuctionRoom() {
           status: mode === 'buynow' ? 'AVAILABLE' : 'QUEUED',
           queueOrder: newItem.queueOrder ?? 0,
           minimumOffer: newItem.minimumOffer ?? 0,
+          mode: 'auction' as const,
         };
         return { ...prev, shopItems: [...prev.shopItems, optimisticItem] };
       });
@@ -1390,50 +1413,96 @@ export default function LiveAuctionRoom() {
                 <View style={{ alignItems: 'center', paddingVertical: 32 }}>
                   <Text style={{ color: '#4B5563', fontSize: 13 }}>No items sold yet</Text>
                 </View>
-              ) : soldItems.map(item => {
-                const winner = soldItemWinners[item.id];
-                return (
-                  <View
-                    key={item.id}
-                    style={{
-                      flexDirection: 'row', alignItems: 'center', gap: 12,
-                      backgroundColor: '#1F2937', borderRadius: 12,
-                      padding: 12, marginBottom: 8,
-                    }}
-                  >
-                    <View style={{
-                      width: 56, height: 56, borderRadius: 10,
-                      backgroundColor: '#374151', overflow: 'hidden',
-                      alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      {item.photos[0] ? (
-                        <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-                      ) : (
-                        <Text style={{ fontSize: 24 }}>📦</Text>
-                      )}
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
-                        {item.title}
-                      </Text>
-                      {winner ? (
-                        <>
-                          <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '700' }}>
-                            ✅ {formatPHP(winner.amount)}
-                          </Text>
-                          <Text style={{ color: '#6B7280', fontSize: 11 }}>
-                            Won by {winner.displayName}
-                          </Text>
-                        </>
-                      ) : (
-                        <Text style={{ color: '#10B981', fontSize: 12 }}>✅ Sold</Text>
-                      )}
-                    </View>
-                  </View>
+              ) : (() => {
+                const auctionSold = soldItems.filter(
+                  i => (soldItemWinners[i.id]?.mode ?? i.mode ?? 'auction') === 'auction'
                 );
-              })
-            )}
+                const chatSold = soldItems.filter(
+                  i => (soldItemWinners[i.id]?.mode ?? i.mode ?? 'auction') === 'chat'
+                );
 
+                const renderSoldItem = (item: typeof soldItems[0]) => {
+                  const winner = soldItemWinners[item.id];
+                  return (
+                    <View
+                      key={item.id}
+                      style={{
+                        flexDirection: 'row', alignItems: 'center', gap: 12,
+                        backgroundColor: '#1F2937', borderRadius: 12,
+                        padding: 12, marginBottom: 8,
+                      }}
+                    >
+                      <View style={{
+                        width: 56, height: 56, borderRadius: 10,
+                        backgroundColor: '#374151', overflow: 'hidden',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {item.photos[0] ? (
+                          <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                        ) : (
+                          <Text style={{ fontSize: 24 }}>📦</Text>
+                        )}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                        {winner ? (
+                          <>
+                            <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '700' }}>
+                              ✅ {formatPHP(winner.amount)}
+                            </Text>
+                            <Text style={{ color: '#6B7280', fontSize: 11 }}>
+                              Won by {winner.displayName}
+                            </Text>
+                          </>
+                        ) : (
+                          <Text style={{ color: '#10B981', fontSize: 12 }}>✅ Sold</Text>
+                        )}
+                      </View>
+                    </View>
+                  );
+                };
+
+                return (
+                  <>
+                    {auctionSold.length > 0 && (
+                      <>
+                        <View style={{
+                          flexDirection: 'row', alignItems: 'center', gap: 8,
+                          marginBottom: 10,
+                        }}>
+                          <Text style={{ fontSize: 14 }}>🔨</Text>
+                          <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            Swipe Auction
+                          </Text>
+                          <View style={{ flex: 1, height: 1, backgroundColor: '#374151' }} />
+                          <Text style={{ color: '#4B5563', fontSize: 11 }}>{auctionSold.length}</Text>
+                        </View>
+                        {auctionSold.map(renderSoldItem)}
+                      </>
+                    )}
+                    {chatSold.length > 0 && (
+                      <>
+                        <View style={{
+                          flexDirection: 'row', alignItems: 'center', gap: 8,
+                          marginTop: auctionSold.length > 0 ? 16 : 0,
+                          marginBottom: 10,
+                        }}>
+                          <Text style={{ fontSize: 14 }}>💬</Text>
+                          <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            Chat Bid
+                          </Text>
+                          <View style={{ flex: 1, height: 1, backgroundColor: '#374151' }} />
+                          <Text style={{ color: '#4B5563', fontSize: 11 }}>{chatSold.length}</Text>
+                        </View>
+                        {chatSold.map(renderSoldItem)}
+                      </>
+                    )}
+                  </>
+                );
+              })()
+            )}
             {/* ── Buy Now Tab ── */}
             {shopTab === 'buynow' && (
               buyNowItems.length === 0 ? (
