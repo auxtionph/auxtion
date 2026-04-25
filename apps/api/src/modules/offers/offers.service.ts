@@ -180,7 +180,7 @@ export class OffersService {
 
   // ── Decline Offer ──────────────────────────────────────────────────────────
 
-  async declineOffer(sellerId: string, offerId: string) {
+  async declineOffer(sellerId: string, offerId: string, silent = false) {
     const offer = await this.prisma.offer.findUnique({
       where: { id: offerId },
       include: { item: { select: { title: true } } },
@@ -205,7 +205,7 @@ export class OffersService {
       },
     });
 
-    if (activeAuction) {
+    if (activeAuction && !silent) {
       this.biddingGateway.emitToAuction(activeAuction.id, 'offer-responded', {
         offerId,
         status: 'DECLINED',

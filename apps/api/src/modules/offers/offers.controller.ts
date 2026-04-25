@@ -57,8 +57,12 @@ export class OffersController {
   // Seller declines an offer
   @Patch(':id/decline')
   @HttpCode(HttpStatus.OK)
-  declineOffer(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.offersService.declineOffer(user.id, id);
+  declineOffer(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Query('silent') silent?: string,
+  ) {
+    return this.offersService.declineOffer(user.id, id, silent === 'true');
   }
 
   // Buyer cancels their offer

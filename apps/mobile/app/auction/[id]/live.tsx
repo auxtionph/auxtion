@@ -1757,20 +1757,29 @@ export default function LiveAuctionRoom() {
                                     Alert.alert('Error', 'Could not find the item to convert.');
                                     return;
                                   }
-                                  await apiClient.patch(`/offers/${offer.offerId}/decline`);
-                                  await apiClient.patch(`/shop-items/${matchedItem.id}/convert-to-auction`, {
+                                  if (currentItem) {
+                                    Alert.alert('Item Already Running', 'End or skip the current item before running a new one.');
+                                    return;
+                                  }
+                                  await apiClient.patch(`/offers/${offer.offerId}/decline?silent=true`);
+                                  const converted = await apiClient.patch(`/shop-items/${matchedItem.id}/convert-to-auction`, {
                                     startingPrice: offer.amount,
                                   });
                                   setPendingOffers(prev => prev.filter(o => o.offerId !== offer.offerId));
+                                  // Refresh auction state
                                   void auctionsApi.getById(id).then(data => {
                                     setAuction(data);
                                     notifyShopUpdated();
                                   });
+                                  // Close shop, open Start Item modal immediately
                                   setShowShop(false);
-                                  Alert.alert(
-                                    '🔨 Added to Queue!',
-                                    `${offer.itemTitle} is now queued as an auction starting at ${formatPHP(offer.amount)}.`
-                                  );
+                                  setSelectedItem({
+                                    id: matchedItem.id,
+                                    title: matchedItem.title,
+                                    price: offer.amount,
+                                  });
+                                  setItemMode('auction');
+                                  setShowStartItem(true);
                                 } catch {
                                   Alert.alert('Error', 'Failed to convert item. Try again.');
                                 }
