@@ -1873,42 +1873,104 @@ export default function LiveAuctionRoom() {
               <Text style={{ color: '#6B7280', fontSize: 16, paddingLeft: 8 }}>✕</Text>
             </TouchableOpacity>
           </View>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={{ gap: 8 }}>
+            {/* Accept / Decline row */}
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                style={{
+                  flex: 1, backgroundColor: '#10B981',
+                  borderRadius: 10, paddingVertical: 10, alignItems: 'center',
+                }}
+                onPress={async () => {
+                  try {
+                    const { apiClient } = await import('../../../src/services/api/client');
+                    await apiClient.patch(`/offers/${pendingOffer.offerId}/accept`);
+                    setPendingOffer(null);
+                    void auctionsApi.getById(id).then(setAuction);
+                    Alert.alert('✅ Accepted', `You accepted the offer from ${pendingOffer.buyerName}.`);
+                  } catch {
+                    Alert.alert('Error', 'Failed to accept offer.');
+                  }
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Accept</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  flex: 1, backgroundColor: '#DC2626',
+                  borderRadius: 10, paddingVertical: 10, alignItems: 'center',
+                }}
+                onPress={async () => {
+                  try {
+                    const { apiClient } = await import('../../../src/services/api/client');
+                    await apiClient.patch(`/offers/${pendingOffer.offerId}/decline`);
+                    setPendingOffer(null);
+                  } catch {
+                    Alert.alert('Error', 'Failed to decline offer.');
+                  }
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Decline</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Run at offer price — converts Buy Now to live auction */}
             <TouchableOpacity
               style={{
-                flex: 1, backgroundColor: '#10B981',
+                backgroundColor: 'rgba(245,158,11,0.15)',
+                borderWidth: 1, borderColor: '#F59E0B',
                 borderRadius: 10, paddingVertical: 10, alignItems: 'center',
               }}
-              onPress={async () => {
-                try {
-                  const { apiClient } = await import('../../../src/services/api/client');
-                  await apiClient.patch(`/offers/${pendingOffer.offerId}/accept`);
-                  setPendingOffer(null);
-                  void auctionsApi.getById(id).then(setAuction);
-                  Alert.alert('✅ Accepted', `You accepted the offer from ${pendingOffer.buyerName}.`);
-                } catch {
-                  Alert.alert('Error', 'Failed to accept offer.');
-                }
+              onPress={() => {
+                Alert.alert(
+                  `🔨 Run at ${formatPHP(pendingOffer.amount)}?`,
+                  `This will convert the item to a live auction starting at ${formatPHP(pendingOffer.amount)} and decline ${pendingOffer.buyerName}'s offer.`,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Run Auction',
+                      onPress: async () => {
+                        try {
+                          const { apiClient } = await import('../../../src/services/api/client');
+                          // Find the Buy Now item by title match in shop items
+                          const matchedItem = auction?.shopItems.find(
+                            i => i.title === pendingOffer.itemTitle && i.type === 'BUY_NOW'
+                          );
+                          if (!matchedItem) {
+                            Alert.alert('Error', 'Could not find the item to convert.');
+                            return;
+                          }
+                          // Decline the offer first
+                          await apiClient.patch(`/offers/${pendingOffer.offerId}/decline`);
+                          // Convert Buy Now → Auction at offer price
+                          await apiClient.patch(`/shop-items/${matchedItem.id}/convert-to-auction`, {
+                            startingPrice: pendingOffer.amount,
+                          });
+                          setPendingOffer(null);
+                          // Refresh auction state so item appears in bidding queue
+                          void auctionsApi.getById(id).then(data => {
+                            setAuction(data);
+                            notifyShopUpdated();
+                          });
+                          Alert.alert(
+                            '🔨 Added to Queue!',
+                            `${pendingOffer.itemTitle} is now queued as an auction starting at ${formatPHP(pendingOffer.amount)}.`
+                          );
+                        } catch {
+                          Alert.alert('Error', 'Failed to convert item. Try again.');
+                        }
+                      },
+                    },
+                  ]
+                );
               }}
             >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Accept</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={{
-                flex: 1, backgroundColor: '#DC2626',
-                borderRadius: 10, paddingVertical: 10, alignItems: 'center',
-              }}
-              onPress={async () => {
-                try {
-                  const { apiClient } = await import('../../../src/services/api/client');
-                  await apiClient.patch(`/offers/${pendingOffer.offerId}/decline`);
-                  setPendingOffer(null);
-                } catch {
-                  Alert.alert('Error', 'Failed to decline offer.');
-                }
-              }}
-            >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Decline</Text>
+              <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 13 }}>
+                🔨 Run at {formatPHP(pendingOffer.amount)}
+              </Text>
+              <Text style={{ color: '#92400E', fontSize: 10, marginTop: 2 }}>
+                Convert to live auction · declines offer
+              </Text>
             </TouchableOpacity>
           </View>
         </View>

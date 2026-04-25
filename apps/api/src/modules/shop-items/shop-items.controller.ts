@@ -77,6 +77,17 @@ export class ShopItemsController {
     return this.shopItemsService.resetItem(user.id, id);
   }
 
+  // Convert Buy Now item to Auction with a new starting price
+  @Patch(':id/convert-to-auction')
+  @HttpCode(HttpStatus.OK)
+  convertToAuction(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body('startingPrice') startingPrice: number,
+  ) {
+    return this.shopItemsService.convertToAuction(user.id, id, startingPrice);
+  }
+
   // Seller reorders auction queue
   @Patch('queue/reorder')
   reorderQueue(@CurrentUser() user: AuthUser, @Body() dto: ReorderQueueDto) {

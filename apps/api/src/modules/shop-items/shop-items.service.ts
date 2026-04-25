@@ -182,4 +182,32 @@ export class ShopItemsService {
 
     return { subscribed: true };
   }
+
+  // ── Convert Buy Now to Auction (run from offer) ────────────────────────────
+  async convertToAuction(
+    sellerId: string,
+    itemId: string,
+    startingPrice: number,
+  ) {
+    const item = await this.prisma.shopItem.findUnique({
+      where: { id: itemId },
+    });
+
+    if (!item) throw new NotFoundException('Item not found');
+    if (item.sellerId !== sellerId) {
+      throw new ForbiddenException('You do not own this item');
+    }
+
+    return this.prisma.shopItem.update({
+      where: { id: itemId },
+      data: {
+        type: ShopItemType.AUCTION,
+        status: ShopItemStatus.QUEUED,
+        price: startingPrice,
+        originalPrice: startingPrice,
+        minimumOffer: Math.round(startingPrice * 0.7),
+        mode: 'auction',
+      },
+    });
+  }
 }
