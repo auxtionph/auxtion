@@ -1655,9 +1655,33 @@ export default function LiveAuctionRoom() {
               style={{
                 backgroundColor: itemMode === 'auction' ? '#DC2626' : '#7C3AED',
                 borderRadius: 14, paddingVertical: 16, alignItems: 'center',
+                opacity: selectedItem?.id === '__pending__' ? 0.5 : 1,
               }}
               onPress={() => {
-                if (!selectedItem || !user?.id || selectedItem.id === '__pending__') return;
+                if (!selectedItem || !user?.id || selectedItem.id === '__pending__') {
+                  Alert.alert('Please wait', 'Item is still being created...');
+                  return;
+                }
+                // Optimistic — seller sees item bar immediately, no socket round-trip wait
+                const optimistic: CurrentItem = {
+                  itemId: selectedItem.id,
+                  title: selectedItem.title,
+                  currentPrice: selectedItem.price,
+                  photos: [],
+                  totalBids: 0,
+                  mode: itemMode,
+                };
+                setCurrentItem(optimistic);
+                currentItemRef.current = optimistic;
+                setChatMessages(prev => [...prev, {
+                  id: `divider-${selectedItem.id}-${Date.now()}`,
+                  userId: '__system__',
+                  displayName: '',
+                  message: '',
+                  timestamp: Date.now(),
+                  type: 'item-divider' as const,
+                  itemTitle: selectedItem.title,
+                }]);
                 if (itemMode === 'auction') {
                   startItemTimer(selectedItem.id, user.id, startSeconds, startCounterbid);
                 } else {
