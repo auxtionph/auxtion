@@ -161,6 +161,9 @@ export default function LiveAuctionRoom() {
   const [counterbidSeconds, setCounterbidSeconds] = useState(5);
   const [showStartItem, setShowStartItem] = useState(false);
   const [selectedItem, setSelectedItem] = useState<{ id: string; title: string; price: number } | null>(null);
+  const [editingQueueItem, setEditingQueueItem] = useState<{ id: string; title: string; price: number } | null>(null);
+  const [editingPrice, setEditingPrice] = useState('');
+  const [savingPrice, setSavingPrice] = useState(false);
   const [startSeconds, setStartSeconds] = useState(30);
   const [startCounterbid, setStartCounterbid] = useState(5);
   const [customStartSeconds, setCustomStartSeconds] = useState(false);
@@ -1493,8 +1496,8 @@ export default function LiveAuctionRoom() {
                         Alert.alert('Item Already Running', 'End or skip the current item before starting a new one.');
                         return;
                       }
-                      setSelectedItem({ id: item.id, title: item.title, price: item.price });
-                      setShowStartItem(true);
+                      setEditingQueueItem({ id: item.id, title: item.title, price: item.price });
+                      setEditingPrice(String(item.price / 100));
                       setShowShop(false);
                     }
                   }}
@@ -2817,6 +2820,182 @@ export default function LiveAuctionRoom() {
             </TouchableOpacity>
           </View>
         </View>
+      </Modal>
+
+      {/* ── Edit Queue Item Modal ── */}
+      <Modal
+        visible={!!editingQueueItem}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setEditingQueueItem(null)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1 }}
+          activeOpacity={1}
+          onPress={() => setEditingQueueItem(null)}
+        />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={{
+            backgroundColor: '#111827',
+            borderTopLeftRadius: 24, borderTopRightRadius: 24,
+            paddingHorizontal: 24, paddingTop: 20, paddingBottom: 48,
+          }}>
+            {/* Handle */}
+            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: '#374151', marginBottom: 16 }} />
+              <Text style={{ color: '#9CA3AF', fontSize: 12, marginBottom: 4 }}>Queued Item</Text>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17 }} numberOfLines={1}>
+                {editingQueueItem?.title}
+              </Text>
+            </View>
+
+            {/* Price editor */}
+            <Text style={{
+              color: '#6B7280', fontSize: 11, fontWeight: '600',
+              letterSpacing: 0.5, marginBottom: 8,
+            }}>
+              STARTING PRICE
+            </Text>
+            <View style={{
+              backgroundColor: '#1F2937', borderRadius: 14,
+              borderWidth: 1, borderColor: editingPrice ? '#1A56DB' : '#2D3748',
+              flexDirection: 'row', alignItems: 'center',
+              paddingHorizontal: 16, marginBottom: 8,
+            }}>
+              <Text style={{ color: '#4B5563', fontSize: 15, marginRight: 6, fontWeight: '600' }}>₱</Text>
+              <TextInput
+                style={{ flex: 1, color: '#fff', fontSize: 18, fontWeight: '700', paddingVertical: 14 }}
+                placeholder="0"
+                placeholderTextColor="#4B5563"
+                value={editingPrice}
+                onChangeText={t => setEditingPrice(t.replace(/[^0-9]/g, ''))}
+                keyboardType="numeric"
+                autoFocus
+                selectTextOnFocus
+              />
+              {editingPrice.length > 0 && (
+                <Text style={{ color: '#6B7280', fontSize: 12 }}>
+                  {formatPHP(parseInt(editingPrice) * 100)}
+                </Text>
+              )}
+            </View>
+
+            {/* Original price hint */}
+            {editingQueueItem && parseInt(editingPrice) * 100 !== editingQueueItem.price && (
+              <Text style={{ color: '#4B5563', fontSize: 11, marginBottom: 20 }}>
+                Original: {formatPHP(editingQueueItem.price)}
+                {parseInt(editingPrice) * 100 < editingQueueItem.price && (
+                  <Text style={{ color: '#10B981' }}>
+                    {' '}· {Math.round((1 - parseInt(editingPrice) * 100 / editingQueueItem.price) * 100)}% off
+                  </Text>
+                )}
+              </Text>
+            )}
+            {(!editingQueueItem || parseInt(editingPrice) * 100 === editingQueueItem.price) && (
+              <View style={{ marginBottom: 20 }} />
+            )}
+
+            {/* Action buttons */}
+            <View style={{ gap: 10 }}>
+              {/* Save price + Start */}
+              <TouchableOpacity
+                style={{
+                  borderRadius: 14, paddingVertical: 16, alignItems: 'center',
+                  backgroundColor: editingPrice ? '#1A56DB' : '#1F2937',
+                  opacity: !editingPrice || savingPrice ? 0.5 : 1,
+                }}
+                disabled={!editingPrice || savingPrice}
+                onPress={async () => {
+                  if (!editingQueueItem || !editingPrice) return;
+                  const newPrice = parseInt(editingPrice) * 100;
+                  setSavingPrice(true);
+                  try {
+                    const { apiClient } = await import('../../../src/services/api/client');
+                    // Only patch if price changed
+                    if (newPrice !== editingQueueItem.price) {
+                      await apiClient.patch(`/shop-items/${editingQueueItem.id}`, {
+                        price: newPrice,
+                      });
+                      // Update local auction state
+                      setAuction(prev => {
+                        if (!prev) return prev;
+                        return {
+                          ...prev,
+                          shopItems: prev.shopItems.map(i =>
+                            i.id === editingQueueItem.id ? { ...i, price: newPrice } : i
+                          ),
+                        };
+                      });
+                      notifyShopUpdated();
+                    }
+                    setSelectedItem({
+                      id: editingQueueItem.id,
+                      title: editingQueueItem.title,
+                      price: newPrice,
+                    });
+                    setEditingQueueItem(null);
+                    setShowStartItem(true);
+                  } catch {
+                    Alert.alert('Error', 'Failed to update price. Try again.');
+                  } finally {
+                    setSavingPrice(false);
+                  }
+                }}
+              >
+                {savingPrice ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+                    🔨 Start at {editingPrice ? formatPHP(parseInt(editingPrice) * 100) : '—'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              {/* Just save price without starting */}
+              <TouchableOpacity
+                style={{
+                  borderRadius: 14, paddingVertical: 14, alignItems: 'center',
+                  backgroundColor: 'transparent',
+                  borderWidth: 1, borderColor: '#2D3748',
+                  opacity: !editingPrice || savingPrice ? 0.5 : 1,
+                }}
+                disabled={!editingPrice || savingPrice}
+                onPress={async () => {
+                  if (!editingQueueItem || !editingPrice) return;
+                  const newPrice = parseInt(editingPrice) * 100;
+                  if (newPrice === editingQueueItem.price) {
+                    setEditingQueueItem(null);
+                    return;
+                  }
+                  setSavingPrice(true);
+                  try {
+                    const { apiClient } = await import('../../../src/services/api/client');
+                    await apiClient.patch(`/shop-items/${editingQueueItem.id}`, { price: newPrice });
+                    setAuction(prev => {
+                      if (!prev) return prev;
+                      return {
+                        ...prev,
+                        shopItems: prev.shopItems.map(i =>
+                          i.id === editingQueueItem.id ? { ...i, price: newPrice } : i
+                        ),
+                      };
+                    });
+                    notifyShopUpdated();
+                    setEditingQueueItem(null);
+                  } catch {
+                    Alert.alert('Error', 'Failed to update price. Try again.');
+                  } finally {
+                    setSavingPrice(false);
+                  }
+                }}
+              >
+                <Text style={{ color: '#6B7280', fontWeight: '600', fontSize: 14 }}>
+                  Save Price Only
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
