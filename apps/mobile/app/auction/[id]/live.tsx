@@ -194,6 +194,8 @@ export default function LiveAuctionRoom() {
   const pendingBidStateRef = useRef<BidUpdateData | null>(null);
   const [skipping, setSkipping] = useState(false);
   const insets = useSafeAreaInsets();
+  const [soldSubTab, setSoldSubTab] = useState<'all' | 'auction' | 'chat'>('all');
+  const [soldSort, setSoldSort] = useState<'recent' | 'high' | 'low'>('recent');
 
 
   useEffect(() => {
@@ -1299,9 +1301,9 @@ export default function LiveAuctionRoom() {
         visible={showShop}
         animationType="slide"
         transparent
-        onRequestClose={() => setShowShop(false)}
-      >
-        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowShop(false)} />
+        onRequestClose={() => { setShowShop(false); setSoldSubTab('all'); setSoldSort('recent'); }}      >
+          
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => { setShowShop(false); setSoldSubTab('all'); setSoldSort('recent'); }} />
         <View style={{
           backgroundColor: '#111827',
           borderTopLeftRadius: 24, borderTopRightRadius: 24,
@@ -1408,101 +1410,139 @@ export default function LiveAuctionRoom() {
             )}
 
             {/* ── Sold Tab ── */}
-            {shopTab === 'sold' && (
-              soldItems.length === 0 ? (
-                <View style={{ alignItems: 'center', paddingVertical: 32 }}>
-                  <Text style={{ color: '#4B5563', fontSize: 13 }}>No items sold yet</Text>
-                </View>
-              ) : (() => {
-                const auctionSold = soldItems.filter(
-                  i => (soldItemWinners[i.id]?.mode ?? i.mode ?? 'auction') === 'auction'
-                );
-                const chatSold = soldItems.filter(
-                  i => (soldItemWinners[i.id]?.mode ?? i.mode ?? 'auction') === 'chat'
-                );
+            {shopTab === 'sold' && (() => {
+              // Sub-tab filter
+              const filtered = soldItems.filter(i => {
+                const mode = soldItemWinners[i.id]?.mode ?? i.mode ?? 'auction';
+                if (soldSubTab === 'auction') return mode === 'auction';
+                if (soldSubTab === 'chat') return mode === 'chat';
+                return true;
+              });
 
-                const renderSoldItem = (item: typeof soldItems[0]) => {
-                  const winner = soldItemWinners[item.id];
-                  return (
-                    <View
-                      key={item.id}
-                      style={{
-                        flexDirection: 'row', alignItems: 'center', gap: 12,
-                        backgroundColor: '#1F2937', borderRadius: 12,
-                        padding: 12, marginBottom: 8,
-                      }}
-                    >
-                      <View style={{
-                        width: 56, height: 56, borderRadius: 10,
-                        backgroundColor: '#374151', overflow: 'hidden',
-                        alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        {item.photos[0] ? (
-                          <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-                        ) : (
-                          <Text style={{ fontSize: 24 }}>📦</Text>
-                        )}
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
-                          {item.title}
-                        </Text>
-                        {winner ? (
-                          <>
-                            <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '700' }}>
-                              ✅ {formatPHP(winner.amount)}
-                            </Text>
-                            <Text style={{ color: '#6B7280', fontSize: 11 }}>
-                              Won by {winner.displayName}
-                            </Text>
-                          </>
-                        ) : (
-                          <Text style={{ color: '#10B981', fontSize: 12 }}>✅ Sold</Text>
-                        )}
-                      </View>
+              // Sort
+              const sorted = [...filtered].sort((a, b) => {
+                const aAmount = soldItemWinners[a.id]?.amount ?? a.price;
+                const bAmount = soldItemWinners[b.id]?.amount ?? b.price;
+                if (soldSort === 'high') return bAmount - aAmount;
+                if (soldSort === 'low') return aAmount - bAmount;
+                return 0; // recent = insertion order
+              });
+
+              return (
+                <>
+                  {/* Sub-tabs + sort row */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 6 }}>
+                    {/* Sub-tabs */}
+                    <View style={{ flexDirection: 'row', gap: 6, flex: 1 }}>
+                      {([
+                        { key: 'all', label: 'All' },
+                        { key: 'auction', label: '🔨 Swipe' },
+                        { key: 'chat', label: '💬 Chat' },
+                      ] as const).map(t => (
+                        <TouchableOpacity
+                          key={t.key}
+                          style={{
+                            paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+                            backgroundColor: soldSubTab === t.key ? '#374151' : 'transparent',
+                            borderWidth: 1,
+                            borderColor: soldSubTab === t.key ? '#4B5563' : '#1F2937',
+                          }}
+                          onPress={() => setSoldSubTab(t.key)}
+                        >
+                          <Text style={{
+                            color: soldSubTab === t.key ? '#fff' : '#6B7280',
+                            fontSize: 12, fontWeight: '600',
+                          }}>{t.label}</Text>
+                        </TouchableOpacity>
+                      ))}
                     </View>
-                  );
-                };
 
-                return (
-                  <>
-                    {auctionSold.length > 0 && (
-                      <>
+                    {/* Sort pill */}
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row', alignItems: 'center', gap: 4,
+                        paddingHorizontal: 10, paddingVertical: 6,
+                        backgroundColor: '#1F2937', borderRadius: 999,
+                        borderWidth: 1, borderColor: '#374151',
+                      }}
+                      onPress={() => setSoldSort(s =>
+                        s === 'recent' ? 'high' : s === 'high' ? 'low' : 'recent'
+                      )}
+                    >
+                      <Text style={{ fontSize: 10 }}>
+                        {soldSort === 'recent' ? '🕐' : soldSort === 'high' ? '↓' : '↑'}
+                      </Text>
+                      <Text style={{ color: '#9CA3AF', fontSize: 11, fontWeight: '600' }}>
+                        {soldSort === 'recent' ? 'Recent' : soldSort === 'high' ? 'High' : 'Low'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Items */}
+                  {sorted.length === 0 ? (
+                    <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                      <Text style={{ color: '#4B5563', fontSize: 13 }}>No items sold yet</Text>
+                    </View>
+                  ) : sorted.map(item => {
+                    const winner = soldItemWinners[item.id];
+                    const itemMode = winner?.mode ?? item.mode ?? 'auction';
+                    return (
+                      <View
+                        key={item.id}
+                        style={{
+                          flexDirection: 'row', alignItems: 'center', gap: 12,
+                          backgroundColor: '#1F2937', borderRadius: 12,
+                          padding: 12, marginBottom: 8,
+                        }}
+                      >
                         <View style={{
-                          flexDirection: 'row', alignItems: 'center', gap: 8,
-                          marginBottom: 10,
+                          width: 56, height: 56, borderRadius: 10,
+                          backgroundColor: '#374151', overflow: 'hidden',
+                          alignItems: 'center', justifyContent: 'center',
                         }}>
-                          <Text style={{ fontSize: 14 }}>🔨</Text>
-                          <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                            Swipe Auction
-                          </Text>
-                          <View style={{ flex: 1, height: 1, backgroundColor: '#374151' }} />
-                          <Text style={{ color: '#4B5563', fontSize: 11 }}>{auctionSold.length}</Text>
+                          {item.photos[0] ? (
+                            <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                          ) : (
+                            <Text style={{ fontSize: 24 }}>📦</Text>
+                          )}
                         </View>
-                        {auctionSold.map(renderSoldItem)}
-                      </>
-                    )}
-                    {chatSold.length > 0 && (
-                      <>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+                          {winner ? (
+                            <>
+                              <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '700' }}>
+                                ✅ {formatPHP(winner.amount)}
+                              </Text>
+                              <Text style={{ color: '#6B7280', fontSize: 11 }}>
+                                Won by {winner.displayName}
+                              </Text>
+                            </>
+                          ) : (
+                            <Text style={{ color: '#10B981', fontSize: 12 }}>✅ Sold</Text>
+                          )}
+                        </View>
+                        {/* Mode badge */}
                         <View style={{
-                          flexDirection: 'row', alignItems: 'center', gap: 8,
-                          marginTop: auctionSold.length > 0 ? 16 : 0,
-                          marginBottom: 10,
+                          backgroundColor: itemMode === 'chat' ? 'rgba(124,58,237,0.15)' : 'rgba(26,86,219,0.15)',
+                          borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4,
+                          borderWidth: 1,
+                          borderColor: itemMode === 'chat' ? 'rgba(124,58,237,0.4)' : 'rgba(26,86,219,0.4)',
                         }}>
-                          <Text style={{ fontSize: 14 }}>💬</Text>
-                          <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                            Chat Bid
+                          <Text style={{
+                            fontSize: 10, fontWeight: '700',
+                            color: itemMode === 'chat' ? '#A78BFA' : '#60A5FA',
+                          }}>
+                            {itemMode === 'chat' ? '💬' : '🔨'}
                           </Text>
-                          <View style={{ flex: 1, height: 1, backgroundColor: '#374151' }} />
-                          <Text style={{ color: '#4B5563', fontSize: 11 }}>{chatSold.length}</Text>
                         </View>
-                        {chatSold.map(renderSoldItem)}
-                      </>
-                    )}
-                  </>
-                );
-              })()
-            )}
+                      </View>
+                    );
+                  })}
+                </>
+              );
+            })()}
             {/* ── Buy Now Tab ── */}
             {shopTab === 'buynow' && (
               buyNowItems.length === 0 ? (
