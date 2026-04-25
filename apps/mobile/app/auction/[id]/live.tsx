@@ -34,9 +34,10 @@ interface ChatMsg {
   displayName: string;
   message: string;
   timestamp: number;
-  type?: 'message' | 'item-divider' | 'system_winner';
+  type?: 'message' | 'item-divider' | 'system_winner' | 'system_offer';
   itemTitle?: string;
   winnerAmount?: number;
+  buyerName?: string;
 }
 
 interface CurrentItem {
@@ -154,7 +155,7 @@ export default function LiveAuctionRoom() {
   const [viewerCount, setViewerCount] = useState(0);
   const [showShop, setShowShop] = useState(false);
   const [auctionEnded, setAuctionEnded] = useState(false);
-  const [shopTab, setShopTab] = useState<'bidding' | 'buynow' | 'sold'>('bidding');
+  const [shopTab, setShopTab] = useState<'bidding' | 'buynow' | 'sold' | 'offers'>('bidding');
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [timerRemaining, setTimerRemaining] = useState<number | null>(null);
   const [counterbidSeconds, setCounterbidSeconds] = useState(5);
@@ -176,12 +177,12 @@ export default function LiveAuctionRoom() {
   const [liveOfferPercent, setLiveOfferPercent] = useState<number | null>(-20);
   const [liveCustomOffer, setLiveCustomOffer] = useState('');
   const [submittingOffer, setSubmittingOffer] = useState(false);
-  const [pendingOffer, setPendingOffer] = useState<{
+  const [pendingOffers, setPendingOffers] = useState<Array<{
     offerId: string;
     itemTitle: string;
     buyerName: string;
     amount: number;
-  } | null>(null);
+  }>>([]);
   const { user } = useAuthStore();
   const isSellerImmediate = routeRole === 'broadcaster';
   const isSeller = auction ? auction.seller.id === user?.id : isSellerImmediate;
@@ -438,13 +439,30 @@ export default function LiveAuctionRoom() {
     }, [id]),
 
     onOfferReceived: useCallback((data: { offerId: string; itemTitle: string; buyerName: string; amount: number }) => {
-      if (!isSeller) return;
-      setPendingOffer({
-        offerId: data.offerId,
+      // Visible to everyone in the room
+      setChatMessages(prev => [...prev, {
+        id: `offer-${data.offerId}-${Date.now()}`,
+        userId: '__system__',
+        displayName: '',
+        message: '',
+        timestamp: Date.now(),
+        type: 'system_offer',
         itemTitle: data.itemTitle,
+        winnerAmount: data.amount,
         buyerName: data.buyerName,
-        amount: data.amount,
+      }]);
+
+      if (!isSeller) return;
+      setPendingOffers(prev => {
+        if (prev.some(o => o.offerId === data.offerId)) return prev;
+        return [...prev, {
+          offerId: data.offerId,
+          itemTitle: data.itemTitle,
+          buyerName: data.buyerName,
+          amount: data.amount,
+        }];
       });
+      if (showShopRef.current) setShopTab('offers');
     }, [isSeller]),
 
     onOfferResponded: useCallback((data: { offerId: string; status: string; itemTitle: string; amount: number }) => {
@@ -589,6 +607,9 @@ export default function LiveAuctionRoom() {
 
   // ── Buyer own connection monitor ──────────────────────────────────
   const wasJoinedRef = useRef(false);
+
+  const showShopRef = useRef(false);
+  useEffect(() => { showShopRef.current = showShop; }, [showShop]);
 
   useEffect(() => {
     if (isSeller) return;
@@ -885,6 +906,18 @@ export default function LiveAuctionRoom() {
               alignItems: 'center', justifyContent: 'center',
             }}>
               <Text style={{ fontSize: 16 }}>🛍️</Text>
+              {pendingOffers.length > 0 && (
+                <View style={{
+                  position: 'absolute', top: -2, right: -2,
+                  backgroundColor: '#DC2626', borderRadius: 999,
+                  width: 14, height: 14,
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <Text style={{ color: '#fff', fontSize: 8, fontWeight: '700' }}>
+                    {pendingOffers.length}
+                  </Text>
+                </View>
+              )}
             </View>
             <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>Shop</Text>
           </TouchableOpacity>
@@ -959,11 +992,11 @@ export default function LiveAuctionRoom() {
           ref={chatRef}
           data={(() => {
             const real = chatMessages
-              .filter(m => m.type !== 'item-divider' && m.type !== 'system_winner')
+              .filter(m => m.type !== 'item-divider' && m.type !== 'system_winner' && m.type !== 'system_offer')
               .slice(-20);
             const realIds = new Set(real.map(m => m.id));
             return chatMessages.filter(
-              m => m.type === 'item-divider' || m.type === 'system_winner' || realIds.has(m.id)
+              m => m.type === 'item-divider' || m.type === 'system_winner' || m.type === 'system_offer' || realIds.has(m.id)
             );
           })()}
           keyExtractor={item => item.id}
@@ -991,6 +1024,34 @@ export default function LiveAuctionRoom() {
                 </View>
               );
             }
+
+            if (item.type === 'system_offer') {
+              return (
+                <View style={{
+                  marginVertical: 6,
+                  marginHorizontal: 4,
+                  backgroundColor: 'rgba(245,158,11,0.08)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(245,158,11,0.25)',
+                  borderRadius: 12,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                }}>
+                  <Text style={{ fontSize: 16 }}>💰</Text>
+                  <Text style={{ color: 'rgba(245,158,11,0.9)', fontSize: 11, flex: 1 }}>
+                    <Text style={{ fontWeight: '700' }}>{item.buyerName}</Text>
+                    {' offered '}
+                    <Text style={{ fontWeight: '700' }}>{formatPHP(item.winnerAmount ?? 0)}</Text>
+                    {' for '}
+                    <Text style={{ fontWeight: '600' }}>{item.itemTitle}</Text>
+                  </Text>
+                </View>
+              );
+            }
+
             if (item.type === 'system_winner') {
               return (
                 <View style={{
@@ -1317,7 +1378,7 @@ export default function LiveAuctionRoom() {
             Shop
           </Text>
           <View style={{ flexDirection: 'row', paddingHorizontal: 24, marginBottom: 16, gap: 8 }}>
-            {(['bidding', 'buynow', 'sold'] as const).map(tab => (
+            {(['bidding', 'buynow', 'sold', ...(isSeller ? ['offers'] : [])] as ('bidding' | 'buynow' | 'sold' | 'offers')[]).map((tab) => (
               <TouchableOpacity
                 key={tab}
                 style={{
@@ -1330,7 +1391,24 @@ export default function LiveAuctionRoom() {
                   fontSize: 13, fontWeight: '600',
                   color: shopTab === tab ? '#fff' : '#9CA3AF',
                 }}>
-                  {tab === 'bidding' ? '🔨 Bidding' : tab === 'buynow' ? '🏷️ Buy Now' : '✅ Sold'}
+                  {tab === 'bidding' ? '🔨 Bidding' : tab === 'buynow' ? '🏷️ Buy Now' : tab === 'sold' ? '✅ Sold' : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: shopTab === 'offers' ? '#fff' : '#9CA3AF' }}>
+                        💰 Offers
+                      </Text>
+                      {pendingOffers.length > 0 && (
+                        <View style={{
+                          backgroundColor: '#DC2626', borderRadius: 999,
+                          minWidth: 16, height: 16, paddingHorizontal: 4,
+                          alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700' }}>
+                            {pendingOffers.length}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -1583,6 +1661,137 @@ export default function LiveAuctionRoom() {
                 </>
               );
             })()}
+
+            {/* ── Offers Tab ── */}
+            {shopTab === 'offers' && (
+              !isSeller ? null :
+              pendingOffers.length === 0 ? (
+                <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                  <Text style={{ fontSize: 32, marginBottom: 8 }}>💰</Text>
+                  <Text style={{ color: '#4B5563', fontSize: 13 }}>No pending offers</Text>
+                </View>
+              ) : pendingOffers.map(offer => (
+                <View
+                  key={offer.offerId}
+                  style={{
+                    backgroundColor: '#1F2937', borderRadius: 14,
+                    padding: 14, marginBottom: 10,
+                    borderWidth: 1, borderColor: '#374151',
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
+                        {offer.itemTitle}
+                      </Text>
+                      <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>
+                        {offer.buyerName} offered{' '}
+                        <Text style={{ color: '#F59E0B', fontWeight: '700' }}>
+                          {formatPHP(offer.amount)}
+                        </Text>
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={{ gap: 8 }}>
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <TouchableOpacity
+                        style={{
+                          flex: 1, backgroundColor: '#10B981',
+                          borderRadius: 10, paddingVertical: 10, alignItems: 'center',
+                        }}
+                        onPress={async () => {
+                          try {
+                            const { apiClient } = await import('../../../src/services/api/client');
+                            await apiClient.patch(`/offers/${offer.offerId}/accept`);
+                            setPendingOffers(prev => prev.filter(o => o.offerId !== offer.offerId));
+                            void auctionsApi.getById(id).then(setAuction);
+                            Alert.alert('✅ Accepted', `You accepted the offer from ${offer.buyerName}.`);
+                          } catch {
+                            Alert.alert('Error', 'Failed to accept offer.');
+                          }
+                        }}
+                      >
+                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Accept</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{
+                          flex: 1, backgroundColor: '#DC2626',
+                          borderRadius: 10, paddingVertical: 10, alignItems: 'center',
+                        }}
+                        onPress={async () => {
+                          try {
+                            const { apiClient } = await import('../../../src/services/api/client');
+                            await apiClient.patch(`/offers/${offer.offerId}/decline`);
+                            setPendingOffers(prev => prev.filter(o => o.offerId !== offer.offerId));
+                          } catch {
+                            Alert.alert('Error', 'Failed to decline offer.');
+                          }
+                        }}
+                      >
+                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Decline</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: 'rgba(245,158,11,0.15)',
+                        borderWidth: 1, borderColor: '#F59E0B',
+                        borderRadius: 10, paddingVertical: 10, alignItems: 'center',
+                      }}
+                      onPress={() => {
+                        Alert.alert(
+                          `🔨 Run at ${formatPHP(offer.amount)}?`,
+                          `Convert to live auction starting at ${formatPHP(offer.amount)} and decline ${offer.buyerName}'s offer.`,
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                              text: 'Run Auction',
+                              onPress: async () => {
+                                try {
+                                  const { apiClient } = await import('../../../src/services/api/client');
+                                  const matchedItem = auction?.shopItems.find(
+                                    i => i.title === offer.itemTitle && i.type === 'BUY_NOW'
+                                  );
+                                  if (!matchedItem) {
+                                    Alert.alert('Error', 'Could not find the item to convert.');
+                                    return;
+                                  }
+                                  await apiClient.patch(`/offers/${offer.offerId}/decline`);
+                                  await apiClient.patch(`/shop-items/${matchedItem.id}/convert-to-auction`, {
+                                    startingPrice: offer.amount,
+                                  });
+                                  setPendingOffers(prev => prev.filter(o => o.offerId !== offer.offerId));
+                                  void auctionsApi.getById(id).then(data => {
+                                    setAuction(data);
+                                    notifyShopUpdated();
+                                  });
+                                  setShowShop(false);
+                                  Alert.alert(
+                                    '🔨 Added to Queue!',
+                                    `${offer.itemTitle} is now queued as an auction starting at ${formatPHP(offer.amount)}.`
+                                  );
+                                } catch {
+                                  Alert.alert('Error', 'Failed to convert item. Try again.');
+                                }
+                              },
+                            },
+                          ]
+                        );
+                      }}
+                    >
+                      <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 13 }}>
+                        🔨 Run at {formatPHP(offer.amount)}
+                      </Text>
+                      <Text style={{ color: '#92400E', fontSize: 10, marginTop: 2 }}>
+                        Convert to live auction · declines offer
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            )}
+
             {/* ── Buy Now Tab ── */}
             {shopTab === 'buynow' && (
               buyNowItems.length === 0 ? (
@@ -1849,132 +2058,6 @@ export default function LiveAuctionRoom() {
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
-
-      {/* ── Offer Notification (Seller) ── */}
-      {isSeller && pendingOffer && (
-        <View style={{
-          position: 'absolute',
-          top: insets.top + 16, left: 16, right: 16,
-          backgroundColor: '#1F2937',
-          borderRadius: 16, padding: 16,
-          borderWidth: 1, borderColor: '#374151',
-          zIndex: 997,
-        }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
-                💰 New Offer
-              </Text>
-              <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }} numberOfLines={2}>
-                {pendingOffer.buyerName} offered {formatPHP(pendingOffer.amount)} for {pendingOffer.itemTitle}
-              </Text>
-            </View>
-            <TouchableOpacity onPress={() => setPendingOffer(null)}>
-              <Text style={{ color: '#6B7280', fontSize: 16, paddingLeft: 8 }}>✕</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={{ gap: 8 }}>
-            {/* Accept / Decline row */}
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity
-                style={{
-                  flex: 1, backgroundColor: '#10B981',
-                  borderRadius: 10, paddingVertical: 10, alignItems: 'center',
-                }}
-                onPress={async () => {
-                  try {
-                    const { apiClient } = await import('../../../src/services/api/client');
-                    await apiClient.patch(`/offers/${pendingOffer.offerId}/accept`);
-                    setPendingOffer(null);
-                    void auctionsApi.getById(id).then(setAuction);
-                    Alert.alert('✅ Accepted', `You accepted the offer from ${pendingOffer.buyerName}.`);
-                  } catch {
-                    Alert.alert('Error', 'Failed to accept offer.');
-                  }
-                }}
-              >
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Accept</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={{
-                  flex: 1, backgroundColor: '#DC2626',
-                  borderRadius: 10, paddingVertical: 10, alignItems: 'center',
-                }}
-                onPress={async () => {
-                  try {
-                    const { apiClient } = await import('../../../src/services/api/client');
-                    await apiClient.patch(`/offers/${pendingOffer.offerId}/decline`);
-                    setPendingOffer(null);
-                  } catch {
-                    Alert.alert('Error', 'Failed to decline offer.');
-                  }
-                }}
-              >
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Decline</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Run at offer price — converts Buy Now to live auction */}
-            <TouchableOpacity
-              style={{
-                backgroundColor: 'rgba(245,158,11,0.15)',
-                borderWidth: 1, borderColor: '#F59E0B',
-                borderRadius: 10, paddingVertical: 10, alignItems: 'center',
-              }}
-              onPress={() => {
-                Alert.alert(
-                  `🔨 Run at ${formatPHP(pendingOffer.amount)}?`,
-                  `This will convert the item to a live auction starting at ${formatPHP(pendingOffer.amount)} and decline ${pendingOffer.buyerName}'s offer.`,
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: 'Run Auction',
-                      onPress: async () => {
-                        try {
-                          const { apiClient } = await import('../../../src/services/api/client');
-                          // Find the Buy Now item by title match in shop items
-                          const matchedItem = auction?.shopItems.find(
-                            i => i.title === pendingOffer.itemTitle && i.type === 'BUY_NOW'
-                          );
-                          if (!matchedItem) {
-                            Alert.alert('Error', 'Could not find the item to convert.');
-                            return;
-                          }
-                          // Decline the offer first
-                          await apiClient.patch(`/offers/${pendingOffer.offerId}/decline`);
-                          // Convert Buy Now → Auction at offer price
-                          await apiClient.patch(`/shop-items/${matchedItem.id}/convert-to-auction`, {
-                            startingPrice: pendingOffer.amount,
-                          });
-                          setPendingOffer(null);
-                          // Refresh auction state so item appears in bidding queue
-                          void auctionsApi.getById(id).then(data => {
-                            setAuction(data);
-                            notifyShopUpdated();
-                          });
-                          Alert.alert(
-                            '🔨 Added to Queue!',
-                            `${pendingOffer.itemTitle} is now queued as an auction starting at ${formatPHP(pendingOffer.amount)}.`
-                          );
-                        } catch {
-                          Alert.alert('Error', 'Failed to convert item. Try again.');
-                        }
-                      },
-                    },
-                  ]
-                );
-              }}
-            >
-              <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 13 }}>
-                🔨 Run at {formatPHP(pendingOffer.amount)}
-              </Text>
-              <Text style={{ color: '#92400E', fontSize: 10, marginTop: 2 }}>
-                Convert to live auction · declines offer
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
 
       {/* ── Sale Toast ── */}
       {saleToast && (
