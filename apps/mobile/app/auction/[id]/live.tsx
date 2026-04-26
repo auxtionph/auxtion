@@ -92,8 +92,8 @@ function SwipeBidButton({ label, sublabel, onBid }: {
   onBid: () => void;
 }) {
   const translateX = useRef(new Animated.Value(0)).current;
-  const THRESHOLD = SCREEN_WIDTH * 0.55;
-  const MAX_DRAG = SCREEN_WIDTH - 32 - 56;
+  const THRESHOLD = SCREEN_WIDTH * 0.5;
+  const MAX_DRAG = SCREEN_WIDTH - 48 - 64;
   const onBidRef = useRef(onBid);
   useEffect(() => { onBidRef.current = onBid; }, [onBid]);
 
@@ -107,7 +107,6 @@ function SwipeBidButton({ label, sublabel, onBid }: {
     onPanResponderRelease: (_, g) => {
       if (g.dx >= THRESHOLD) {
         onBidRef.current();
-        // Then animate back
         Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
       } else {
         Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
@@ -120,25 +119,36 @@ function SwipeBidButton({ label, sublabel, onBid }: {
       backgroundColor: '#1A56DB', borderRadius: 16,
       height: 60, overflow: 'hidden', justifyContent: 'center',
     }}>
-      <View style={{ position: 'absolute', width: '100%', alignItems: 'center' }}>
-        <Text style={{ color: 'rgba(255,255,255,0.9)', fontWeight: '700', fontSize: 17 }}>{label}</Text>
-        <Text style={{ color: 'rgba(191,219,254,0.9)', fontSize: 11, marginTop: 2 }}>{sublabel}</Text>
+      {/* Fading chevrons — right side hint */}
+      <View style={{ position: 'absolute', right: 14, flexDirection: 'row', gap: 3, alignItems: 'center' }}>
+        {([0.15, 0.35, 0.6] as const).map((op, i) => (
+          <Text key={i} style={{ color: '#fff', fontSize: 18, opacity: op, lineHeight: 22 }}>›</Text>
+        ))}
       </View>
-      <View style={{ position: 'absolute', right: 16, flexDirection: 'row', gap: 2, opacity: 0.3 }}>
-        <Text style={{ color: '#fff', fontSize: 14 }}>›</Text>
-        <Text style={{ color: '#fff', fontSize: 14 }}>›</Text>
-        <Text style={{ color: '#fff', fontSize: 14 }}>›</Text>
+      {/* Label — offset right so it never overlaps handle */}
+      <View style={{ position: 'absolute', left: 72, right: 48, alignItems: 'center' }}>
+        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16, letterSpacing: 0.2 }} numberOfLines={1}>
+          {label}
+        </Text>
+        <Text style={{ color: 'rgba(191,219,254,0.8)', fontSize: 10, marginTop: 2 }}>
+          {sublabel}
+        </Text>
       </View>
+      {/* Draggable handle */}
       <Animated.View
         style={{
           transform: [{ translateX }],
-          width: 52, height: 52, borderRadius: 12, marginLeft: 4,
-          backgroundColor: 'rgba(255,255,255,0.2)',
+          width: 56, height: 52, borderRadius: 13, marginLeft: 4,
+          backgroundColor: 'rgba(255,255,255,0.18)',
+          borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
           alignItems: 'center', justifyContent: 'center',
         }}
         {...panResponder.panHandlers}
       >
-        <Text style={{ fontSize: 22 }}>🔨</Text>
+        <Text style={{ fontSize: 20 }}>🔨</Text>
+        <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 8, fontWeight: '700', marginTop: 1, letterSpacing: 1 }}>
+          SLIDE
+        </Text>
       </Animated.View>
     </View>
   );
@@ -1216,16 +1226,18 @@ export default function LiveAuctionRoom() {
         paddingBottom: BOTTOM_PADDING, paddingTop: 12,
       }}>
         {/* Chat input row */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, paddingHorizontal: 16 }}>
           <TextInput
             style={{
-              flex: 1, backgroundColor: 'rgba(0,0,0,0.60)',
-              borderWidth: 1, borderColor: '#374151', borderRadius: 999,
-              paddingHorizontal: 16, paddingVertical: 10,
+              flex: 1,
+              backgroundColor: 'rgba(255,255,255,0.08)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+              borderRadius: 999,
+              paddingHorizontal: 16, paddingVertical: 11,
               color: '#fff', fontSize: 13,
             }}
             placeholder="Say something..."
-            placeholderTextColor="#6B7280"
+            placeholderTextColor="rgba(255,255,255,0.3)"
             value={chatInput}
             onChangeText={setChatInput}
             onSubmitEditing={handleSendChat}
@@ -1233,17 +1245,18 @@ export default function LiveAuctionRoom() {
           />
           <TouchableOpacity
             style={{
-              width: 40, height: 40, borderRadius: 20,
-              backgroundColor: 'rgba(0,0,0,0.60)', borderWidth: 1, borderColor: '#374151',
+              width: 38, height: 38, borderRadius: 19,
+              backgroundColor: chatInput.trim() ? '#1A56DB' : 'rgba(255,255,255,0.08)',
+              borderWidth: 1,
+              borderColor: chatInput.trim() ? '#1A56DB' : 'rgba(255,255,255,0.1)',
               alignItems: 'center', justifyContent: 'center',
             }}
             onPress={handleSendChat}
           >
-            <Text style={{ color: '#fff', fontSize: 16 }}>→</Text>
+            <Text style={{ color: '#fff', fontSize: 14 }}>↑</Text>
           </TouchableOpacity>
-
         </View>
-
+        
         {/* Bid button — viewers only */}
         {!isSeller && (
           currentItem ? (
@@ -1252,6 +1265,7 @@ export default function LiveAuctionRoom() {
                 backgroundColor: 'rgba(124,58,237,0.15)',
                 borderWidth: 1, borderColor: '#7C3AED',
                 borderRadius: 16, paddingVertical: 14, alignItems: 'center',
+                marginHorizontal: 16,
               }}>
                 <Text style={{ color: '#A78BFA', fontWeight: '700', fontSize: 15 }}>
                   💬 Type your bid in chat!
@@ -1263,14 +1277,15 @@ export default function LiveAuctionRoom() {
                 </Text>
               </View>
             ) : (
-            <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16 }}>
               {/* Custom bid button */}
               <TouchableOpacity
                 style={{
-                  backgroundColor: 'rgba(0,0,0,0.60)',
-                  borderWidth: 1, borderColor: '#374151',
-                  borderRadius: 14, paddingHorizontal: 16,
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+                  borderRadius: 14, paddingHorizontal: 14,
                   alignItems: 'center', justifyContent: 'center',
+                  height: 60,
                   opacity: broadcasterReconnecting ? 0.4 : 1,
                 }}
                 onPress={() => {
@@ -1279,7 +1294,8 @@ export default function LiveAuctionRoom() {
                   setShowCustomBid(true);
                 }}
               >
-                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>Custom</Text>
+                <Text style={{ color: '#fff', fontSize: 16 }}>✏️</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 9, fontWeight: '700', marginTop: 2 }}>CUSTOM</Text>
               </TouchableOpacity>
 
               {/* Swipe bid button */}
@@ -1321,10 +1337,14 @@ export default function LiveAuctionRoom() {
             )
           ) : (
             <View style={{
-              backgroundColor: 'rgba(0,0,0,0.60)', borderWidth: 1, borderColor: '#374151',
+              backgroundColor: 'rgba(255,255,255,0.05)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
               borderRadius: 16, paddingVertical: 16, alignItems: 'center',
+              marginHorizontal: 16,
             }}>
-              <Text style={{ color: '#6B7280', fontWeight: '600' }}>Waiting for next item...</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.35)', fontWeight: '600', fontSize: 13 }}>
+                Waiting for next item...
+              </Text>
             </View>
           )
         )}
