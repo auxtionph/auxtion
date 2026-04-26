@@ -67,6 +67,25 @@ interface SkipChatItemPayload {
   sellerId: string;
 }
 
+interface StartLiveBuyNowPayload {
+  auctionId: string;
+  itemId: string;
+  sellerId: string;
+}
+
+interface ClaimBuyNowPayload {
+  auctionId: string;
+  itemId: string;
+  buyerId: string;
+  buyerName: string;
+}
+
+interface PullBuyNowPayload {
+  auctionId: string;
+  itemId: string;
+  sellerId: string;
+}
+
 @WebSocketGateway({
   cors: { origin: '*' },
   namespace: 'auctions',
@@ -849,5 +868,91 @@ export class BiddingGateway
     const sockets = await this.server.in(`auction:${auctionId}`).fetchSockets();
     const count = sockets.length;
     this.server.to(`auction:${auctionId}`).emit('viewer-count', { count });
+  }
+
+  @SubscribeMessage('start-live-buynow')
+  async handleStartLiveBuyNow(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: StartLiveBuyNowPayload,
+  ) {
+    const { auctionId, itemId, sellerId } = payload;
+
+    const item = await this.prisma.shopItem.findUnique({
+      where: { id: itemId },
+    });
+    if (!item || item.sellerId !== sellerId) return;
+    if (item.type !== 'BUY_NOW') return;
+
+    await this.prisma.shopItem.update({
+      where: { id: itemId },
+      data: { status: 'LIVE_BUYNOW' },
+    });
+
+    this.server.to(`auction:${auctionId}`).emit('live-buynow-started', {
+      itemId,
+      title: item.title,
+      price: item.price,
+      photos: item.photos,
+    });
+
+    this.logger.log(`Live Buy Now started: ${itemId}`);
+  }
+
+  @SubscribeMessage('claim-buynow')
+  async handleClaimBuyNow(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: ClaimBuyNowPayload,
+  ) {
+    const { auctionId, itemId, buyerId, buyerName } = payload;
+
+    // Atomic check — only first claimer wins
+    const item = await this.prisma.shopItem.findUnique({
+      where: { id: itemId },
+    });
+    if (!item || item.status !== 'LIVE_BUYNOW') {
+      client.emit('buynow-claim-failed', {
+        itemId,
+        reason: 'Already claimed or not available',
+      });
+      return;
+    }
+
+    // Mark SOLD atomically
+    await this.prisma.shopItem.update({
+      where: { id: itemId },
+      data: { status: 'SOLD' },
+    });
+
+    this.server.to(`auction:${auctionId}`).emit('buynow-claimed', {
+      itemId,
+      title: item.title,
+      price: item.price,
+      buyerId,
+      buyerName,
+    });
+
+    this.logger.log(`Buy Now claimed: ${itemId} by ${buyerName}`);
+  }
+
+  @SubscribeMessage('pull-buynow')
+  async handlePullBuyNow(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: PullBuyNowPayload,
+  ) {
+    const { auctionId, itemId, sellerId } = payload;
+
+    const item = await this.prisma.shopItem.findUnique({
+      where: { id: itemId },
+    });
+    if (!item || item.sellerId !== sellerId) return;
+    if (item.status !== 'LIVE_BUYNOW') return;
+
+    await this.prisma.shopItem.update({
+      where: { id: itemId },
+      data: { status: 'AVAILABLE' },
+    });
+
+    this.server.to(`auction:${auctionId}`).emit('buynow-pulled', { itemId });
+    this.logger.log(`Buy Now pulled back: ${itemId}`);
   }
 }

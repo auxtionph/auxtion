@@ -47,7 +47,7 @@ interface CurrentItem {
   photos: string[];
   totalBids: number;
   highestBidderName?: string;
-  mode: 'auction' | 'chat';
+  mode: 'auction' | 'chat' | 'buynow';
 }
 
 interface BidUpdateData {
@@ -86,10 +86,11 @@ const getBidIncrement = (price: number): number => {
   return 50_000;                          // ₱10,000+ → +₱500
 };
 
-function SwipeBidButton({ label, sublabel, onBid }: {
+function SwipeBidButton({ label, sublabel, onBid, color = '#1A56DB' }: {
   label: string;
   sublabel: string;
   onBid: () => void;
+  color?: string;
 }) {
   const translateX = useRef(new Animated.Value(0)).current;
   const THRESHOLD = SCREEN_WIDTH * 0.5;
@@ -116,7 +117,7 @@ function SwipeBidButton({ label, sublabel, onBid }: {
 
   return (
     <View style={{
-      backgroundColor: '#1A56DB', borderRadius: 16,
+      backgroundColor: color, borderRadius: 16,
       height: 60, overflow: 'hidden', justifyContent: 'center',
     }}>
       {/* Fading chevrons — right side hint */}
@@ -208,10 +209,11 @@ export default function LiveAuctionRoom() {
   const [viewerConnecting, setViewerConnecting] = useState(false);
   const pendingBidStateRef = useRef<BidUpdateData | null>(null);
   const [skipping, setSkipping] = useState(false);
+  const [claimingBuyNow, setClaimingBuyNow] = useState(false);
   const insets = useSafeAreaInsets();
   const [soldSubTab, setSoldSubTab] = useState<'all' | 'auction' | 'chat' | 'buynow'>('all');
   const [soldSort, setSoldSort] = useState<'recent' | 'high' | 'low'>('recent');
-
+  const [buyNowMode, setBuyNowMode] = useState<'shop' | 'live'>('shop');
 
   useEffect(() => {
     currentItemRef.current = currentItem;
@@ -292,9 +294,8 @@ export default function LiveAuctionRoom() {
     userId: string;
     displayName: string;
     amount: number;
-    mode: 'auction' | 'chat';
+    mode: 'auction' | 'chat' | 'buynow';
   }>>({});
-
   const [saleToast, setSaleToast] = useState<{ winner: string; amount: number; title: string } | null>(null);
 
   const [timerPaused, setTimerPaused] = useState(false);
@@ -306,7 +307,7 @@ export default function LiveAuctionRoom() {
     displayName: string;
     message: string;
   } | null>(null);
-  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner, skipChatItem } = useAuctionSocket({
+  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner, skipChatItem, startLiveBuyNow, claimBuyNow, pullBuyNow } = useAuctionSocket({
     auctionId: id,
     userId: user?.id,
     onBidUpdate: useCallback((data: BidUpdateData) => {
@@ -511,6 +512,85 @@ export default function LiveAuctionRoom() {
       setTimerPaused(false);
       setTimerRemaining(data.remaining);
     }, []),
+
+    onLiveBuyNowStarted: useCallback((data: { itemId: string; title: string; price: number; photos: string[] }) => {
+      setChatMessages(prev => [...prev, {
+        id: `divider-buynow-${data.itemId}-${Date.now()}`,
+        userId: '__system__',
+        displayName: '',
+        message: '',
+        timestamp: Date.now(),
+        type: 'item-divider',
+        itemTitle: data.title,
+      }]);
+      setCurrentItem({
+        itemId: data.itemId,
+        title: data.title,
+        currentPrice: data.price,
+        photos: data.photos,
+        totalBids: 0,
+        mode: 'buynow',
+      });
+      setAuction(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          shopItems: prev.shopItems.map(i =>
+            i.id === data.itemId ? { ...i, status: 'LIVE_BUYNOW' as any } : i
+          ),
+        };
+      });
+    }, []),
+
+    onBuyNowClaimed: useCallback((data: { itemId: string; title: string; price: number; buyerId: string; buyerName: string }) => {
+      setClaimingBuyNow(false);
+      setCurrentItem(null);
+      setWinnerBanner(null);
+      setSaleToast({ winner: data.buyerName, amount: data.price, title: data.title });
+      setTimeout(() => setSaleToast(null), 4000);
+      setChatMessages(prev => [...prev, {
+        id: `winner-buynow-${data.itemId}-${Date.now()}`,
+        userId: '__system__',
+        displayName: '',
+        message: data.buyerName,
+        timestamp: Date.now(),
+        type: 'system_winner',
+        itemTitle: data.title,
+        winnerAmount: data.price,
+      }]);
+      setAuction(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          shopItems: prev.shopItems.map(i =>
+            i.id === data.itemId ? { ...i, status: 'SOLD' as const } : i
+          ),
+        };
+      });
+      setSoldItemWinners(prev => ({
+        ...prev,
+        [data.itemId]: { userId: data.buyerId, displayName: data.buyerName, amount: data.price, mode: 'auction' },
+      }));
+    }, []),
+
+    onBuyNowPulled: useCallback((data: { itemId: string }) => {
+      setCurrentItem(null);
+      setClaimingBuyNow(false);
+      setAuction(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          shopItems: prev.shopItems.map(i =>
+            i.id === data.itemId ? { ...i, status: 'AVAILABLE' as const } : i
+          ),
+        };
+      });
+    }, []),
+
+    onBuyNowClaimFailed: useCallback((_data: { itemId: string; reason: string }) => {
+      setClaimingBuyNow(false);
+      Alert.alert('Too slow!', 'Someone else just bought it.');
+    }, []),
   });
 
   const handleAddItemLive = async (mode: 'queue' | 'now' | 'buynow') => {
@@ -571,7 +651,20 @@ export default function LiveAuctionRoom() {
       }
 
       if (mode === 'buynow') {
-        Alert.alert('Listed! 🏷️', `${newItem.title} is now available for buyers to purchase.`);
+        if (buyNowMode === 'live') {
+          startLiveBuyNow(newItem.id, user?.id ?? '');
+          setCurrentItem({
+            itemId: newItem.id,
+            title: newItem.title,
+            currentPrice: newItem.price,
+            photos: [],
+            totalBids: 0,
+            mode: 'buynow',
+          });
+        } else {
+          Alert.alert('Listed! 🏷️', `${newItem.title} is now available for buyers to purchase.`);
+        }
+        setBuyNowMode('shop');
       }
     } catch (err) {
       console.error('Add item error:', JSON.stringify(err));
@@ -759,9 +852,9 @@ export default function LiveAuctionRoom() {
   const CHAT_ROW_HEIGHT = 60;
   const SELLER_BUTTON_HEIGHT = (() => {
     if (!isSeller) return 0;
-    const skipHeight = currentItem?.mode === 'chat' ? 56 : 0;
-    const gapHeight = currentItem?.mode === 'chat' ? 8 : 0;
-    return skipHeight + gapHeight + 52;
+    const extraHeight = currentItem?.mode === 'chat' || currentItem?.mode === 'buynow' ? 56 : 0;
+    const gapHeight = currentItem?.mode === 'chat' || currentItem?.mode === 'buynow' ? 8 : 0;
+    return extraHeight + gapHeight + 52;
   })();
   const BUYER_BUTTON_HEIGHT = (() => {
     if (isSeller) return 0;
@@ -1170,7 +1263,7 @@ export default function LiveAuctionRoom() {
           position: 'absolute', 
           left: 16, right: 16, 
           // Push up more when seller has skip button showing
-          bottom: (isSeller && currentItem.mode === 'chat' ? 210 : 152) + keyboardHeight 
+          bottom: (isSeller && (currentItem.mode === 'chat' || currentItem.mode === 'buynow') ? 210 : 152) + keyboardHeight
         }}>
           <View style={{
             backgroundColor: 'rgba(0,0,0,0.70)', borderRadius: 16,
@@ -1260,7 +1353,20 @@ export default function LiveAuctionRoom() {
         {/* Bid button — viewers only */}
         {!isSeller && (
           currentItem ? (
-            currentItem.mode === 'chat' ? (
+            currentItem.mode === 'buynow' ? (
+              <View style={{ paddingHorizontal: 16 }}>
+                <SwipeBidButton
+                  label={`Buy Now — ${formatPHP(currentItem.currentPrice)}`}
+                  sublabel="Swipe to buy · first come first served"
+                  color="#10B981"
+                  onBid={() => {
+                    if (claimingBuyNow) return;
+                    setClaimingBuyNow(true);
+                    claimBuyNow(currentItem.itemId, user?.id ?? '', user?.displayName ?? 'Buyer');
+                  }}
+                />
+              </View>
+            ) : currentItem.mode === 'chat' ? (
               <View style={{
                 backgroundColor: 'rgba(124,58,237,0.15)',
                 borderWidth: 1, borderColor: '#7C3AED',
@@ -1352,6 +1458,41 @@ export default function LiveAuctionRoom() {
         {/* Seller bottom controls */}
         {isSeller && (
           <View style={{ gap: 8 }}>
+            {/* Pull Back to Shop — only during live buy now */}
+            {currentItem?.mode === 'buynow' && (
+              <TouchableOpacity
+                style={{
+                  backgroundColor: 'rgba(16,185,129,0.15)',
+                  borderWidth: 1, borderColor: '#10B981',
+                  borderRadius: 16, paddingVertical: 12, alignItems: 'center',
+                  marginHorizontal: 0,
+                }}
+                onPress={() => {
+                  Alert.alert(
+                    'Pull Back to Shop?',
+                    `Remove "${currentItem.title}" from live and put it back in the Buy Now tab.`,
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Pull Back',
+                        onPress: () => {
+                          if (!user?.id) return;
+                          pullBuyNow(currentItem.itemId, user.id);
+                        },
+                      },
+                    ]
+                  );
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={{ color: '#10B981', fontWeight: '700', fontSize: 14 }}>
+                  ↩ Pull Back to Shop
+                </Text>
+                <Text style={{ color: '#065F46', fontSize: 11, marginTop: 2 }}>
+                  Returns to Buy Now tab
+                </Text>
+              </TouchableOpacity>
+            )}
             {/* Skip Item — only during chat bid */}
             {currentItem?.mode === 'chat' && (
               <TouchableOpacity
@@ -2390,6 +2531,44 @@ export default function LiveAuctionRoom() {
                 );
               })}
             </View>
+            {/* Buy Now sub-options */}
+            {newAddMode === 'buynow' && (
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20 }}>
+                <TouchableOpacity
+                  style={{
+                    flex: 1, alignItems: 'center', paddingVertical: 12,
+                    borderRadius: 14, borderWidth: 1,
+                    backgroundColor: buyNowMode === 'shop' ? 'rgba(16,185,129,0.15)' : '#1F2937',
+                    borderColor: buyNowMode === 'shop' ? '#10B981' : '#2D3748',
+                  }}
+                  onPress={() => setBuyNowMode('shop')}
+                >
+                  <Text style={{ fontSize: 20, marginBottom: 4 }}>🏪</Text>
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Shop Only</Text>
+                  <Text style={{ color: '#6B7280', fontSize: 10, marginTop: 2 }}>Sits in Buy Now tab</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{
+                    flex: 1, alignItems: 'center', paddingVertical: 12,
+                    borderRadius: 14, borderWidth: 1,
+                    backgroundColor: buyNowMode === 'live' ? 'rgba(16,185,129,0.15)' : '#1F2937',
+                    borderColor: buyNowMode === 'live' ? '#10B981' : '#2D3748',
+                    opacity: currentItem ? 0.35 : 1,
+                  }}
+                  onPress={() => {
+                    if (currentItem) {
+                      Alert.alert('Item Running', 'End or skip the current item first.');
+                      return;
+                    }
+                    setBuyNowMode('live');
+                  }}
+                >
+                  <Text style={{ fontSize: 20, marginBottom: 4 }}>📺</Text>
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Show Live</Text>
+                  <Text style={{ color: '#6B7280', fontSize: 10, marginTop: 2 }}>Viewers swipe to buy</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Confirm button */}
             <TouchableOpacity
@@ -2410,7 +2589,8 @@ export default function LiveAuctionRoom() {
               ) : (
                 <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
                   {newAddMode === 'now' ? '🔨 Run Now'
-                    : newAddMode === 'buynow' ? '🏷️ List as Buy Now'
+                    : newAddMode === 'buynow' && buyNowMode === 'live' ? '📺 Show Live Now'
+                    : newAddMode === 'buynow' ? '🏪 List in Shop'
                     : '📦 Add to Queue'}
                 </Text>
               )}

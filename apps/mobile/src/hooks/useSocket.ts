@@ -65,6 +65,10 @@ interface UseSocketOptions {
   onOfferResponded?: (data: { offerId: string; status: string; itemTitle: string; amount: number; buyerName?: string }) => void;
   onTimerPaused?: (data: { itemId: string; remaining: number; reason: string }) => void;
   onTimerResumed?: (data: { itemId: string; remaining: number }) => void;
+  onLiveBuyNowStarted?: (data: { itemId: string; title: string; price: number; photos: string[] }) => void;
+  onBuyNowClaimed?: (data: { itemId: string; title: string; price: number; buyerId: string; buyerName: string }) => void;
+  onBuyNowPulled?: (data: { itemId: string }) => void;
+  onBuyNowClaimFailed?: (data: { itemId: string; reason: string }) => void;
 }
 
 export const useAuctionSocket = ({
@@ -87,6 +91,10 @@ export const useAuctionSocket = ({
   onOfferResponded,
   onTimerPaused,
   onTimerResumed,
+  onLiveBuyNowStarted,
+  onBuyNowClaimed,
+  onBuyNowPulled,
+  onBuyNowClaimFailed,
 }: UseSocketOptions) => {
   const socketRef = useRef<Socket | null>(null);
 
@@ -123,6 +131,10 @@ export const useAuctionSocket = ({
     socket.off('offer-responded');
     socket.off('timer-paused');
     socket.off('timer-resumed');
+    socket.off('live-buynow-started');
+    socket.off('buynow-claimed');
+    socket.off('buynow-pulled');
+    socket.off('buynow-claim-failed');
     socket.off('bid-state');
 
     if (onBidUpdate) socket.on(SOCKET_EVENTS.BID_UPDATE, onBidUpdate);
@@ -140,6 +152,10 @@ export const useAuctionSocket = ({
     if (onOfferResponded) socket.on('offer-responded', onOfferResponded);
     if (onTimerPaused) socket.on('timer-paused', onTimerPaused);
     if (onTimerResumed) socket.on('timer-resumed', onTimerResumed);
+    if (onLiveBuyNowStarted) socket.on('live-buynow-started', onLiveBuyNowStarted);
+    if (onBuyNowClaimed) socket.on('buynow-claimed', onBuyNowClaimed);
+    if (onBuyNowPulled) socket.on('buynow-pulled', onBuyNowPulled);
+    if (onBuyNowClaimFailed) socket.on('buynow-claim-failed', onBuyNowClaimFailed);
     socket.on('bid-state', (data: {
       itemId: string;
       currentPrice: number;
@@ -219,6 +235,18 @@ export const useAuctionSocket = ({
     socketRef.current?.emit('cancel-item-timer', { auctionId, itemId });
   }, [auctionId]);
 
+  const startLiveBuyNow = useCallback((itemId: string, sellerId: string) => {
+    socketRef.current?.emit('start-live-buynow', { auctionId, itemId, sellerId });
+  }, [auctionId]);
+
+  const claimBuyNow = useCallback((itemId: string, buyerId: string, buyerName: string) => {
+    socketRef.current?.emit('claim-buynow', { auctionId, itemId, buyerId, buyerName });
+  }, [auctionId]);
+
+  const pullBuyNow = useCallback((itemId: string, sellerId: string) => {
+    socketRef.current?.emit('pull-buynow', { auctionId, itemId, sellerId });
+  }, [auctionId]);
+
 
   const startChatBid = useCallback((itemId: string, sellerId: string, displaySeconds: number) => {
   socketRef.current?.emit('start-chat-bid', { auctionId, itemId, sellerId, displaySeconds });
@@ -238,5 +266,5 @@ export const useAuctionSocket = ({
     socketRef.current?.emit('skip-chat-item', { auctionId, itemId, sellerId });
   }, [auctionId]);
 
-  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner, skipChatItem };
+  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner, skipChatItem, startLiveBuyNow, claimBuyNow, pullBuyNow };
 };

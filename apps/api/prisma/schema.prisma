@@ -44,6 +44,7 @@ enum ShopItemStatus {
   AVAILABLE
   QUEUED
   LIVE
+  LIVE_BUYNOW
   SOLD
   CANCELLED
 }
