@@ -3,6 +3,7 @@ import {
   Text,
   TouchableOpacity,
   TextInput,
+  Switch,
   FlatList,
   Alert,
   ScrollView,
@@ -186,6 +187,9 @@ export default function LiveAuctionRoom() {
   const [newAddMode, setNewAddMode] = useState<'queue' | 'now' | 'buynow'>('queue');
   const [showCustomBid, setShowCustomBid] = useState(false);
   const [customBidInput, setCustomBidInput] = useState('');
+  const [maxBidEnabled, setMaxBidEnabled] = useState(false);
+  const [myMaxBid, setMyMaxBid] = useState<number | undefined>(undefined);
+  const [isSubmittingMaxBid, setIsSubmittingMaxBid] = useState(false);
   const [winnerBanner, setWinnerBanner] = useState<string | null>(null);
   const [showLiveOfferModal, setShowLiveOfferModal] = useState(false);
   const [selectedBuyNowItem, setSelectedBuyNowItem] = useState<{ id: string; title: string; price: number; minimumOffer: number } | null>(null);
@@ -342,6 +346,8 @@ export default function LiveAuctionRoom() {
     onItemStarted: useCallback((data: ItemStartedData) => {
       bidStateReceivedRef.current = false;
       pendingBidStateRef.current = null;
+      setMyMaxBid(undefined);
+      setMaxBidEnabled(false);
       // Inject a visual divider so seller knows new item started
       setChatMessages(prev => [...prev, {
         id: `divider-${data.itemId}-${Date.now()}`,
@@ -482,25 +488,34 @@ export default function LiveAuctionRoom() {
 
     onOfferResponded: useCallback((data: { offerId: string; status: string; itemTitle: string; amount: number; buyerName?: string }) => {
       if (data.status === 'ACCEPTED') {
-        if (!isSeller) {
-          setChatMessages(prev => [...prev, {
-            id: `offer-accepted-${data.offerId}-${Date.now()}`,
-            userId: '__system__',
-            displayName: '',
-            message: '',
-            timestamp: Date.now(),
-            type: 'system_offer',
-            itemTitle: data.itemTitle,
-            winnerAmount: data.amount,
-            buyerName: `✅ ${data.buyerName ?? 'Buyer'}`,
-          }]);
+        // Clear live buy now item for all clients if it matches
+        const liveItem = currentItemRef.current;
+        if (liveItem?.mode === 'buynow' && liveItem.title === data.itemTitle) {
+          setCurrentItem(null);
+          setWinnerBanner(null);
+          setSaleToast({ winner: data.buyerName ?? 'Buyer', amount: data.amount, title: data.itemTitle });
+          setTimeout(() => setSaleToast(null), 4000);
         }
+        // Inject accepted message for everyone
+        setChatMessages(prev => [...prev, {
+          id: `offer-accepted-${data.offerId}-${Date.now()}`,
+          userId: '__system__',
+          displayName: '',
+          message: '',
+          timestamp: Date.now(),
+          type: 'system_offer',
+          itemTitle: data.itemTitle,
+          winnerAmount: data.amount,
+          buyerName: `✅ ${data.buyerName ?? 'Buyer'}`,
+        }]);
+        // Refresh auction state so item shows as SOLD
+        void auctionsApi.getById(id).then(setAuction);
         return;
       }
       if (!isSeller) {
         Alert.alert('❌ Offer Declined', `Your offer for ${data.itemTitle} was declined.`);
       }
-    }, [isSeller]),
+    }, [isSeller, id]),
 
     onTimerPaused: useCallback(() => {
       setTimerPaused(true);
@@ -1354,17 +1369,47 @@ export default function LiveAuctionRoom() {
         {!isSeller && (
           currentItem ? (
             currentItem.mode === 'buynow' ? (
-              <View style={{ paddingHorizontal: 16 }}>
-                <SwipeBidButton
-                  label={`Buy Now — ${formatPHP(currentItem.currentPrice)}`}
-                  sublabel="Swipe to buy · first come first served"
-                  color="#10B981"
-                  onBid={() => {
-                    if (claimingBuyNow) return;
-                    setClaimingBuyNow(true);
-                    claimBuyNow(currentItem.itemId, user?.id ?? '', user?.displayName ?? 'Buyer');
+              <View style={{ paddingHorizontal: 16, flexDirection: 'row', gap: 8 }}>
+                {/* Custom / Offer button */}
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: 'rgba(255,255,255,0.08)',
+                    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+                    borderRadius: 14, paddingHorizontal: 14,
+                    alignItems: 'center', justifyContent: 'center',
+                    height: 60,
                   }}
-                />
+                  onPress={() => {
+                    const liveItem = currentItemRef.current;
+                    if (!liveItem) return;
+                    setSelectedBuyNowItem({
+                      id: liveItem.itemId,
+                      title: liveItem.title,
+                      price: liveItem.currentPrice,
+                      minimumOffer: 0,
+                    });
+                    setLiveOfferPercent(-20);
+                    setLiveCustomOffer('');
+                    setShowLiveOfferModal(true);
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 16 }}>💰</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 9, fontWeight: '700', marginTop: 2 }}>OFFER</Text>
+                </TouchableOpacity>
+
+                {/* Swipe to Buy */}
+                <View style={{ flex: 1 }}>
+                  <SwipeBidButton
+                    label={`Buy Now — ${formatPHP(currentItem.currentPrice)}`}
+                    sublabel="Swipe to buy · first come first served"
+                    color="#10B981"
+                    onBid={() => {
+                      if (claimingBuyNow) return;
+                      setClaimingBuyNow(true);
+                      claimBuyNow(currentItem.itemId, user?.id ?? '', user?.displayName ?? 'Buyer');
+                    }}
+                  />
+                </View>
               </View>
             ) : currentItem.mode === 'chat' ? (
               <View style={{
@@ -2606,9 +2651,10 @@ export default function LiveAuctionRoom() {
           <View style={{
             backgroundColor: '#111827',
             borderTopLeftRadius: 24, borderTopRightRadius: 24,
-            padding: 24, paddingBottom: 48,
+            padding: 24, paddingBottom: insets.bottom + 24,
           }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>Custom Bid</Text>
               <TouchableOpacity onPress={() => setShowCustomBid(false)}>
                 <Text style={{ color: '#6B7280', fontSize: 16 }}>✕</Text>
@@ -2616,32 +2662,148 @@ export default function LiveAuctionRoom() {
             </View>
             {currentItem && (
               <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 20 }}>
-                Current: {formatPHP(currentItem.currentPrice)} · Min bid: {formatPHP(currentItem.totalBids === 0 ? currentItem.currentPrice : currentItem.currentPrice + getBidIncrement(currentItem.currentPrice))}
+                Current: {formatPHP(currentItem.currentPrice)} · Min bid: {formatPHP(
+                  currentItem.totalBids === 0
+                    ? currentItem.currentPrice
+                    : currentItem.currentPrice + getBidIncrement(currentItem.currentPrice)
+                )}
               </Text>
             )}
+
+            {/* ── Max Bid toggle section ── */}
+            <View style={{
+              backgroundColor: '#1F2937', borderRadius: 14,
+              borderWidth: 1, borderColor: maxBidEnabled ? '#1A56DB' : '#374151',
+              padding: 14, marginBottom: 16,
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: maxBidEnabled ? 12 : 0 }}>
+                <View style={{ flex: 1, marginRight: 12 }}>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Max Bid</Text>
+                  <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2, lineHeight: 16 }}>
+                    System auto-bids for you up to your limit. Hidden from others.
+                  </Text>
+                </View>
+                <Switch
+                  value={maxBidEnabled}
+                  onValueChange={(v) => {
+                    setMaxBidEnabled(v);
+                    if (!v) setCustomBidInput('');
+                  }}
+                  trackColor={{ false: '#374151', true: '#1A56DB' }}
+                  thumbColor="#fff"
+                />
+              </View>
+
+              {maxBidEnabled && (
+                <>
+                  <View style={{
+                    backgroundColor: '#111827', borderRadius: 10,
+                    borderWidth: 1, borderColor: customBidInput ? '#1A56DB' : '#2D3748',
+                    flexDirection: 'row', alignItems: 'center',
+                    paddingHorizontal: 12, marginBottom: 8,
+                  }}>
+                    <Text style={{ color: '#6B7280', fontSize: 18, marginRight: 6 }}>₱</Text>
+                    <TextInput
+                      style={{ flex: 1, color: '#fff', fontSize: 20, fontWeight: '700', paddingVertical: 12 }}
+                      placeholder={myMaxBid ? `Current max: ${formatPHP(myMaxBid)}` : 'Enter max amount'}
+                      placeholderTextColor="#4B5563"
+                      value={customBidInput}
+                      onChangeText={t => setCustomBidInput(t.replace(/[^0-9]/g, ''))}
+                      keyboardType="numeric"
+                      autoFocus={maxBidEnabled}
+                    />
+                  </View>
+                  {myMaxBid && (
+                    <Text style={{ color: '#6B7280', fontSize: 11 }}>
+                      Current max: {formatPHP(myMaxBid)} — you can only raise it
+                    </Text>
+                  )}
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: customBidInput && !isSubmittingMaxBid ? '#1A56DB' : '#374151',
+                      borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 10,
+                    }}
+                    disabled={!customBidInput || isSubmittingMaxBid}
+                    onPress={async () => {
+                      const latest = currentItemRef.current;
+                      if (!latest || !customBidInput || !user?.id) return;
+                      const amount = parseInt(customBidInput) * 100;
+                      const minAmount = latest.totalBids === 0
+                        ? latest.currentPrice
+                        : latest.currentPrice + getBidIncrement(latest.currentPrice);
+                      if (amount < minAmount) {
+                        Alert.alert('Too low', `Min bid is ${formatPHP(minAmount)}`);
+                        return;
+                      }
+                      if (myMaxBid && amount <= myMaxBid) {
+                        Alert.alert('Too low', `Must be higher than current max ${formatPHP(myMaxBid)}`);
+                        return;
+                      }
+                      setIsSubmittingMaxBid(true);
+                      try {
+                        const { apiClient } = await import('../../../src/services/api/client');
+                        await apiClient.post('/max-bids', {
+                          auctionId: id,
+                          itemId: latest.itemId,
+                          amount,
+                        });
+                        setMyMaxBid(amount);
+                        setCustomBidInput('');
+                        setShowCustomBid(false);
+                      } catch (e: any) {
+                        Alert.alert('Error', e?.response?.data?.message ?? 'Failed to set max bid');
+                      } finally {
+                        setIsSubmittingMaxBid(false);
+                      }
+                    }}
+                  >
+                    {isSubmittingMaxBid
+                      ? <ActivityIndicator color="#fff" size="small" />
+                      : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                          Set Max Bid{customBidInput ? ` — ${formatPHP(parseInt(customBidInput) * 100)}` : ''}
+                        </Text>
+                    }
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+
+            {/* ── Divider ── */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 10 }}>
+              <View style={{ flex: 1, height: 1, backgroundColor: '#1F2937' }} />
+              <Text style={{ color: '#4B5563', fontSize: 11, fontWeight: '600' }}>OR BID MANUALLY</Text>
+              <View style={{ flex: 1, height: 1, backgroundColor: '#1F2937' }} />
+            </View>
+
+            {/* ── Direct bid input ── */}
             <View style={{
               backgroundColor: '#1F2937', borderRadius: 12,
-              borderWidth: 1, borderColor: customBidInput ? '#1A56DB' : '#374151',
+              borderWidth: 1, borderColor: !maxBidEnabled && customBidInput ? '#1A56DB' : '#374151',
               flexDirection: 'row', alignItems: 'center',
               paddingHorizontal: 14, marginBottom: 20,
+              opacity: maxBidEnabled ? 0.4 : 1,
             }}>
               <Text style={{ color: '#6B7280', fontSize: 18, marginRight: 8 }}>₱</Text>
               <TextInput
                 style={{ flex: 1, color: '#fff', fontSize: 22, fontWeight: '700', paddingVertical: 14 }}
                 placeholder="0"
                 placeholderTextColor="#4B5563"
-                value={customBidInput}
-                onChangeText={t => setCustomBidInput(t.replace(/[^0-9]/g, ''))}
+                value={maxBidEnabled ? '' : customBidInput}
+                onChangeText={t => { if (!maxBidEnabled) setCustomBidInput(t.replace(/[^0-9]/g, '')); }}
                 keyboardType="numeric"
-                autoFocus
+                autoFocus={!maxBidEnabled}
+                editable={!maxBidEnabled}
               />
             </View>
+
             <TouchableOpacity
               style={{
-                backgroundColor: customBidInput ? '#1A56DB' : '#374151',
+                backgroundColor: !maxBidEnabled && customBidInput ? '#1A56DB' : '#374151',
                 borderRadius: 14, paddingVertical: 16, alignItems: 'center',
+                opacity: maxBidEnabled ? 0.4 : 1,
               }}
               onPress={() => {
+                if (maxBidEnabled) return;
                 const latest = currentItemRef.current;
                 if (!latest || !customBidInput) return;
                 const amount = parseInt(customBidInput) * 100;
@@ -2652,8 +2814,6 @@ export default function LiveAuctionRoom() {
                   Alert.alert('Bid too low', `Minimum bid is ${formatPHP(minBid)}`);
                   return;
                 }
-
-                // Optimistic update
                 setCurrentItem(prev => prev ? {
                   ...prev,
                   currentPrice: amount,
@@ -2664,14 +2824,13 @@ export default function LiveAuctionRoom() {
                 if (timerRemaining !== null && timerRemaining <= counterbidSeconds + 1) {
                   setTimerRemaining(counterbidSeconds);
                 }
-
                 placeBid(latest.itemId, amount, user?.id ?? '');
                 setShowCustomBid(false);
               }}
-              disabled={!customBidInput}
+              disabled={maxBidEnabled || !customBidInput}
             >
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
-                Place Bid — {customBidInput ? formatPHP(parseInt(customBidInput) * 100) : '₱0'}
+                Place Bid — {!maxBidEnabled && customBidInput ? formatPHP(parseInt(customBidInput) * 100) : '₱0'}
               </Text>
             </TouchableOpacity>
           </View>

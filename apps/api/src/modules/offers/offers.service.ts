@@ -29,7 +29,7 @@ export class OffersService {
       throw new BadRequestException('Offers can only be made on Buy Now items');
     }
 
-    if (item.status !== ShopItemStatus.AVAILABLE) {
+    if (item.status !== ShopItemStatus.AVAILABLE && item.status !== ShopItemStatus.LIVE_BUYNOW) {
       throw new BadRequestException('This item is not available for offers');
     }
 

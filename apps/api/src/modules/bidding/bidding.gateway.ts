@@ -12,6 +12,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { BiddingService } from './bidding.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MaxBidsService } from '../max-bids/max-bids.service';
 
 interface PlaceBidPayload {
   auctionId: string;
@@ -22,6 +23,7 @@ interface PlaceBidPayload {
 interface JoinAuctionPayload {
   auctionId: string;
   sellerId?: string;
+  userId?: string;
 }
 
 interface StartItemPayload {
@@ -102,10 +104,12 @@ export class BiddingGateway
   private lastBidTime = new Map<string, number>();
   private sellerSockets = new Map<string, Set<string>>();
   private socketToAuction = new Map<string, string>();
+  private userSocketMap = new Map<string, string>();
 
   constructor(
     private readonly biddingService: BiddingService,
     private readonly prisma: PrismaService,
+    private readonly maxBidsService: MaxBidsService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -118,6 +122,7 @@ export class BiddingGateway
     const auctionId = this.socketToAuction.get(client.id);
     if (auctionId) {
       this.socketToAuction.delete(client.id);
+      for (const [uid, sid] of this.userSocketMap.entries()) { if (sid === client.id) { this.userSocketMap.delete(uid); break; } }
       const sellerSet = this.sellerSockets.get(auctionId);
       if (sellerSet) {
         sellerSet.delete(client.id);
@@ -180,6 +185,7 @@ export class BiddingGateway
         }
         this.sellerSockets.get(payload.auctionId)!.add(client.id);
         this.socketToAuction.set(client.id, payload.auctionId);
+        if (payload.userId) this.userSocketMap.set(payload.userId, client.id);
         this.logger.log(
           `Seller socket tracked: ${client.id} for auction ${payload.auctionId} (total: ${this.sellerSockets.get(payload.auctionId)!.size})`,
         );
@@ -362,6 +368,7 @@ export class BiddingGateway
         amount: result.amount,
         timestamp: result.timestamp,
       });
+      await this.resolveProxyBids(payload.auctionId, payload.itemId, payload.amount, payload.bidderId);
 
       return result;
     } catch (error) {
@@ -824,6 +831,7 @@ export class BiddingGateway
       });
       if (!auction) return;
 
+      await this.maxBidsService.deactivateForItem(itemId);
       const result = await this.biddingService.endItemBidding(
         auction.sellerId,
         auctionId,
@@ -955,4 +963,72 @@ export class BiddingGateway
     this.server.to(`auction:${auctionId}`).emit('buynow-pulled', { itemId });
     this.logger.log(`Buy Now pulled back: ${itemId}`);
   }
+
+  private emitToUser(userId: string, event: string, data: unknown) {
+    const socketId = this.userSocketMap.get(userId);
+    if (socketId) this.server.to(socketId).emit(event, data);
+  }
+
+  private async resolveProxyBids(
+    auctionId: string,
+    itemId: string,
+    incomingAmount: number,
+    incomingUserId: string,
+  ): Promise<void> {
+    const item = await this.prisma.shopItem.findUnique({
+      where: { id: itemId },
+      select: { price: true, status: true },
+    });
+    if (!item || item.status !== 'LIVE') return;
+
+    const increment = 5000; // fixed increment — minIncrement not on ShopItem
+    const activeMaxBids = await this.maxBidsService.getActiveForItem(itemId);
+    if (activeMaxBids.length === 0) return;
+
+    const [topProxy, secondProxy] = activeMaxBids;
+    if (!topProxy) return;
+
+    if (secondProxy) {
+      const finalPrice = Math.min(topProxy.amount, secondProxy.amount + increment);
+      await this.prisma.shopItem.update({ where: { id: itemId }, data: { price: finalPrice } });
+      this.emitToUser(topProxy.userId, 'max-bid-triggered', { itemId, newPrice: finalPrice, yourMax: topProxy.amount });
+      this.emitToUser(secondProxy.userId, 'max-bid-exceeded', { itemId, newPrice: finalPrice, yourMax: secondProxy.amount });
+      this.emitToAuction(auctionId, 'bid-update', { itemId, currentPrice: finalPrice, winnerId: topProxy.userId, bidType: 'proxy' });
+      return;
+    }
+
+    if (topProxy.userId === incomingUserId) return;
+
+    if (incomingAmount >= topProxy.amount) {
+      await this.maxBidsService.deactivateForItem(itemId);
+      this.emitToUser(topProxy.userId, 'max-bid-exceeded', { itemId, newPrice: incomingAmount, yourMax: topProxy.amount });
+      return;
+    }
+
+    const counterPrice = Math.min(incomingAmount + increment, topProxy.amount);
+    await this.prisma.shopItem.update({ where: { id: itemId }, data: { price: counterPrice } });
+    this.emitToUser(topProxy.userId, 'max-bid-triggered', { itemId, newPrice: counterPrice, yourMax: topProxy.amount });
+    this.emitToAuction(auctionId, 'bid-update', { itemId, currentPrice: counterPrice, winnerId: topProxy.userId, bidType: 'proxy' });
+  }
+
+  @SubscribeMessage('set-max-bid')
+  async handleSetMaxBid(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { auctionId: string; itemId: string; amount: number; userId: string },
+  ) {
+    try {
+      const maxBid = await this.maxBidsService.upsert(payload.userId, {
+        auctionId: payload.auctionId,
+        itemId: payload.itemId,
+        amount: payload.amount,
+      });
+      client.emit('max-bid-confirmed', { itemId: payload.itemId, amount: maxBid.amount });
+      const item = await this.prisma.shopItem.findUnique({ where: { id: payload.itemId }, select: { price: true } });
+      if (item) await this.resolveProxyBids(payload.auctionId, payload.itemId, item.price ?? 0, payload.userId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Max bid failed';
+      client.emit('bid-error', { message });
+    }
+  }
+
 }

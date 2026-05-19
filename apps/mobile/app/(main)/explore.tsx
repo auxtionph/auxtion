@@ -51,6 +51,7 @@ export default function ExploreScreen() {
   const [recentSearches, setRecentSearches] = useState<string[]>([
     'Sneakers', 'Jordan', 'Nike', 'Vintage',
   ]);
+  const userSuggestionCacheRef = useRef<Map<string, UserResult[]>>(new Map());
 
   const doSearch = useCallback(async (q: string) => {
     if (!q.trim()) return;
@@ -83,22 +84,28 @@ export default function ExploreScreen() {
   const fetchSuggestions = useCallback(async (q: string) => {
     if (!q.trim()) { setSuggestions([]); return; }
     try {
-      // Only fetch feed if not cached
       if (feedCacheRef.current.length === 0) {
         const auctionRes = await apiClient.get('/auctions/feed');
         feedCacheRef.current = auctionRes.data.data as AuctionFeedItem[];
       }
 
-      const [userRes] = await Promise.all([
-        apiClient.get(`/users?search=${encodeURIComponent(q)}`).catch(() => ({ data: { data: [] } })),
-      ]);
+      // Use cache if available, otherwise fetch and cache
+      let fetchedUsers: UserResult[];
+      if (userSuggestionCacheRef.current.has(q)) {
+        fetchedUsers = userSuggestionCacheRef.current.get(q)!;
+      } else {
+        const userRes = await apiClient.get(`/users?search=${encodeURIComponent(q)}`)
+          .catch(() => ({ data: { data: [] } }));
+        fetchedUsers = userRes.data.data as UserResult[];
+        userSuggestionCacheRef.current.set(q, fetchedUsers);
+      }
 
       const matchedAuctions = feedCacheRef.current
         .filter(a => a.title.toLowerCase().includes(q.toLowerCase()))
         .slice(0, 2)
         .map(a => ({ type: 'query' as const, label: a.title, sublabel: 'in Shows' }));
 
-      const matchedUsers = (userRes.data.data as UserResult[])
+      const matchedUsers = fetchedUsers
         .slice(0, 3)
         .map(u => ({
           type: 'seller' as const,
@@ -182,9 +189,12 @@ export default function ExploreScreen() {
                 return;
               }
               // Wait 300ms after user stops typing
-              debounceRef.current = setTimeout(() => {
-                void fetchSuggestions(q);
-              }, 300);
+              // Only search if at least 2 characters typed
+              if (q.trim().length >= 2) {
+                debounceRef.current = setTimeout(() => {
+                  void fetchSuggestions(q);
+                }, 400); // slightly longer for users query
+              }
             }}
             onFocus={() => setIsFocused(true)}
             onSubmitEditing={() => {

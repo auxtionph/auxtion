@@ -127,6 +127,7 @@ model User {
   buyerOrders       Order[]            @relation("BuyerOrders")
   sellerOrders      Order[]            @relation("SellerOrders")
   itemNotifications ItemNotification[]
+  maxBids   MaxBid[]
 
   @@map("users")
 }
@@ -167,6 +168,7 @@ model Auction {
   shopItems ShopItem[]
   bids      Bid[]
   chatMessages AuctionChatMessage[]
+  maxBids   MaxBid[]
 
   @@map("auctions")
 }
@@ -194,6 +196,7 @@ model ShopItem {
   offers            Offer[]
   orders            Order[]
   itemNotifications ItemNotification[]
+  maxBids   MaxBid[]
 
   @@map("shop_items")
 }
@@ -321,4 +324,23 @@ model AuctionChatMessage {
 
   @@index([auctionId, createdAt])
   @@map("auction_chat_messages")
+}
+
+model MaxBid {
+  id        String   @id @default(cuid())
+  auctionId String
+  itemId    String
+  userId    String
+  amount    Int
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  auction   Auction  @relation(fields: [auctionId], references: [id])
+  item      ShopItem @relation(fields: [itemId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([itemId, userId])
+  @@index([itemId, isActive])
+  @@index([userId])
 }

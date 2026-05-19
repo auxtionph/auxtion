@@ -14,6 +14,7 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { SchedulerModule } from './modules/scheduler/scheduler.module';
 import { StreamingModule } from './modules/streaming/streaming.module';
+import { MaxBidsModule } from './modules/max-bids/max-bids.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { StreamingModule } from './modules/streaming/streaming.module';
     PaymentsModule,
     SchedulerModule,
     StreamingModule,
+    MaxBidsModule,
   ],
 })
 export class AppModule {}
