@@ -105,6 +105,11 @@ export class BiddingGateway
   private sellerSockets = new Map<string, Set<string>>();
   private socketToAuction = new Map<string, string>();
   private userSocketMap = new Map<string, string>();
+  private auctionViewers = new Map<string, Set<string>>();
+  private socketToViewer = new Map<
+    string,
+    { auctionId: string; viewerId: string }
+  >();
 
   constructor(
     private readonly biddingService: BiddingService,
@@ -122,7 +127,12 @@ export class BiddingGateway
     const auctionId = this.socketToAuction.get(client.id);
     if (auctionId) {
       this.socketToAuction.delete(client.id);
-      for (const [uid, sid] of this.userSocketMap.entries()) { if (sid === client.id) { this.userSocketMap.delete(uid); break; } }
+      for (const [uid, sid] of this.userSocketMap.entries()) {
+        if (sid === client.id) {
+          this.userSocketMap.delete(uid);
+          break;
+        }
+      }
       const sellerSet = this.sellerSockets.get(auctionId);
       if (sellerSet) {
         sellerSet.delete(client.id);
@@ -154,12 +164,20 @@ export class BiddingGateway
       }
     }
 
-    client.rooms.forEach((room) => {
-      if (room.startsWith('auction:')) {
-        const aid = room.replace('auction:', '');
-        void this.broadcastViewerCount(aid);
-      }
-    });
+    const viewerInfo = this.socketToViewer.get(client.id);
+    if (viewerInfo) {
+      const { auctionId, viewerId } = viewerInfo;
+      this.auctionViewers.get(auctionId)?.delete(viewerId);
+      this.socketToViewer.delete(client.id);
+      this.broadcastViewerCount(auctionId);
+    } else {
+      client.rooms.forEach((room) => {
+        if (room.startsWith('auction:')) {
+          const aid = room.replace('auction:', '');
+          this.broadcastViewerCount(aid);
+        }
+      });
+    }
   }
 
   @SubscribeMessage('join-auction')
@@ -192,7 +210,20 @@ export class BiddingGateway
       }
     }
 
-    await this.broadcastViewerCount(payload.auctionId);
+    // ── Viewer dedup ──────────────────────────────────────────
+    const isSeller = auction?.sellerId === payload.sellerId;
+    if (!isSeller) {
+      if (!this.auctionViewers.has(payload.auctionId)) {
+        this.auctionViewers.set(payload.auctionId, new Set());
+      }
+      const viewerId = payload.userId ?? client.id;
+      this.auctionViewers.get(payload.auctionId)!.add(viewerId);
+      this.socketToViewer.set(client.id, {
+        auctionId: payload.auctionId,
+        viewerId,
+      });
+    }
+    this.broadcastViewerCount(payload.auctionId);
 
     try {
       const activeItem = [...this.timerState.values()].find(
@@ -248,7 +279,14 @@ export class BiddingGateway
   ) {
     const room = `auction:${payload.auctionId}`;
     await client.leave(room);
-    await this.broadcastViewerCount(payload.auctionId);
+    const viewerInfo = this.socketToViewer.get(client.id);
+    if (viewerInfo) {
+      this.auctionViewers
+        .get(viewerInfo.auctionId)
+        ?.delete(viewerInfo.viewerId);
+      this.socketToViewer.delete(client.id);
+    }
+    this.broadcastViewerCount(payload.auctionId);
     return { event: 'left', room };
   }
 
@@ -368,7 +406,12 @@ export class BiddingGateway
         amount: result.amount,
         timestamp: result.timestamp,
       });
-      await this.resolveProxyBids(payload.auctionId, payload.itemId, payload.amount, payload.bidderId);
+      await this.resolveProxyBids(
+        payload.auctionId,
+        payload.itemId,
+        payload.amount,
+        payload.bidderId,
+      );
 
       return result;
     } catch (error) {
@@ -734,6 +777,8 @@ export class BiddingGateway
       data: { status: 'QUEUED' },
     });
 
+    this.auctionViewers.delete(payload.auctionId);
+
     this.server.to(`auction:${payload.auctionId}`).emit('auction-ended', {
       auctionId: payload.auctionId,
       timestamp: Date.now(),
@@ -872,9 +917,8 @@ export class BiddingGateway
     this.timerState.delete(itemId);
   }
 
-  private async broadcastViewerCount(auctionId: string) {
-    const sockets = await this.server.in(`auction:${auctionId}`).fetchSockets();
-    const count = sockets.length;
+  private broadcastViewerCount(auctionId: string) {
+    const count = this.auctionViewers.get(auctionId)?.size ?? 0;
     this.server.to(`auction:${auctionId}`).emit('viewer-count', { count });
   }
 
@@ -989,11 +1033,30 @@ export class BiddingGateway
     if (!topProxy) return;
 
     if (secondProxy) {
-      const finalPrice = Math.min(topProxy.amount, secondProxy.amount + increment);
-      await this.prisma.shopItem.update({ where: { id: itemId }, data: { price: finalPrice } });
-      this.emitToUser(topProxy.userId, 'max-bid-triggered', { itemId, newPrice: finalPrice, yourMax: topProxy.amount });
-      this.emitToUser(secondProxy.userId, 'max-bid-exceeded', { itemId, newPrice: finalPrice, yourMax: secondProxy.amount });
-      this.emitToAuction(auctionId, 'bid-update', { itemId, currentPrice: finalPrice, winnerId: topProxy.userId, bidType: 'proxy' });
+      const finalPrice = Math.min(
+        topProxy.amount,
+        secondProxy.amount + increment,
+      );
+      await this.prisma.shopItem.update({
+        where: { id: itemId },
+        data: { price: finalPrice },
+      });
+      this.emitToUser(topProxy.userId, 'max-bid-triggered', {
+        itemId,
+        newPrice: finalPrice,
+        yourMax: topProxy.amount,
+      });
+      this.emitToUser(secondProxy.userId, 'max-bid-exceeded', {
+        itemId,
+        newPrice: finalPrice,
+        yourMax: secondProxy.amount,
+      });
+      this.emitToAuction(auctionId, 'bid-update', {
+        itemId,
+        currentPrice: finalPrice,
+        winnerId: topProxy.userId,
+        bidType: 'proxy',
+      });
       return;
     }
 
@@ -1001,20 +1064,42 @@ export class BiddingGateway
 
     if (incomingAmount >= topProxy.amount) {
       await this.maxBidsService.deactivateForItem(itemId);
-      this.emitToUser(topProxy.userId, 'max-bid-exceeded', { itemId, newPrice: incomingAmount, yourMax: topProxy.amount });
+      this.emitToUser(topProxy.userId, 'max-bid-exceeded', {
+        itemId,
+        newPrice: incomingAmount,
+        yourMax: topProxy.amount,
+      });
       return;
     }
 
     const counterPrice = Math.min(incomingAmount + increment, topProxy.amount);
-    await this.prisma.shopItem.update({ where: { id: itemId }, data: { price: counterPrice } });
-    this.emitToUser(topProxy.userId, 'max-bid-triggered', { itemId, newPrice: counterPrice, yourMax: topProxy.amount });
-    this.emitToAuction(auctionId, 'bid-update', { itemId, currentPrice: counterPrice, winnerId: topProxy.userId, bidType: 'proxy' });
+    await this.prisma.shopItem.update({
+      where: { id: itemId },
+      data: { price: counterPrice },
+    });
+    this.emitToUser(topProxy.userId, 'max-bid-triggered', {
+      itemId,
+      newPrice: counterPrice,
+      yourMax: topProxy.amount,
+    });
+    this.emitToAuction(auctionId, 'bid-update', {
+      itemId,
+      currentPrice: counterPrice,
+      winnerId: topProxy.userId,
+      bidType: 'proxy',
+    });
   }
 
   @SubscribeMessage('set-max-bid')
   async handleSetMaxBid(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { auctionId: string; itemId: string; amount: number; userId: string },
+    @MessageBody()
+    payload: {
+      auctionId: string;
+      itemId: string;
+      amount: number;
+      userId: string;
+    },
   ) {
     try {
       const maxBid = await this.maxBidsService.upsert(payload.userId, {
@@ -1022,13 +1107,24 @@ export class BiddingGateway
         itemId: payload.itemId,
         amount: payload.amount,
       });
-      client.emit('max-bid-confirmed', { itemId: payload.itemId, amount: maxBid.amount });
-      const item = await this.prisma.shopItem.findUnique({ where: { id: payload.itemId }, select: { price: true } });
-      if (item) await this.resolveProxyBids(payload.auctionId, payload.itemId, item.price ?? 0, payload.userId);
+      client.emit('max-bid-confirmed', {
+        itemId: payload.itemId,
+        amount: maxBid.amount,
+      });
+      const item = await this.prisma.shopItem.findUnique({
+        where: { id: payload.itemId },
+        select: { price: true },
+      });
+      if (item)
+        await this.resolveProxyBids(
+          payload.auctionId,
+          payload.itemId,
+          item.price ?? 0,
+          payload.userId,
+        );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Max bid failed';
       client.emit('bid-error', { message });
     }
   }
-
 }
