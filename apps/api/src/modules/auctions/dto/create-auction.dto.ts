@@ -1,4 +1,11 @@
-import { IsString, IsDateString, MinLength, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsDateString,
+  IsOptional,
+  IsUrl,
+  MinLength,
+  MaxLength,
+} from 'class-validator';
 
 export class CreateAuctionDto {
   @IsString()
@@ -8,4 +15,8 @@ export class CreateAuctionDto {
 
   @IsDateString()
   startTime!: string;
+
+  @IsOptional()
+  @IsString()
+  coverImageUrl?: string;
 }

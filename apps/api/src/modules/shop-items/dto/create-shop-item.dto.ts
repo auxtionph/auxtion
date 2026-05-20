@@ -7,8 +7,27 @@ import {
   MaxLength,
   Min,
   IsArray,
+  ValidateNested,
+  IsNumber,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ShopItemType } from '@prisma/client';
+
+export class PhotoDto {
+  @IsString()
+  url: string;
+
+  @IsString()
+  publicId: string;
+
+  @IsOptional()
+  @IsNumber()
+  width?: number;
+
+  @IsOptional()
+  @IsNumber()
+  height?: number;
+}
 
 export class CreateShopItemDto {
   @IsString()
@@ -21,9 +40,11 @@ export class CreateShopItemDto {
   @MaxLength(1000)
   description: string;
 
+  @IsOptional()
   @IsArray()
-  @IsString({ each: true })
-  photos: string[];
+  @ValidateNested({ each: true })
+  @Type(() => PhotoDto)
+  photos?: PhotoDto[];
 
   @IsInt()
   @Min(1)

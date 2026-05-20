@@ -36,7 +36,7 @@ function AuctionCard({ item, onPress, wide = false }: {
   onPress: () => void;
   wide?: boolean;
 }) {
-  const firstPhoto = item.shopItems[0]?.photos?.[0];
+  const coverImage = item.coverImageUrl ?? null;
   const lowestPrice = item.shopItems.length > 0
     ? Math.min(...item.shopItems.map(i => i.price))
     : 0;
@@ -59,10 +59,16 @@ function AuctionCard({ item, onPress, wide = false }: {
       activeOpacity={0.8}
     >
       <View style={{ width: '100%', height: imageHeight, backgroundColor: '#374151', alignItems: 'center', justifyContent: 'center' }}>
-        {firstPhoto ? (
-          <Image source={{ uri: firstPhoto }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+        {coverImage ? (
+          <Image source={{ uri: coverImage }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+        ) : item.seller.avatarUrl ? (
+          <Image
+            source={{ uri: item.seller.avatarUrl }}
+            style={{ width: wide ? 64 : 44, height: wide ? 64 : 44, borderRadius: wide ? 32 : 22 }}
+            resizeMode="cover"
+          />
         ) : (
-          <Text style={{ fontSize: wide ? 48 : 32 }}>📦</Text>
+          <Text style={{ fontSize: wide ? 48 : 32 }}>🏷️</Text>
         )}
         <View style={{ position: 'absolute', top: 8, left: 8 }}>
           {isLive && <LiveBadge />}

@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { useState, useEffect } from 'react';
 import { auctionsApi } from '../../src/services/api/auctions.api';
 import { useAuthStore } from '../../src/stores/auth.store';
+import { AuctionCoverSlot } from '../../src/components/AuctionCoverSlot';
 
 export default function CreateAuctionScreen() {
   const router = useRouter();
@@ -28,6 +29,9 @@ export default function CreateAuctionScreen() {
   });
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
+
+  const [coverImageUrl, setCoverImageUrl] = useState('');
+  const [isCoverUploading, setIsCoverUploading] = useState(false);
 
   const isValid = title.trim().length >= 2;
   const isPast = scheduledDate < new Date();
@@ -49,6 +53,7 @@ export default function CreateAuctionScreen() {
       const auction = await auctionsApi.create({
         title: title.trim(),
         startTime: scheduledDate.toISOString(),
+        coverImageUrl: coverImageUrl || undefined,
       });
       router.replace(`/auction/${auction.id}`);
     } catch (e) {
@@ -91,11 +96,11 @@ export default function CreateAuctionScreen() {
         </Text>
         <TouchableOpacity
           style={{
-            backgroundColor: isValid && !saving && !isPast && !isSlotTaken(scheduledDate.getHours(), scheduledDate.getMinutes()) ? '#1A56DB' : '#374151',
+            backgroundColor: isValid && !saving && !isPast && !isCoverUploading && !isSlotTaken(scheduledDate.getHours(), scheduledDate.getMinutes()) ? '#1A56DB' : '#374151',
             borderRadius: 999, paddingHorizontal: 16, paddingVertical: 8,
           }}
           onPress={() => void handleCreate()}
-          disabled={!isValid || saving || isPast || isSlotTaken(scheduledDate.getHours(), scheduledDate.getMinutes())}
+          disabled={!isValid || saving || isPast || isCoverUploading || isSlotTaken(scheduledDate.getHours(), scheduledDate.getMinutes())}
         >
           {saving ? (
             <ActivityIndicator size="small" color="#fff" />
@@ -136,13 +141,27 @@ export default function CreateAuctionScreen() {
           </View>
         </View>
 
-        {/* Schedule */}
-        <Text style={{
-          color: '#9CA3AF', fontSize: 12, fontWeight: '600',
-          marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5,
-        }}>
-          Scheduled Start *
-        </Text>
+        {/* Cover Photo */}
+          <View style={{ marginBottom: 24 }}>
+            <Text style={{
+              color: '#9CA3AF', fontSize: 12, fontWeight: '600',
+              marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5,
+            }}>
+              Cover Photo
+            </Text>
+            <AuctionCoverSlot
+              onUploaded={setCoverImageUrl}
+              onUploadingChange={setIsCoverUploading}
+            />
+          </View>
+
+          {/* Schedule */}
+          <Text style={{
+            color: '#9CA3AF', fontSize: 12, fontWeight: '600',
+            marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5,
+          }}>
+            Scheduled Start *
+          </Text>
 
         {/* Date picker row */}
         <TouchableOpacity

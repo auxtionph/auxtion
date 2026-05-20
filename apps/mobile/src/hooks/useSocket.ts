@@ -25,7 +25,7 @@ interface ItemStarted {
   itemId: string;
   title: string;
   currentPrice: number;
-  photos: string[];
+  photos: { url: string }[];
 }
 
 interface ItemEnded {
@@ -65,7 +65,7 @@ interface UseSocketOptions {
   onOfferResponded?: (data: { offerId: string; status: string; itemTitle: string; amount: number; buyerName?: string }) => void;
   onTimerPaused?: (data: { itemId: string; remaining: number; reason: string }) => void;
   onTimerResumed?: (data: { itemId: string; remaining: number }) => void;
-  onLiveBuyNowStarted?: (data: { itemId: string; title: string; price: number; photos: string[] }) => void;
+  onLiveBuyNowStarted?: (data: { itemId: string; title: string; price: number; photos: { url: string }[] }) => void;
   onBuyNowClaimed?: (data: { itemId: string; title: string; price: number; buyerId: string; buyerName: string }) => void;
   onBuyNowPulled?: (data: { itemId: string }) => void;
   onBuyNowClaimFailed?: (data: { itemId: string; reason: string }) => void;

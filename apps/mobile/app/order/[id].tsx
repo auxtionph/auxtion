@@ -26,7 +26,7 @@ interface OrderDetail {
     id: string;
     title: string;
     description: string;
-    photos: string[];
+    photos: { url: string; publicId: string; width?: number; height?: number }[];
   };
   seller: {
     id: string;

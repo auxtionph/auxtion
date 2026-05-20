@@ -1,25 +1,34 @@
 import { apiClient } from './client';
 
+export interface ShopItemPhoto {
+  url: string;
+  publicId: string;
+  width?: number;
+  height?: number;
+}
+
 export interface ShopItem {
   id: string;
   sellerId: string;
   auctionId: string | null;
   title: string;
   description: string;
-  photos: string[];
+  photos: ShopItemPhoto[];
   price: number;
   minimumOffer: number;
   type: 'AUCTION' | 'BUY_NOW' | 'GIVEAWAY';
-  status: 'AVAILABLE' | 'QUEUED' | 'LIVE' | 'SOLD' | 'CANCELLED';
+  status: 'AVAILABLE' | 'QUEUED' | 'LIVE' | 'LIVE_BUYNOW' | 'SOLD' | 'CANCELLED';
   queueOrder: number | null;
+  originalPrice: number;
+  mode: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface CreateShopItemPayload {
   title: string;
-  description: string;
-  photos: string[];
+  description?: string;
+  photos?: ShopItemPhoto[];
   price: number;
   type?: 'AUCTION' | 'BUY_NOW' | 'GIVEAWAY';
   auctionId?: string;
@@ -29,7 +38,7 @@ export interface CreateShopItemPayload {
 export interface UpdateShopItemPayload {
   title?: string;
   description?: string;
-  photos?: string[];
+  photos?: ShopItemPhoto[];
   price?: number;
   queueOrder?: number;
 }
@@ -63,7 +72,11 @@ export const shopItemsApi = {
     await apiClient.patch('/shop-items/queue/reorder', { itemIds });
   },
 
-  assignToAuction: async (itemId: string, auctionId: string, queueOrder: number): Promise<ShopItem> => {
+  assignToAuction: async (
+    itemId: string,
+    auctionId: string,
+    queueOrder: number,
+  ): Promise<ShopItem> => {
     const response = await apiClient.patch(`/shop-items/${itemId}`, {
       auctionId,
       queueOrder,

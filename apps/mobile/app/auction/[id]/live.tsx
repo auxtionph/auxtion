@@ -16,7 +16,9 @@ import {
   KeyboardAvoidingView,
   Animated,
   PanResponder,
+  LogBox,
 } from 'react-native';
+LogBox.ignoreLogs(['[HMS] ON_ERROR']);
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { auctionsApi, AuctionDetail } from '../../../src/services/api/auctions.api';
@@ -45,7 +47,7 @@ interface CurrentItem {
   itemId: string;
   title: string;
   currentPrice: number;
-  photos: string[];
+  photos: { url: string }[];
   totalBids: number;
   highestBidderName?: string;
   mode: 'auction' | 'chat' | 'buynow';
@@ -72,7 +74,7 @@ interface ItemStartedData {
   itemId: string;
   title: string;
   currentPrice: number;
-  photos: string[];
+  photos: { url: string }[];
 }
 
 interface ItemEndedData {
@@ -218,6 +220,7 @@ export default function LiveAuctionRoom() {
   const [soldSubTab, setSoldSubTab] = useState<'all' | 'auction' | 'chat' | 'buynow'>('all');
   const [soldSort, setSoldSort] = useState<'recent' | 'high' | 'low'>('recent');
   const [buyNowMode, setBuyNowMode] = useState<'shop' | 'live'>('shop');
+  const [shopDetailItem, setShopDetailItem] = useState<AuctionDetail['shopItems'][0] | null>(null);
 
   useEffect(() => {
     currentItemRef.current = currentItem;
@@ -528,7 +531,7 @@ export default function LiveAuctionRoom() {
       setTimerRemaining(data.remaining);
     }, []),
 
-    onLiveBuyNowStarted: useCallback((data: { itemId: string; title: string; price: number; photos: string[] }) => {
+    onLiveBuyNowStarted: useCallback((data: { itemId: string; title: string; price: number; photos: { url: string }[] }) => {
       setChatMessages(prev => [...prev, {
         id: `divider-buynow-${data.itemId}-${Date.now()}`,
         userId: '__system__',
@@ -1286,9 +1289,9 @@ export default function LiveAuctionRoom() {
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
           }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
-              {currentItem.photos[0] && (
+              {currentItem.photos[0]?.url && (
                 <Image
-                  source={{ uri: currentItem.photos[0] }}
+                  source={{ uri: currentItem.photos[0].url }}
                   style={{ width: 40, height: 40, borderRadius: 10 }}
                   resizeMode="cover"
                 />
@@ -1611,7 +1614,7 @@ export default function LiveAuctionRoom() {
         onRequestClose={() => { setShowShop(false); setSoldSubTab('all'); setSoldSort('recent'); }}      >
 
         <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => { setShowShop(false); setSoldSubTab('all'); setSoldSort('recent'); }} />
-        <View style={{
+       <View style={{
           backgroundColor: '#111827',
           borderTopLeftRadius: 24, borderTopRightRadius: 24,
           borderTopWidth: 1, borderColor: '#1F2937',
@@ -1695,9 +1698,14 @@ export default function LiveAuctionRoom() {
               ) : biddingItems.map(item => (
                 <TouchableOpacity
                   key={item.id}
-                  activeOpacity={isSeller && item.status !== 'LIVE' ? 0.7 : 1}
+                  activeOpacity={0.8}
                   onPress={() => {
-                    if (isSeller && item.status !== 'LIVE') {
+                    if (isSeller) {
+                      if (item.status === 'LIVE') {
+                        setShowShop(false);
+                        setTimeout(() => setShopDetailItem(item), 50);
+                        return;
+                      }
                       if (currentItem) {
                         Alert.alert('Item Already Running', 'End or skip the current item before starting a new one.');
                         return;
@@ -1705,14 +1713,16 @@ export default function LiveAuctionRoom() {
                       setEditingQueueItem({ id: item.id, title: item.title, price: item.price });
                       setEditingPrice(String(item.price / 100));
                       setShowShop(false);
+                      return;
                     }
+                    setShowShop(false);
+                    setTimeout(() => setShopDetailItem(item), 50);
                   }}
                   style={{
                     flexDirection: 'row', alignItems: 'center', gap: 12,
                     backgroundColor: '#1F2937', borderRadius: 12,
                     padding: 12, marginBottom: 8,
                     opacity: isSeller && item.status === 'QUEUED' && currentItem ? 0.4 : 1,
-
                   }}
                 >
                   <View style={{
@@ -1720,8 +1730,8 @@ export default function LiveAuctionRoom() {
                     backgroundColor: '#374151', overflow: 'hidden',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
-                    {item.photos[0] ? (
-                      <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    {(item.photos[0] as any)?.url ? (
+                      <Image source={{ uri: (item.photos[0] as any).url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                     ) : (
                       <Text style={{ fontSize: 24 }}>📦</Text>
                     )}
@@ -1733,12 +1743,12 @@ export default function LiveAuctionRoom() {
                     <Text style={{ color: '#F59E0B', fontSize: 12 }}>{formatPHP(item.price)}</Text>
                   </View>
                   {item.status === 'LIVE' && (
-                    <View style={{
-                      backgroundColor: '#DC2626', borderRadius: 999,
-                      paddingHorizontal: 8, paddingVertical: 2,
-                    }}>
+                    <View style={{ backgroundColor: '#DC2626', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
                       <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>NOW</Text>
                     </View>
+                  )}
+                  {!isSeller && (
+                    <Text style={{ color: '#6B7280', fontSize: 11 }}>›</Text>
                   )}
                 </TouchableOpacity>
               ))
@@ -1853,8 +1863,8 @@ export default function LiveAuctionRoom() {
                           backgroundColor: '#374151', overflow: 'hidden',
                           alignItems: 'center', justifyContent: 'center',
                         }}>
-                          {item.photos[0] ? (
-                            <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                          {item.photos[0]?.url ? (
+                            <Image source={{ uri: item.photos[0].url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                           ) : (
                             <Text style={{ fontSize: 24 }}>📦</Text>
                           )}
@@ -2074,8 +2084,13 @@ export default function LiveAuctionRoom() {
                   <Text style={{ color: '#4B5563', fontSize: 13 }}>No buy now items</Text>
                 </View>
               ) : buyNowItems.map(item => (
-                <View
+                <TouchableOpacity
                   key={item.id}
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    setShowShop(false);
+                    setTimeout(() => setShopDetailItem(item), 50);
+                  }}
                   style={{
                     flexDirection: 'row', alignItems: 'center', gap: 12,
                     backgroundColor: '#1F2937', borderRadius: 12,
@@ -2087,8 +2102,8 @@ export default function LiveAuctionRoom() {
                     backgroundColor: '#374151', overflow: 'hidden',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
-                    {item.photos[0] ? (
-                      <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    {item.photos[0]?.url ? (
+                      <Image source={{ uri: item.photos[0].url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                     ) : (
                       <Text style={{ fontSize: 24 }}>📦</Text>
                     )}
@@ -2148,7 +2163,7 @@ export default function LiveAuctionRoom() {
                       </TouchableOpacity>
                     </View>
                   )}
-                </View>
+                </TouchableOpacity>
               ))
             )}
           </ScrollView>
@@ -3355,6 +3370,110 @@ export default function LiveAuctionRoom() {
             </View>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ── Item Detail Sheet ── */}
+      <Modal
+        visible={!!shopDetailItem}
+        transparent={false}
+        animationType="slide"
+        onRequestClose={() => setShopDetailItem(null)}
+      >
+        <View style={{ flex: 1, backgroundColor: '#111827', paddingTop: insets.top }}>
+          {/* Header */}
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 12,
+            paddingHorizontal: 20, paddingVertical: 16,
+            borderBottomWidth: 1, borderColor: '#1F2937',
+          }}>
+            <TouchableOpacity
+              onPress={() => setShopDetailItem(null)}
+              style={{
+                width: 32, height: 32, borderRadius: 16,
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 16 }}>←</Text>
+            </TouchableOpacity>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16, flex: 1 }} numberOfLines={1}>
+              {shopDetailItem?.title}
+            </Text>
+          </View>
+
+          <ScrollView
+            contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 40 }}
+            showsVerticalScrollIndicator={false}
+          >
+            {shopDetailItem && (shopDetailItem.photos as any[]).filter((p: any) => p?.url).length > 0 ? (
+              <View style={{ marginBottom: 20 }}>
+                <ScrollView
+                  horizontal pagingEnabled
+                  showsHorizontalScrollIndicator={false}
+                  decelerationRate="fast"
+                  snapToInterval={SCREEN_WIDTH - 40}
+                >
+                  {(shopDetailItem.photos as any[]).filter((p: any) => p?.url).map((photo: any, i: number) => (
+                    <Image
+                      key={i}
+                      source={{ uri: photo.url }}
+                      style={{ width: SCREEN_WIDTH - 40, height: SCREEN_WIDTH - 40, borderRadius: 16, marginRight: 8, backgroundColor: '#1F2937' }}
+                      resizeMode="cover"
+                    />
+                  ))}
+                </ScrollView>
+                {(shopDetailItem.photos as any[]).filter((p: any) => p?.url).length > 1 && (
+                  <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 6, marginTop: 10 }}>
+                    {(shopDetailItem.photos as any[]).filter((p: any) => p?.url).map((_: any, i: number) => (
+                      <View key={i} style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: i === 0 ? '#fff' : 'rgba(255,255,255,0.3)' }} />
+                    ))}
+                  </View>
+                )}
+              </View>
+            ) : (
+              <View style={{ height: 300, borderRadius: 16, backgroundColor: '#1F2937', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+                <Text style={{ fontSize: 64 }}>📦</Text>
+              </View>
+            )}
+
+            {shopDetailItem?.status === 'LIVE' && (
+              <View style={{ alignSelf: 'flex-start', backgroundColor: '#DC2626', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 12 }}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' }} />
+                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>LIVE NOW — BIDDING OPEN</Text>
+              </View>
+            )}
+
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 22, marginBottom: 8 }}>
+              {shopDetailItem?.title}
+            </Text>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#1F2937', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, marginBottom: 16 }}>
+              <Text style={{ color: '#9CA3AF', fontSize: 13 }}>
+                {shopDetailItem?.type === 'BUY_NOW' ? 'Buy Now price' : 'Starting price'}
+              </Text>
+              <Text style={{ color: shopDetailItem?.type === 'BUY_NOW' ? '#10B981' : '#F59E0B', fontWeight: '800', fontSize: 22 }}>
+                {shopDetailItem ? formatPHP(shopDetailItem.price) : ''}
+              </Text>
+            </View>
+
+            {shopDetailItem && (shopDetailItem as any).description ? (
+              <View style={{ backgroundColor: '#1F2937', borderRadius: 14, padding: 16, marginBottom: 16 }}>
+                <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>Description</Text>
+                <Text style={{ color: '#D1D5DB', fontSize: 14, lineHeight: 22 }}>{(shopDetailItem as any).description}</Text>
+              </View>
+            ) : null}
+
+            <View style={{
+              alignSelf: 'flex-start', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1,
+              backgroundColor: shopDetailItem?.type === 'BUY_NOW' ? 'rgba(16,185,129,0.15)' : 'rgba(26,86,219,0.15)',
+              borderColor: shopDetailItem?.type === 'BUY_NOW' ? 'rgba(16,185,129,0.4)' : 'rgba(26,86,219,0.4)',
+            }}>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: shopDetailItem?.type === 'BUY_NOW' ? '#10B981' : '#60A5FA' }}>
+                {shopDetailItem?.type === 'BUY_NOW' ? '🏷️ Buy Now' : '🔨 Auction Item'}
+              </Text>
+            </View>
+          </ScrollView>
+        </View>
       </Modal>
     </View>
   );

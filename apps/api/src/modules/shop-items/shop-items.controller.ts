@@ -7,10 +7,12 @@ import {
   Body,
   Param,
   Query,
+  Req,
   UseGuards,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { ShopItemsService } from './shop-items.service';
 import { CreateShopItemDto } from './dto/create-shop-item.dto';
 import { UpdateShopItemDto } from './dto/update-shop-item.dto';
@@ -29,10 +31,18 @@ interface AuthUser {
 export class ShopItemsController {
   constructor(private readonly shopItemsService: ShopItemsService) {}
 
-  // Seller creates a new shop item
-  @Post()
-  createItem(@CurrentUser() user: AuthUser, @Body() dto: CreateShopItemDto) {
-    return this.shopItemsService.createItem(user.id, dto);
+  // ── Static routes first (must come before :id routes) ─────────────────────
+
+  // Generate signed Cloudinary upload params — mobile uploads directly to Cloudinary
+  @Get('upload-signature')
+  getUploadSignature(@CurrentUser() user: AuthUser) {
+    return this.shopItemsService.getUploadSignature(user.id);
+  }
+
+  // Seller reorders auction queue
+  @Patch('queue/reorder')
+  reorderQueue(@CurrentUser() user: AuthUser, @Body() dto: ReorderQueueDto) {
+    return this.shopItemsService.reorderQueue(user.id, dto);
   }
 
   // Get a seller's shop — public access
@@ -44,13 +54,20 @@ export class ShopItemsController {
     return this.shopItemsService.getSellerShop(sellerId, type);
   }
 
-  // Get single item
+  // ── Item creation ──────────────────────────────────────────────────────────
+
+  @Post()
+  createItem(@CurrentUser() user: AuthUser, @Body() dto: CreateShopItemDto) {
+    return this.shopItemsService.createItem(user.id, dto);
+  }
+
+  // ── :id routes last ────────────────────────────────────────────────────────
+
   @Get(':id')
   getItemById(@Param('id') id: string) {
     return this.shopItemsService.getItemById(id);
   }
 
-  // Seller updates their item
   @Patch(':id')
   updateItem(
     @CurrentUser() user: AuthUser,
@@ -60,14 +77,12 @@ export class ShopItemsController {
     return this.shopItemsService.updateItem(user.id, id, dto);
   }
 
-  // Seller removes item from shop
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   deleteItem(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.shopItemsService.deleteItem(user.id, id);
   }
 
-  // Seller resets a live item back to queued (after reconnect)
   @Patch(':id/reset')
   @HttpCode(HttpStatus.OK)
   async resetItem(
@@ -77,7 +92,6 @@ export class ShopItemsController {
     return this.shopItemsService.resetItem(user.id, id);
   }
 
-  // Convert Buy Now item to Auction with a new starting price
   @Patch(':id/convert-to-auction')
   @HttpCode(HttpStatus.OK)
   convertToAuction(
@@ -88,13 +102,6 @@ export class ShopItemsController {
     return this.shopItemsService.convertToAuction(user.id, id, startingPrice);
   }
 
-  // Seller reorders auction queue
-  @Patch('queue/reorder')
-  reorderQueue(@CurrentUser() user: AuthUser, @Body() dto: ReorderQueueDto) {
-    return this.shopItemsService.reorderQueue(user.id, dto);
-  }
-
-  // Toggle bell notification on item
   @Post(':id/notify')
   @HttpCode(HttpStatus.OK)
   toggleNotification(@CurrentUser() user: AuthUser, @Param('id') id: string) {

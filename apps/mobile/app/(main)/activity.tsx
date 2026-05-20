@@ -23,7 +23,7 @@ interface Order {
   item: {
     id: string;
     title: string;
-    photos: string[];
+    photos: { url: string; publicId: string; width?: number; height?: number }[];
   };
   seller: {
     id: string;
@@ -39,7 +39,7 @@ interface Bid {
   item: {
     id: string;
     title: string;
-    photos: string[];
+    photos: { url: string; publicId: string; width?: number; height?: number }[];
   };
   auction: {
     id: string;
@@ -57,7 +57,7 @@ interface Offer {
   item: {
     id: string;
     title: string;
-    photos: string[];
+    photos: { url: string; publicId: string; width?: number; height?: number }[];
     price: number;
   };
   seller: {

@@ -1,10 +1,12 @@
 import { apiClient } from './client';
+import { ShopItemPhoto } from './shop-items.api';
 
 export interface SellerAuction {
   id: string;
   title: string;
   status: 'SCHEDULED' | 'LIVE' | 'ENDED' | 'CANCELLED';
   startTime: string;
+  coverImageUrl?: string | null;
   shopItems: { id: string; title: string; status: string }[];
 }
 
@@ -29,7 +31,7 @@ export const auctionsApi = {
     return response.data.data as AuctionDetail;
   },
 
-  create: async (data: { title: string; startTime: string }) => {
+  create: async (data: { title: string; startTime: string; coverImageUrl?: string }) => {
     const response = await apiClient.post('/auctions', data);
     return response.data.data as AuctionDetail;
   },
@@ -56,6 +58,7 @@ export const auctionsApi = {
     id: string;
     title: string;
     streamUrl: string;
+    coverImageUrl: string | null;
     startTime: string;
     shopItems: { id: string; title: string; status: string }[];
   } | null> => {
@@ -74,6 +77,7 @@ export interface AuctionFeedItem {
   status: 'SCHEDULED' | 'LIVE' | 'ENDED' | 'CANCELLED';
   startTime: string;
   streamUrl?: string;
+  coverImageUrl?: string | null;
   seller: {
     id: string;
     displayName: string;
@@ -84,7 +88,8 @@ export interface AuctionFeedItem {
   shopItems: {
     id: string;
     title: string;
-    photos: string[];
+    description?: string;
+    photos: ShopItemPhoto[];
     price: number;
     type: string;
     status: string;

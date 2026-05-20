@@ -33,6 +33,7 @@ export class AuctionsService {
         sellerId,
         title: dto.title,
         startTime: new Date(dto.startTime),
+        coverImageUrl: dto.coverImageUrl ?? null,
         status: AuctionStatus.SCHEDULED,
       },
     });
@@ -161,7 +162,9 @@ export class AuctionsService {
       data: {
         ...(dto.title && { title: dto.title }),
         ...(dto.startTime && { startTime: new Date(dto.startTime) }),
-        ...(dto.streamUrl && { streamUrl: dto.streamUrl }),
+        ...(dto.coverImageUrl !== undefined && {
+          coverImageUrl: dto.coverImageUrl,
+        }),
       },
     });
   }

@@ -3,30 +3,31 @@ import {
   IsInt,
   IsEnum,
   IsOptional,
-  MinLength,
   MaxLength,
   Min,
   IsArray,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ShopItemType } from '@prisma/client';
+import { PhotoDto } from './create-shop-item.dto';
 
 export class UpdateShopItemDto {
   @IsOptional()
   @IsString()
-  @MinLength(2)
   @MaxLength(100)
   title?: string;
 
   @IsOptional()
   @IsString()
-  @MinLength(10)
   @MaxLength(1000)
   description?: string;
 
   @IsOptional()
   @IsArray()
-  @IsString({ each: true })
-  photos?: string[];
+  @ValidateNested({ each: true })
+  @Type(() => PhotoDto)
+  photos?: PhotoDto[];
 
   @IsOptional()
   @IsInt()

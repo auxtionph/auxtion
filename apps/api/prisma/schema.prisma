@@ -161,6 +161,7 @@ model Auction {
   actualStartTime DateTime?
   endTime   DateTime?
   streamUrl String?
+  coverImageUrl String?
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
@@ -179,7 +180,7 @@ model ShopItem {
   auctionId    String?
   title        String
   description  String
-  photos       String[]
+  photos        Json     @default("[]")
   price        Int
   minimumOffer Int
   type         ShopItemType   @default(AUCTION)

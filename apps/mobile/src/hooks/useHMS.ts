@@ -233,9 +233,30 @@ export const useHMS = ({ roomId, userName, role, onSellerLeft }: UseHMSOptions) 
       // ─── ON_ERROR ───────────────────────────────────────────────
       hms.addEventListener(
         HMSUpdateListenerActions.ON_ERROR,
-        (data: { error?: { message?: string; code?: number } }) => {
-          console.error('[HMS] ON_ERROR:', data?.error);
-          setError(String(data?.error?.message ?? 'Stream error'));
+        (data: unknown) => {
+          console.error('[HMS] ON_ERROR raw payload:', JSON.stringify(data));
+          const err = data as { error?: { message?: string; code?: number } } | null;
+          const code = err?.error?.code;
+          const message = err?.error?.message;
+
+          // Code 4005 = terminal (room ended, token expired) — log only, don't crash UI
+          // Code 1003/1004 = network reconnect — transient, ignore
+          const terminalCodes = [4005, 4001, 4002];
+          const transientCodes = [1003, 1004, 424, 3015]; // 3015 = audio session blip, canRetry=true
+
+          if (code && transientCodes.includes(code)) {
+            console.warn('[HMS] Transient error (will auto-recover):', code, message);
+            return;
+          }
+
+          if (!message && !code) {
+            // Empty payload — internal SDK event, safe to ignore
+            console.warn('[HMS] ON_ERROR with no payload — likely internal SDK event');
+            return;
+          }
+
+          console.error('[HMS] Fatal error:', code, message);
+          setError(message ?? 'Stream error');
           setIsLoading(false);
         },
       );

@@ -20,4 +20,8 @@ export class UpdateAuctionDto {
   @IsOptional()
   @IsString()
   streamUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  coverImageUrl?: string;
 }

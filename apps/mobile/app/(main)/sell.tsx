@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useState, useCallback } from 'react';
@@ -18,6 +19,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useAuthStore } from '../../src/stores/auth.store';
 import { apiClient } from '../../src/services/api/client';
 import { auctionsApi, SellerAuction } from '../../src/services/api/auctions.api';
+import { AuctionCoverSlot } from '../../src/components/AuctionCoverSlot';
+
 
 export default function SellScreen() {
   const router = useRouter();
@@ -32,6 +35,10 @@ export default function SellScreen() {
   const [pendingGoLiveId, setPendingGoLiveId] = useState<string | null>(null);
   const [showGoLiveConfirm, setShowGoLiveConfirm] = useState(false);
   const [quickTitle, setQuickTitle] = useState('');
+  const [quickCoverUrl, setQuickCoverUrl] = useState('');
+  const [isQuickCoverUploading, setIsQuickCoverUploading] = useState(false);
+  const [confirmCoverUrl, setConfirmCoverUrl] = useState('');
+  const [isConfirmCoverUploading, setIsConfirmCoverUploading] = useState(false);
 
   const fetchAuctions = async () => {
     try {
@@ -73,6 +80,8 @@ export default function SellScreen() {
       );
       return;
     }
+     setConfirmCoverUrl('');
+    setIsConfirmCoverUploading(false); 
     setPendingGoLiveId(auctionId);
     setShowGoLiveConfirm(true);
   };
@@ -83,6 +92,13 @@ export default function SellScreen() {
     setGoingLive(pendingGoLiveId);
     try {
       await auctionsApi.goLive(pendingGoLiveId);
+      // Only patch cover if seller explicitly uploaded a new one
+      if (confirmCoverUrl && confirmCoverUrl !== '__replace__') {
+        await apiClient.patch(`/auctions/${pendingGoLiveId}`, {
+          coverImageUrl: confirmCoverUrl,
+        });
+      }
+      setConfirmCoverUrl('');
       router.push(`/auction/${pendingGoLiveId}/live?role=broadcaster`);
     } catch (e: any) {
       Alert.alert('Error', e?.response?.data?.message ?? 'Failed to go live.');
@@ -119,6 +135,7 @@ export default function SellScreen() {
       const res = await apiClient.post('/auctions', {
         title: quickTitle.trim(),
         startTime: new Date().toISOString(),
+        coverImageUrl: quickCoverUrl || undefined,
       });
       const auctionId = (res.data.data as { id: string }).id;
       await auctionsApi.goLive(auctionId);
@@ -398,12 +415,26 @@ export default function SellScreen() {
               autoFocus
             />
 
-            {/* Info */}
-            <View style={{
-              backgroundColor: '#111827', borderRadius: 12,
-              padding: 14, marginBottom: 24,
-              flexDirection: 'row', gap: 10, alignItems: 'flex-start',
-            }}>
+            {/* Cover Photo */}
+              <View style={{ marginBottom: 16 }}>
+                <Text style={{
+                  color: '#9CA3AF', fontSize: 12, fontWeight: '600',
+                  marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5,
+                }}>
+                  Cover Photo
+                </Text>
+                <AuctionCoverSlot
+                  onUploaded={setQuickCoverUrl}
+                  onUploadingChange={setIsQuickCoverUploading}
+                />
+              </View>
+
+              {/* Info */}
+              <View style={{
+                backgroundColor: '#111827', borderRadius: 12,
+                padding: 14, marginBottom: 24,
+                flexDirection: 'row', gap: 10, alignItems: 'flex-start',
+              }}>
               <Text style={{ fontSize: 16 }}>💡</Text>
               <Text style={{ color: '#6B7280', fontSize: 13, flex: 1 }}>
                 Going live now will immediately create a room and let viewers join. Add items to your queue once you're live.
@@ -417,7 +448,7 @@ export default function SellScreen() {
                 borderRadius: 16, paddingVertical: 18, alignItems: 'center',
               }}
               onPress={() => void handleQuickLive()}
-              disabled={quickTitle.trim().length < 2 || loading}
+              disabled={quickTitle.trim().length < 2 || loading || isQuickCoverUploading}
             >
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17 }}>🔴 Start Live</Text>
               <Text style={{ color: '#FCA5A5', fontSize: 12, marginTop: 2 }}>You'll go live immediately</Text>
@@ -430,7 +461,12 @@ export default function SellScreen() {
         visible={showGoLiveConfirm}
         transparent
         animationType="fade"
-        onRequestClose={() => setShowGoLiveConfirm(false)}
+        onRequestClose={() => {
+          setShowGoLiveConfirm(false);
+          setPendingGoLiveId(null);
+          setConfirmCoverUrl('');
+          setIsConfirmCoverUploading(false);
+        }}
       >
         <View style={{
           flex: 1, backgroundColor: 'rgba(0,0,0,0.75)',
@@ -466,11 +502,50 @@ export default function SellScreen() {
               </Text>
             </View>
 
-            {/* Checklist */}
-            <View style={{
-              backgroundColor: '#1F2937', borderRadius: 14,
-              padding: 16, marginBottom: 24, gap: 10,
-            }}>
+            {/* Cover Photo */}
+            {(() => {
+              const pendingAuction = auctions.find(a => a.id === pendingGoLiveId);
+              const existingCover = (pendingAuction as any)?.coverImageUrl;
+              if (existingCover && !confirmCoverUrl) {
+                return (
+                  <View style={{ marginBottom: 16 }}>
+                    <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Cover Photo
+                    </Text>
+                    <View style={{ position: 'relative', height: 100, borderRadius: 12, overflow: 'hidden' }}>
+                      <Image source={{ uri: existingCover }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                      <TouchableOpacity
+                        onPress={() => setConfirmCoverUrl('__replace__')}
+                        style={{
+                          position: 'absolute', bottom: 8, right: 8,
+                          backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 8,
+                          paddingHorizontal: 10, paddingVertical: 4,
+                        }}
+                      >
+                        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>Change</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              }
+              return (
+                <View style={{ marginBottom: 16 }}>
+                  <Text style={{ color: '#9CA3AF', fontSize: 12, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                    Cover Photo
+                  </Text>
+                  <AuctionCoverSlot
+                    onUploaded={setConfirmCoverUrl}
+                    onUploadingChange={setIsConfirmCoverUploading}
+                  />
+                </View>
+              );
+            })()}
+
+              {/* Checklist */}
+              <View style={{
+                backgroundColor: '#1F2937', borderRadius: 14,
+                padding: 16, marginBottom: 24, gap: 10,
+              }}>
               {(() => {
                 const auction = auctions.find(a => a.id === pendingGoLiveId);
                 const itemCount = auction?.shopItems.length ?? 0;
@@ -504,7 +579,7 @@ export default function SellScreen() {
                 paddingVertical: 16, alignItems: 'center', marginBottom: 10,
               }}
               onPress={() => void confirmGoLive()}
-              disabled={!!goingLive}
+              disabled={!!goingLive || isConfirmCoverUploading}
             >
               {goingLive ? (
                 <ActivityIndicator color="#fff" />
@@ -524,6 +599,8 @@ export default function SellScreen() {
               onPress={() => {
                 setShowGoLiveConfirm(false);
                 setPendingGoLiveId(null);
+                setConfirmCoverUrl('');
+                setIsConfirmCoverUploading(false);
               }}
             >
               <Text style={{ color: '#6B7280', fontWeight: '600', fontSize: 15 }}>Not yet</Text>

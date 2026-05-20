@@ -1,266 +1,106 @@
----
-name: expo-image-upload
-description: "Use this skill whenever implementing photo/image upload in Auxtion. Covers expo-image-picker → Cloudinary upload → storing URL in DB. Read before building any image upload feature."
----
+# Image Upload — Auxtion (Expo + Cloudinary, Signed)
 
-# Image Upload — Auxtion (Expo + Cloudinary)
+> Covers expo-image-picker → signed Cloudinary upload → storing `{url, publicId}` in DB.
+> Read before building any image upload feature in Auxtion (shop item photos, profile avatars, show banners, etc.).
+
+## Architecture decision
+
+**Signed direct upload.** Mobile fetches a short-lived signature from our API, uploads the binary straight to Cloudinary (server never touches the bytes), then sends the resulting `{url, publicId}` to our API to persist.
+
+**Why signed, not unsigned:**
+- Mobile bundle contains zero Cloudinary credentials → decompile yields nothing
+- Server enforces per-user folder via `folder: auxtion/<feature>/<userId>/` baked into the signature
+- Stored `publicId` enables server-side delete → no orphans burning the 25GB free tier
+- Per-user rate limiting possible at the signature endpoint
+- Production-grade pattern. Do not regress to unsigned uploads.
 
 ## Stack
 
-- **Picker:** `expo-image-picker`
-- **Storage:** Cloudinary (unsigned upload preset)
-- **DB:** Store returned URL string in `photos String[]` on ShopItem
+- **Picker:** `expo-image-picker` (camera + library via ActionSheetIOS)
+- **Storage:** Cloudinary (signed upload, eager transform: `c_limit,w_1600,q_auto,f_auto`)
+- **Signature source:** `GET /shop-items/upload-signature` (Auth required) — generic enough to reuse for other features; rename per-feature if needed
+- **DB schema:** `photos Json @default("[]")` storing `Array<{url, publicId, width, height}>`
 
----
-
-## Setup
-
-### 1. Install
+## Required env vars (apps/api/.env)
 
 ```bash
-cd apps/mobile
-npx expo install expo-image-picker
+CLOUDINARY_CLOUD_NAME=...
+CLOUDINARY_API_KEY=...
+CLOUDINARY_API_SECRET=...
 ```
 
-### 2. Cloudinary config (add to Railway env + local)
+**Never** put these in mobile env. The signed pattern means mobile never sees the secret.
 
+## Backend: signature generation
+
+`apps/api/src/modules/shop-items/shop-items.service.ts`
+
+```typescript
+import * as crypto from 'crypto';
+
+getUploadSignature(userId: string) {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+  if (!cloudName || !apiKey || !apiSecret) throw new Error('Cloudinary not configured');
+
+  const timestamp = Math.round(Date.now() / 1000);
+  const folder = `auxtion/shop-items/${userId}`;
+  const eager = 'c_limit,w_1600,q_auto,f_auto';
+
+  // Cloudinary signing: alphabetical key=value joined with &, append api_secret, SHA-1.
+  const paramsToSign = `eager=${eager}&folder=${folder}&timestamp=${timestamp}`;
+  const signature = crypto.createHash('sha1').update(paramsToSign + apiSecret).digest('hex');
+
+  return { signature, timestamp, cloudName, apiKey, folder, eager };
+}
 ```
-CLOUDINARY_CLOUD_NAME=your_cloud_name
-CLOUDINARY_UPLOAD_PRESET=auxtion_unsigned   # create unsigned preset in Cloudinary dashboard
-```
 
-Expose to mobile via API endpoint — never put Cloudinary credentials directly in the app bundle.
+**Signing rules — never violate:**
+- Parameters must be sorted alphabetically before signing
+- Only sign params you'll actually send (eager, folder, timestamp)
+- `api_key` and `signature` go in the upload form but are **not** part of the signed string
+- Signature is SHA-1, not SHA-256 — Cloudinary spec
 
-### 3. Permissions in `app.json`
+## Backend: delete on item removal (mandatory)
 
-```json
-{
-  "expo": {
-    "plugins": [
-      [
-        "expo-image-picker",
-        {
-          "photosPermission": "Allow Auxtion to access your photos to add item photos.",
-          "cameraPermission": "Allow Auxtion to use your camera to take item photos."
-        }
-      ]
-    ]
+Without this, every deleted item leaves orphans on Cloudinary forever. In `shop-items.service.ts`:
+
+```typescript
+async deletePhotoFromCloudinary(publicId: string): Promise<void> {
+  const timestamp = Math.round(Date.now() / 1000);
+  const paramsToSign = `public_id=${publicId}&timestamp=${timestamp}`;
+  const signature = crypto.createHash('sha1')
+    .update(paramsToSign + process.env.CLOUDINARY_API_SECRET).digest('hex');
+
+  const formData = new URLSearchParams();
+  formData.append('public_id', publicId);
+  formData.append('timestamp', String(timestamp));
+  formData.append('api_key', process.env.CLOUDINARY_API_KEY!);
+  formData.append('signature', signature);
+
+  // Fire-and-forget; log failures, don't block user action
+  try {
+    const res = await fetch(
+      `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/image/destroy`,
+      { method: 'POST', body: formData },
+    );
+    if (!res.ok) console.warn(`[Cloudinary] delete ${publicId} failed:`, await res.text());
+  } catch (err) {
+    console.warn(`[Cloudinary] delete error ${publicId}:`, err);
   }
 }
 ```
 
----
+Call this in `update()` for dropped photos (diff old vs new) and in `remove()` for all photos.
 
-## Upload Flow
+## Mobile: upload utility
 
-```
-User picks image (expo-image-picker)
-  → Get base64 or URI
-  → POST to Cloudinary upload endpoint (unsigned)
-  → Cloudinary returns { secure_url }
-  → Store secure_url in photos[] array
-  → PATCH /shop-items/:id with { photos: [...existingPhotos, newUrl] }
-```
+`apps/mobile/src/lib/cloudinary.ts`
 
----
+- Caches signature for 50min (server signature lasts 1hr, refresh early)
+- Uses **XHR not fetch** — `fetch()` on React Native doesn't expose upload progress events
+- On 401 response, invalidate cache so next attempt refetches signature
+- Prefers `eager[0].secure_url` (optimized variant) over raw `secure_url`
 
-## Implementation
-
-### Image picker hook
-
-```typescript
-// apps/mobile/src/hooks/useImagePicker.ts
-import * as ImagePicker from 'expo-image-picker';
-
-export const useImagePicker = () => {
-  const pickImage = async (): Promise<string | null> => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow photo access to add item photos.');
-      return null;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],      // square crop for item photos
-      quality: 0.8,
-      base64: false,        // use URI for FormData upload
-    });
-
-    if (result.canceled) return null;
-    return result.assets[0].uri;
-  };
-
-  const takePhoto = async (): Promise<string | null> => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow camera access to take photos.');
-      return null;
-    }
-
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-    });
-
-    if (result.canceled) return null;
-    return result.assets[0].uri;
-  };
-
-  return { pickImage, takePhoto };
-};
-```
-
-### Cloudinary upload utility
-
-```typescript
-// apps/mobile/src/services/upload/cloudinary.ts
-const CLOUD_NAME = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME;
-const UPLOAD_PRESET = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
-
-export const uploadToCloudinary = async (uri: string): Promise<string> => {
-  const formData = new FormData();
-
-  // React Native FormData file append
-  formData.append('file', {
-    uri,
-    type: 'image/jpeg',
-    name: `item-${Date.now()}.jpg`,
-  } as any);
-
-  formData.append('upload_preset', UPLOAD_PRESET!);
-  formData.append('folder', 'auxtion/items');
-
-  const response = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`,
-    {
-      method: 'POST',
-      body: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error('Upload failed');
-  }
-
-  const data = await response.json();
-  return data.secure_url as string;
-};
-```
-
-### Usage in Add Item modal
-
-```typescript
-const [uploadingPhoto, setUploadingPhoto] = useState(false);
-const [photos, setPhotos] = useState<string[]>([]);
-const { pickImage, takePhoto } = useImagePicker();
-
-const handleAddPhoto = async (source: 'library' | 'camera') => {
-  const uri = source === 'library' ? await pickImage() : await takePhoto();
-  if (!uri) return;
-
-  setUploadingPhoto(true);
-  try {
-    const url = await uploadToCloudinary(uri);
-    setPhotos(prev => [...prev, url]);
-  } catch {
-    Alert.alert('Upload failed', 'Could not upload photo. Try again.');
-  } finally {
-    setUploadingPhoto(false);
-  }
-};
-
-// Photo source picker
-const showPhotoOptions = () => {
-  Alert.alert('Add Photo', 'Choose source', [
-    { text: 'Camera', onPress: () => handleAddPhoto('camera') },
-    { text: 'Photo Library', onPress: () => handleAddPhoto('library') },
-    { text: 'Cancel', style: 'cancel' },
-  ]);
-};
-```
-
-### Photo grid UI component
-
-```typescript
-// Inline in modal
-<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-  {photos.map((url, i) => (
-    <View key={i} style={{ position: 'relative' }}>
-      <Image
-        source={{ uri: url }}
-        style={{ width: 80, height: 80, borderRadius: 10 }}
-        resizeMode="cover"
-      />
-      <TouchableOpacity
-        style={{
-          position: 'absolute', top: -6, right: -6,
-          backgroundColor: '#DC2626', borderRadius: 999,
-          width: 20, height: 20, alignItems: 'center', justifyContent: 'center',
-        }}
-        onPress={() => setPhotos(prev => prev.filter((_, idx) => idx !== i))}
-      >
-        <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>✕</Text>
-      </TouchableOpacity>
-    </View>
-  ))}
-
-  {photos.length < 5 && (
-    <TouchableOpacity
-      style={{
-        width: 80, height: 80, borderRadius: 10,
-        backgroundColor: '#1F2937', borderWidth: 1,
-        borderColor: '#374151', borderStyle: 'dashed',
-        alignItems: 'center', justifyContent: 'center',
-      }}
-      onPress={showPhotoOptions}
-      disabled={uploadingPhoto}
-    >
-      {uploadingPhoto ? (
-        <ActivityIndicator color="#6B7280" size="small" />
-      ) : (
-        <>
-          <Text style={{ color: '#6B7280', fontSize: 20 }}>+</Text>
-          <Text style={{ color: '#4B5563', fontSize: 9, marginTop: 2 }}>Photo</Text>
-        </>
-      )}
-    </TouchableOpacity>
-  )}
-</View>
-```
-
----
-
-## Backend — ShopItem already supports photos
-
-`photos String[]` already exists on the ShopItem model. No schema change needed.
-
-The `createItem` DTO already accepts `photos: string[]`. Just pass the Cloudinary URLs.
-
----
-
-## Env Vars
-
-Add to `apps/mobile/.env` (and Expo dashboard for EAS builds):
-```
-EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME=your_cloud_name
-EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET=auxtion_unsigned
-```
-
-`EXPO_PUBLIC_` prefix makes vars available in Expo client-side code.
-
----
-
-## Limits & Best Practices
-
-- Max 5 photos per item
-- Compress to `quality: 0.8` before upload — good balance of size/quality
-- Square crop `aspect: [1, 1]` — consistent grid display
-- Show upload progress per photo — don't block the whole form
-- Store URLs immediately after upload — don't wait for form submit
-- On error: remove failed photo from array, show retry option
+Form fields sent to Cloudinary (exact list, in any order):

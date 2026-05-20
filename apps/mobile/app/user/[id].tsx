@@ -41,7 +41,7 @@ interface UserProfile {
     shopItems: {
       id: string;
       title: string;
-      photos: string[];
+      photos: { url: string; publicId: string; width?: number; height?: number }[];
       price: number;
       status: string;
     }[];
@@ -379,8 +379,8 @@ export default function UserProfileScreen() {
                 }}>
                   {/* Photo */}
                   <View style={{ width: 100, height: 100, backgroundColor: '#374151', alignItems: 'center', justifyContent: 'center' }}>
-                    {item.photos[0] ? (
-                      <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    {item.photos[0]?.url ? (
+                      <Image source={{ uri: item.photos[0].url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                     ) : (
                       <Text style={{ fontSize: 32 }}>📦</Text>
                     )}

@@ -12,12 +12,13 @@ import {
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useEffect, useState, useCallback } from 'react';
 import { auctionsApi, AuctionDetail } from '../../src/services/api/auctions.api';
-import { shopItemsApi } from '../../src/services/api/shop-items.api';
+import { shopItemsApi, ShopItemPhoto } from '../../src/services/api/shop-items.api';
 import { formatPHP } from '@auxtion/utils';
 import { useAuthStore } from '../../src/stores/auth.store';
+import { Ionicons } from '@expo/vector-icons';
 
 export default function AuctionDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, type } = useLocalSearchParams<{ id: string; type?: string }>();
   const router = useRouter();
   const { user } = useAuthStore();
 
@@ -27,6 +28,8 @@ export default function AuctionDetailScreen() {
   const [error, setError] = useState('');
   const [startingLive, setStartingLive] = useState(false);
   const [showGoLiveModal, setShowGoLiveModal] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<AuctionDetail['shopItems'][0] | null>(null);
+  const [showItemSheet, setShowItemSheet] = useState(false);
 
   const fetchAuction = useCallback(async () => {
     try {
@@ -131,7 +134,8 @@ export default function AuctionDetailScreen() {
   const isEnded = auction.status === 'ENDED';
   const isSeller = auction.seller.id === user?.id;
 
-  const queuedItems = auction.shopItems.filter(i => i.status === 'QUEUED' || i.status === 'AVAILABLE');
+  const queuedItems = auction.shopItems.filter(i => i.type !== 'BUY_NOW' && (i.status === 'QUEUED' || i.status === 'LIVE'));
+  const buyNowItems = auction.shopItems.filter(i => i.type === 'BUY_NOW' && i.status !== 'SOLD');
   const liveItem = auction.shopItems.find(i => i.status === 'LIVE');
   const soldItems = auction.shopItems.filter(i => i.status === 'SOLD');
 
@@ -161,18 +165,54 @@ export default function AuctionDetailScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#1A56DB" />}
         contentContainerStyle={{ paddingBottom: 120 }}
       >
-        {/* Thumbnail */}
-        <View style={{ width: '100%', height: 200, backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center' }}>
-          {auction.shopItems[0]?.photos?.[0] ? (
-            <Image
-              source={{ uri: auction.shopItems[0].photos[0] }}
-              style={{ width: '100%', height: '100%' }}
-              resizeMode="cover"
-            />
-          ) : (
-            <Text style={{ fontSize: 64 }}>📦</Text>
-          )}
-        </View>
+      {/* Cover */}
+        <TouchableOpacity
+          activeOpacity={auction.coverImageUrl ? 0.85 : 1}
+          disabled={!auction.coverImageUrl}
+          onPress={() => {
+            if (auction.coverImageUrl) {
+              // Navigate to full screen image viewer
+              router.push(`/auction/${id}/cover` as never);
+            }
+          }}
+        >
+          <View style={{ width: '100%', height: 220, backgroundColor: '#1F2937', overflow: 'hidden' }}>
+            {auction.coverImageUrl ? (
+              <>
+                <Image
+                  source={{ uri: auction.coverImageUrl }}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="cover"
+                />
+                {/* Tap to view hint */}
+                <View style={{
+                  position: 'absolute', bottom: 10, right: 10,
+                  backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 8,
+                  paddingHorizontal: 10, paddingVertical: 4,
+                  flexDirection: 'row', alignItems: 'center', gap: 4,
+                }}>
+                  <Ionicons name="expand-outline" size={12} color="#fff" />
+                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>View</Text>
+                </View>
+              </>
+            ) : auction.seller.avatarUrl ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <Image
+                  source={{ uri: auction.seller.avatarUrl }}
+                  style={{ width: 80, height: 80, borderRadius: 40 }}
+                  resizeMode="cover"
+                />
+                <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 8 }}>
+                  {auction.seller.displayName}
+                </Text>
+              </View>
+            ) : (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ fontSize: 64 }}>🏷️</Text>
+              </View>
+            )}
+          </View>
+        </TouchableOpacity>
 
         <View style={{ padding: 20 }}>
 
@@ -225,23 +265,37 @@ export default function AuctionDetailScreen() {
           {/* ── SELLER MANAGEMENT SECTION ── */}
           {isSeller && (
             <View style={{ marginBottom: 24 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                 <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
-                  Item Queue ({queuedItems.length})
+                  Items ({queuedItems.length + buyNowItems.length})
                 </Text>
-                {/* Add Item button */}
                 {isScheduled && (
-                  <TouchableOpacity
-                    style={{
-                      backgroundColor: '#1A56DB', borderRadius: 999,
-                      paddingHorizontal: 14, paddingVertical: 8,
-                      flexDirection: 'row', alignItems: 'center', gap: 6,
-                    }}
-                    onPress={() => router.push(`/auction/${id}/items/add`)}
-                  >
-                    <Text style={{ color: '#fff', fontSize: 18, lineHeight: 20 }}>+</Text>
-                    <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>Add Item</Text>
-                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: 'rgba(26,86,219,0.15)', borderRadius: 999,
+                        paddingHorizontal: 12, paddingVertical: 8,
+                        flexDirection: 'row', alignItems: 'center', gap: 5,
+                        borderWidth: 1, borderColor: '#1A56DB',
+                      }}
+                      onPress={() => router.push(`/auction/${id}/items/add?type=AUCTION` as never)}
+                    >
+                      <Text style={{ color: '#fff', fontSize: 14, lineHeight: 16 }}>+</Text>
+                      <Text style={{ color: '#93C5FD', fontSize: 12, fontWeight: '600' }}>🔨 Queue</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: 'rgba(16,185,129,0.15)', borderRadius: 999,
+                        paddingHorizontal: 12, paddingVertical: 8,
+                        flexDirection: 'row', alignItems: 'center', gap: 5,
+                        borderWidth: 1, borderColor: '#10B981',
+                      }}
+                      onPress={() => router.push(`/auction/${id}/items/add?type=BUY_NOW` as never)}
+                    >
+                      <Text style={{ color: '#fff', fontSize: 14, lineHeight: 16 }}>+</Text>
+                      <Text style={{ color: '#6EE7B7', fontSize: 12, fontWeight: '600' }}>🏷️ Buy Now</Text>
+                    </TouchableOpacity>
+                  </View>
                 )}
               </View>
 
@@ -258,8 +312,8 @@ export default function AuctionDetailScreen() {
                   </View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View style={{ width: 52, height: 52, borderRadius: 10, backgroundColor: '#1F2937', overflow: 'hidden' }}>
-                      {liveItem.photos[0] ? (
-                        <Image source={{ uri: liveItem.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                      {(liveItem.photos[0] as ShopItemPhoto)?.url ? (
+                        <Image source={{ uri: (liveItem.photos[0] as ShopItemPhoto).url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                       ) : (
                         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                           <Text style={{ fontSize: 22 }}>📦</Text>
@@ -300,55 +354,145 @@ export default function AuctionDetailScreen() {
                   </View>
                 )
               ) : (
-                queuedItems.map((item, index) => (
-                  <View
-                    key={item.id}
-                    style={{
-                      flexDirection: 'row', alignItems: 'center', gap: 12,
-                      backgroundColor: '#111827', borderRadius: 14,
-                      padding: 12, marginBottom: 8,
-                      borderWidth: 1, borderColor: '#1F2937',
-                    }}
-                  >
-                    {/* Queue number */}
-                    <View style={{ width: 24, alignItems: 'center' }}>
-                      <Text style={{ color: '#6B7280', fontSize: 12, fontWeight: '700' }}>
-                        {index + 1}
-                      </Text>
-                    </View>
+                <>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <Text style={{ color: '#60A5FA', fontWeight: '700', fontSize: 14 }}>
+                      🔨 Auction Queue ({queuedItems.length})
+                    </Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: '#1F2937' }} />
+                  </View>
+                    {queuedItems.map((item, index) => (
+                    <TouchableOpacity
+                        key={item.id}
+                        activeOpacity={0.75}
+                        onPress={() => {
+                          setSelectedItem(item);
+                          setShowItemSheet(true);
+                        }}
+                        style={{
+                          flexDirection: 'row', alignItems: 'center', gap: 12,
+                          backgroundColor: '#111827', borderRadius: 14,
+                          padding: 12, marginBottom: 8,
+                          borderWidth: 1, borderColor: '#1F2937',
+                        }}
+                      >
+                      {/* Queue number */}
+                      <View style={{ width: 24, alignItems: 'center' }}>
+                        <Text style={{ color: '#6B7280', fontSize: 12, fontWeight: '700' }}>
+                          {index + 1}
+                        </Text>
+                      </View>
 
-                    {/* Photo */}
-                    <View style={{ width: 48, height: 48, borderRadius: 10, backgroundColor: '#1F2937', overflow: 'hidden' }}>
-                      {item.photos[0] ? (
-                        <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-                      ) : (
-                        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                          <Text style={{ fontSize: 20 }}>📦</Text>
-                        </View>
-                      )}
-                    </View>
+                      {/* Photo */}
+                      <View style={{ width: 48, height: 48, borderRadius: 10, backgroundColor: '#1F2937', overflow: 'hidden' }}>
+                        {(item.photos[0] as ShopItemPhoto)?.url ? (
+                          <Image source={{ uri: (item.photos[0] as ShopItemPhoto).url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                        ) : (
+                          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                            <Text style={{ fontSize: 20 }}>📦</Text>
+                          </View>
+                        )}
+                      </View>
 
-                    {/* Info */}
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
-                        {item.title}
-                      </Text>
-                      <Text style={{ color: '#F59E0B', fontSize: 12 }}>
-                        Starting at {formatPHP(item.price)}
-                      </Text>
-                    </View>
+                      {/* Info */}
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                        <Text style={{ color: '#F59E0B', fontSize: 12 }}>
+                          Starting at {formatPHP(item.price)}
+                        </Text>
+                      </View>
 
-                    {/* Delete */}
-                    {isScheduled && (
+                      {/* Edit */}
+                        <TouchableOpacity
+                          style={{ padding: 8 }}
+                          onPress={() => router.push(`/auction/${id}/items/${item.id}/edit` as never)}
+                        >
+                          <Ionicons name="pencil-outline" size={16} color="#6B7280" />
+                        </TouchableOpacity>
+
+                        {/* Delete */}
+                        {isScheduled && (
+                          <TouchableOpacity
+                            style={{ padding: 8 }}
+                            onPress={() => handleRemoveItem(item)}
+                          >
+                            <Text style={{ color: '#6B7280', fontSize: 16 }}>🗑</Text>
+                          </TouchableOpacity>
+                        )}
+                    </TouchableOpacity>
+                  ))}
+                </>
+              )}
+
+              {/* Buy Now Items */}
+              {(buyNowItems.length > 0 || isScheduled) && (
+                <View style={{ marginTop: 8, marginBottom: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <Text style={{ color: '#10B981', fontWeight: '700', fontSize: 14 }}>
+                      🏷️ Buy Now ({buyNowItems.length})
+                    </Text>
+                    <View style={{ flex: 1, height: 1, backgroundColor: '#1F2937' }} />
+                  </View>
+                  {buyNowItems.length === 0 ? (
+                    isScheduled ? (
+                      <TouchableOpacity
+                        style={{
+                          borderWidth: 1, borderColor: '#10B981', borderStyle: 'dashed',
+                          borderRadius: 12, padding: 16, alignItems: 'center',
+                        }}
+                        onPress={() => router.push(`/auction/${id}/items/add?type=BUY_NOW` as never)}
+                      >
+                        <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '600' }}>+ Add Buy Now item</Text>
+                      </TouchableOpacity>
+                    ) : null
+                  ) : buyNowItems.map(item => (
+                    <TouchableOpacity
+                      key={item.id}
+                      activeOpacity={0.75}
+                      onPress={() => { setSelectedItem(item); setShowItemSheet(true); }}
+                      style={{
+                        flexDirection: 'row', alignItems: 'center', gap: 12,
+                        backgroundColor: '#111827', borderRadius: 14,
+                        padding: 12, marginBottom: 8,
+                        borderWidth: 1, borderColor: 'rgba(16,185,129,0.25)',
+                      }}
+                    >
+                      <View style={{ width: 48, height: 48, borderRadius: 10, backgroundColor: '#1F2937', overflow: 'hidden' }}>
+                        {(item.photos[0] as ShopItemPhoto)?.url ? (
+                          <Image source={{ uri: (item.photos[0] as ShopItemPhoto).url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                        ) : (
+                          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                            <Text style={{ fontSize: 20 }}>🏷️</Text>
+                          </View>
+                        )}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                        <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '700' }}>
+                          {formatPHP(item.price)}
+                        </Text>
+                      </View>
                       <TouchableOpacity
                         style={{ padding: 8 }}
-                        onPress={() => handleRemoveItem(item)}
+                        onPress={() => router.push(`/auction/${id}/items/${item.id}/edit` as never)}
                       >
-                        <Text style={{ color: '#6B7280', fontSize: 16 }}>🗑</Text>
+                        <Ionicons name="pencil-outline" size={16} color="#6B7280" />
                       </TouchableOpacity>
-                    )}
-                  </View>
-                ))
+                      {isScheduled && (
+                        <TouchableOpacity
+                          style={{ padding: 8 }}
+                          onPress={() => handleRemoveItem(item)}
+                        >
+                          <Text style={{ color: '#6B7280', fontSize: 16 }}>🗑</Text>
+                        </TouchableOpacity>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
               )}
 
               {/* Sold Items */}
@@ -369,8 +513,8 @@ export default function AuctionDetailScreen() {
                       }}
                     >
                       <View style={{ width: 48, height: 48, borderRadius: 10, backgroundColor: '#1F2937', overflow: 'hidden' }}>
-                        {item.photos[0] ? (
-                          <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                        {(item.photos[0] as ShopItemPhoto)?.url ? (
+                          <Image source={{ uri: (item.photos[0] as ShopItemPhoto).url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                         ) : (
                           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                             <Text style={{ fontSize: 20 }}>📦</Text>
@@ -397,18 +541,23 @@ export default function AuctionDetailScreen() {
                 Items ({auction.shopItems.length})
               </Text>
               {auction.shopItems.map((item, index) => (
-                <View
-                  key={item.id}
-                  style={{
-                    flexDirection: 'row', alignItems: 'center', gap: 12,
-                    backgroundColor: '#111827', borderRadius: 14,
-                    padding: 12, marginBottom: 8,
-                    borderWidth: 1, borderColor: '#1F2937',
-                  }}
-                >
+                <TouchableOpacity
+                    key={item.id}
+                    activeOpacity={0.75}
+                    onPress={() => {
+                      setSelectedItem(item);
+                      setShowItemSheet(true);
+                    }}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 12,
+                      backgroundColor: '#111827', borderRadius: 14,
+                      padding: 12, marginBottom: 8,
+                      borderWidth: 1, borderColor: '#1F2937',
+                    }}
+                  >
                   <View style={{ width: 48, height: 48, borderRadius: 10, backgroundColor: '#1F2937', overflow: 'hidden' }}>
-                    {item.photos?.[0] ? (
-                      <Image source={{ uri: item.photos[0] }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    {(item.photos[0] as ShopItemPhoto)?.url ? (
+                      <Image source={{ uri: (item.photos[0] as ShopItemPhoto).url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                     ) : (
                       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                         <Text style={{ fontSize: 20 }}>📦</Text>
@@ -431,7 +580,7 @@ export default function AuctionDetailScreen() {
                   {item.status === 'SOLD' && (
                     <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '600' }}>Sold</Text>
                   )}
-                </View>
+                </TouchableOpacity>
               ))}
             </View>
           )}
@@ -686,6 +835,112 @@ export default function AuctionDetailScreen() {
             </TouchableOpacity>
           </View>
         </View>
+      </Modal>
+
+      {/* ── Item Detail Sheet ── */}
+      <Modal
+        visible={showItemSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowItemSheet(false)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}
+          activeOpacity={1}
+          onPress={() => setShowItemSheet(false)}
+        />
+        {selectedItem && (
+          <View style={{
+            backgroundColor: '#111827',
+            borderTopLeftRadius: 24, borderTopRightRadius: 24,
+            borderTopWidth: 1, borderColor: '#1F2937',
+            maxHeight: '80%',
+          }}>
+            {/* Handle */}
+            <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
+              <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: '#374151' }} />
+            </View>
+
+            <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 48 }} showsVerticalScrollIndicator={false}>
+              {/* Photo carousel */}
+              {(selectedItem.photos as ShopItemPhoto[]).filter(p => p?.url).length > 0 ? (
+                <ScrollView
+                  horizontal
+                  pagingEnabled
+                  showsHorizontalScrollIndicator={false}
+                  style={{ marginBottom: 16 }}
+                >
+                  {(selectedItem.photos as ShopItemPhoto[]).filter(p => p?.url).map((photo, i) => (
+                    <Image
+                      key={i}
+                      source={{ uri: photo.url }}
+                      style={{ width: 300, height: 300, borderRadius: 16, marginRight: 10, backgroundColor: '#1F2937' }}
+                      resizeMode="cover"
+                    />
+                  ))}
+                </ScrollView>
+              ) : (
+                <View style={{
+                  height: 200, borderRadius: 16, backgroundColor: '#1F2937',
+                  alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+                }}>
+                  <Text style={{ fontSize: 48 }}>📦</Text>
+                </View>
+              )}
+
+              {/* Status badge */}
+              {selectedItem.status === 'LIVE' && (
+                <View style={{
+                  alignSelf: 'flex-start', backgroundColor: '#DC2626',
+                  borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3,
+                  flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 10,
+                }}>
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' }} />
+                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>LIVE NOW</Text>
+                </View>
+              )}
+              {selectedItem.status === 'SOLD' && (
+                <View style={{
+                  alignSelf: 'flex-start',
+                  backgroundColor: 'rgba(16,185,129,0.15)',
+                  borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3,
+                  borderWidth: 1, borderColor: '#10B981', marginBottom: 10,
+                }}>
+                  <Text style={{ color: '#10B981', fontSize: 11, fontWeight: '700' }}>✅ SOLD</Text>
+                </View>
+              )}
+
+              {/* Title + price */}
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 20, marginBottom: 6 }}>
+                {selectedItem.title}
+              </Text>
+              <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 18, marginBottom: 16 }}>
+                {formatPHP(selectedItem.price)}
+              </Text>
+
+              {/* Description */}
+              {selectedItem.description ? (
+                <View style={{ backgroundColor: '#1F2937', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+                  <Text style={{ color: '#9CA3AF', fontSize: 13, lineHeight: 20 }}>
+                    {selectedItem.description}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Type badge */}
+              <View style={{
+                alignSelf: 'flex-start',
+                backgroundColor: 'rgba(26,86,219,0.15)', borderRadius: 8,
+                paddingHorizontal: 12, paddingVertical: 6,
+                borderWidth: 1, borderColor: 'rgba(26,86,219,0.4)',
+              }}>
+                <Text style={{ color: '#60A5FA', fontSize: 12, fontWeight: '600' }}>
+                  {selectedItem.type === 'BUY_NOW' ? '🏷️ Buy Now' : '🔨 Auction'}
+                </Text>
+              </View>
+            </ScrollView>
+          </View>
+        )}
       </Modal>
     </View>
   );
