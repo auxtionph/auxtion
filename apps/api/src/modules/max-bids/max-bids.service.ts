@@ -11,7 +11,9 @@ export class MaxBidsService {
       where: { itemId_userId: { itemId: dto.itemId, userId } },
     });
     if (existing && dto.amount <= existing.amount) {
-      throw new BadRequestException('Max bid must be higher than your current max bid');
+      throw new BadRequestException(
+        'Max bid must be higher than your current max bid',
+      );
     }
     return this.prisma.maxBid.upsert({
       where: { itemId_userId: { itemId: dto.itemId, userId } },
