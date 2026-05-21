@@ -158,6 +158,49 @@ function SwipeBidButton({ label, sublabel, onBid, color = '#1A56DB' }: {
   );
 }
 
+const REACTION_EMOJIS = ['❤️', '🔥', '😂', '😮', '👏', '💰'];
+
+interface FloatingEmojiItem {
+  id: string;
+  emoji: string;
+  x: number;
+}
+
+function FloatingEmoji({ item, onDone }: { item: FloatingEmojiItem; onDone: (id: string) => void }) {
+  const translateY = useRef(new Animated.Value(0)).current;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(1)).current;
+  const scale = useRef(new Animated.Value(0.5)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(translateY, { toValue: -220, duration: 1800, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 0, duration: 1800, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1.2, useNativeDriver: true, friction: 4 }),
+      Animated.sequence([
+        Animated.timing(translateX, { toValue: -12, duration: 300, useNativeDriver: true }),
+        Animated.timing(translateX, { toValue: 12, duration: 300, useNativeDriver: true }),
+        Animated.timing(translateX, { toValue: -8, duration: 250, useNativeDriver: true }),
+        Animated.timing(translateX, { toValue: 8, duration: 250, useNativeDriver: true }),
+        Animated.timing(translateX, { toValue: 0, duration: 200, useNativeDriver: true }),
+      ]),
+    ]).start(() => onDone(item.id));
+  }, []);
+
+  return (
+    <Animated.Text style={{
+      position: 'absolute',
+      right: item.x,
+      bottom: 0,
+      fontSize: 32,
+      transform: [{ translateY }, { translateX }, { scale }],
+      opacity,
+    }}>
+      {item.emoji}
+    </Animated.Text>
+  );
+}
+
 export default function LiveAuctionRoom() {
   const { id, role: routeRole } = useLocalSearchParams<{ id: string; role?: string }>();
   const router = useRouter();
@@ -221,6 +264,10 @@ export default function LiveAuctionRoom() {
   const [soldSort, setSoldSort] = useState<'recent' | 'high' | 'low'>('recent');
   const [buyNowMode, setBuyNowMode] = useState<'shop' | 'live'>('shop');
   const [shopDetailItem, setShopDetailItem] = useState<AuctionDetail['shopItems'][0] | null>(null);
+  const [floatingEmojis, setFloatingEmojis] = useState<FloatingEmojiItem[]>([]);
+  const [showReactions, setShowReactions] = useState(false);
+  const reactButtonRef = useRef<View>(null);
+  const reactButtonBottomRef = useRef<number>(0);
 
   useEffect(() => {
     currentItemRef.current = currentItem;
@@ -314,7 +361,7 @@ export default function LiveAuctionRoom() {
     displayName: string;
     message: string;
   } | null>(null);
-  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner, skipChatItem, startLiveBuyNow, claimBuyNow, pullBuyNow } = useAuctionSocket({
+  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner, skipChatItem, startLiveBuyNow, claimBuyNow, pullBuyNow, sendReaction } = useAuctionSocket({
     auctionId: id,
     userId: user?.id,
     onBidUpdate: useCallback((data: BidUpdateData) => {
@@ -606,10 +653,20 @@ export default function LiveAuctionRoom() {
     }, []),
 
     onBuyNowClaimFailed: useCallback((_data: { itemId: string; reason: string }) => {
-      setClaimingBuyNow(false);
-      Alert.alert('Too slow!', 'Someone else just bought it.');
+        setClaimingBuyNow(false);
+        Alert.alert('Too slow!', 'Someone else just bought it.');
+      }, []),
+
+    onReaction: useCallback((data: { emoji: string; userId: string }) => {
+      setFloatingEmojis(prev => [...prev, {
+        id: `${Date.now()}-${Math.random()}`,
+        emoji: data.emoji,
+        x: Math.floor(Math.random() * 60) + 8,
+      }]);
     }, []),
+
   });
+    
 
   const handleAddItemLive = async (mode: 'queue' | 'now' | 'buynow') => {
     const price = parseInt(newItemPrice.replace(/[^0-9]/g, ''), 10);
@@ -809,7 +866,13 @@ export default function LiveAuctionRoom() {
     setChatInput('');
   };
 
-  const biddingItems = auction?.shopItems.filter(i => (i.status === 'QUEUED' || i.status === 'LIVE') && i.type !== 'BUY_NOW') ?? [];
+  const biddingItems = auction?.shopItems
+    .filter(i => (i.status === 'QUEUED' || i.status === 'LIVE') && i.type !== 'BUY_NOW')
+    .sort((a, b) => {
+      if (a.status === 'LIVE') return -1;
+      if (b.status === 'LIVE') return 1;
+      return (a.queueOrder ?? 0) - (b.queueOrder ?? 0);
+    }) ?? [];
   const buyNowItems = auction?.shopItems.filter(i => i.type === 'BUY_NOW' && i.status === 'AVAILABLE') ?? [];
   const soldItems = auction?.shopItems.filter(i => i.status === 'SOLD') ?? [];
   
@@ -1030,6 +1093,33 @@ export default function LiveAuctionRoom() {
             <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>Flip</Text>
           </TouchableOpacity>
 
+          {/* Reactions */}
+            <TouchableOpacity
+              style={{ alignItems: 'center', gap: 3 }}
+              activeOpacity={0.7}
+              onPress={() => {
+                reactButtonRef.current?.measureInWindow((_x, y, _w, h) => {
+                  const screenH = Dimensions.get('window').height;
+                  const buttonCenterFromBottom = screenH - (y + h / 2);
+                  reactButtonBottomRef.current = buttonCenterFromBottom - 21; // 21 = half pill height
+                  setShowReactions(prev => !prev);
+                });
+              }}
+            >
+              <View
+                ref={reactButtonRef}
+                style={{
+                  width: 38, height: 38, borderRadius: 19,
+                  backgroundColor: showReactions ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)',
+                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+                  alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 18 }}>{showReactions ? '✕' : '😊'}</Text>
+              </View>
+              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>React</Text>
+            </TouchableOpacity>
+
           {/* Shop */}
           <TouchableOpacity
             style={{ alignItems: 'center', gap: 3 }}
@@ -1070,6 +1160,34 @@ export default function LiveAuctionRoom() {
           alignItems: 'center',
           gap: 12,
         }}>
+
+        {/* Reactions */}
+            <TouchableOpacity
+              style={{ alignItems: 'center', gap: 3 }}
+              activeOpacity={0.7}
+              onPress={() => {
+                reactButtonRef.current?.measureInWindow((_x, y, _w, h) => {
+                  const screenH = Dimensions.get('window').height;
+                  const buttonCenterFromBottom = screenH - (y + h / 2);
+                  reactButtonBottomRef.current = buttonCenterFromBottom - 21; // 21 = half pill height
+                  setShowReactions(prev => !prev);
+                });
+              }}
+            >
+              <View
+                ref={reactButtonRef}
+                style={{
+                  width: 38, height: 38, borderRadius: 19,
+                  backgroundColor: showReactions ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)',
+                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+                  alignItems: 'center', justifyContent: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 18 }}>{showReactions ? '✕' : '😊'}</Text>
+              </View>
+              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>React</Text>
+            </TouchableOpacity>
+
           {/* Share */}
           <TouchableOpacity style={{ alignItems: 'center', gap: 4 }} activeOpacity={0.75}>
             {/* Share */}
@@ -3475,6 +3593,50 @@ export default function LiveAuctionRoom() {
           </ScrollView>
         </View>
       </Modal>
+
+      {/* ── Reaction Picker Pill ── */}
+        {showReactions && (
+          <View style={{
+            position: 'absolute',
+            right: 58,
+            bottom: reactButtonBottomRef.current,
+            flexDirection: 'row',
+            gap: 10,
+            backgroundColor: 'rgba(17,24,39,0.95)',
+            borderRadius: 999,
+            paddingHorizontal: 14,
+            paddingVertical: 8,
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.15)',
+            zIndex: 100,
+          }}>
+            {REACTION_EMOJIS.map(emoji => (
+              <TouchableOpacity
+                key={emoji}
+                activeOpacity={0.7}
+                onPress={() => {
+                  sendReaction(emoji, user?.id ?? '');
+                  setShowReactions(false);
+                }}
+              >
+                <Text style={{ fontSize: 26 }}>{emoji}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      {/* ── Floating Reactions ── */}
+      <View
+        style={{ position: 'absolute', right: 0, bottom: reactButtonBottomRef.current, width: 80, height: 300 }}
+        pointerEvents="none"
+      >
+        {floatingEmojis.map(item => (
+          <FloatingEmoji
+            key={item.id}
+            item={item}
+            onDone={id => setFloatingEmojis(prev => prev.filter(e => e.id !== id))}
+          />
+        ))}
+      </View>
     </View>
   );
 }
