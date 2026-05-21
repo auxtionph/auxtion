@@ -708,6 +708,19 @@ export class BiddingGateway
     });
   }
 
+  @SubscribeMessage('reaction')
+  handleReaction(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    payload: { auctionId: string; emoji: string; userId: string },
+  ) {
+    // Broadcast to everyone in the room including sender
+    this.server.to(`auction:${payload.auctionId}`).emit('reaction', {
+      emoji: payload.emoji,
+      userId: payload.userId,
+    });
+  }
+
   @SubscribeMessage('skip-chat-item')
   async handleSkipChatItem(
     @ConnectedSocket() client: Socket,

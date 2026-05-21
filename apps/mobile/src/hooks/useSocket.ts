@@ -69,6 +69,7 @@ interface UseSocketOptions {
   onBuyNowClaimed?: (data: { itemId: string; title: string; price: number; buyerId: string; buyerName: string }) => void;
   onBuyNowPulled?: (data: { itemId: string }) => void;
   onBuyNowClaimFailed?: (data: { itemId: string; reason: string }) => void;
+  onReaction?: (data: { emoji: string; userId: string }) => void;
 }
 
 export const useAuctionSocket = ({
@@ -95,6 +96,7 @@ export const useAuctionSocket = ({
   onBuyNowClaimed,
   onBuyNowPulled,
   onBuyNowClaimFailed,
+  onReaction,
 }: UseSocketOptions) => {
   const socketRef = useRef<Socket | null>(null);
 
@@ -136,6 +138,7 @@ export const useAuctionSocket = ({
     socket.off('buynow-pulled');
     socket.off('buynow-claim-failed');
     socket.off('bid-state');
+    socket.off('reaction');
 
     if (onBidUpdate) socket.on(SOCKET_EVENTS.BID_UPDATE, onBidUpdate);
     if (onBidConfirmed) socket.on(SOCKET_EVENTS.BID_CONFIRMED, onBidConfirmed);
@@ -156,6 +159,8 @@ export const useAuctionSocket = ({
     if (onBuyNowClaimed) socket.on('buynow-claimed', onBuyNowClaimed);
     if (onBuyNowPulled) socket.on('buynow-pulled', onBuyNowPulled);
     if (onBuyNowClaimFailed) socket.on('buynow-claim-failed', onBuyNowClaimFailed);
+    if (onReaction) socket.on('reaction', onReaction);
+
     socket.on('bid-state', (data: {
       itemId: string;
       currentPrice: number;
@@ -266,5 +271,9 @@ export const useAuctionSocket = ({
     socketRef.current?.emit('skip-chat-item', { auctionId, itemId, sellerId });
   }, [auctionId]);
 
-  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner, skipChatItem, startLiveBuyNow, claimBuyNow, pullBuyNow };
+  const sendReaction = useCallback((emoji: string, userId: string) => {
+    socketRef.current?.emit('reaction', { auctionId, emoji, userId });
+  }, [auctionId]);
+
+  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner, skipChatItem, startLiveBuyNow, claimBuyNow, pullBuyNow, sendReaction };
 };
