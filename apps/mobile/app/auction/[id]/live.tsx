@@ -1332,9 +1332,12 @@ export default function LiveAuctionRoom() {
                     backgroundColor: '#1F2937', borderRadius: 999,
                     paddingHorizontal: 10, paddingVertical: 3, marginHorizontal: 8,
                   }}>
-                    <Text style={{ color: '#6B7280', fontSize: 10, fontWeight: '600' }}>
-                      📦 {item.itemTitle}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Icon symbol="shippingbox.fill" fallback="📦" size={11} tint="#6B7280" />
+                      <Text style={{ color: '#6B7280', fontSize: 10, fontWeight: '600' }}>
+                        {item.itemTitle}
+                      </Text>
+                    </View>
                   </View>
                   <View style={{ flex: 1, height: 1, backgroundColor: '#374151' }} />
                 </View>
@@ -1846,12 +1849,23 @@ export default function LiveAuctionRoom() {
                     position: 'relative',
                   }}
                   onPress={() => setShopTab(tab.key)}
-                >
-                  <Text style={{ fontSize: 18, marginBottom: 3 }}>{tab.icon}</Text>
-                  <Text style={{
-                    fontSize: 10, fontWeight: '700',
-                    color: active ? '#fff' : '#6B7280',
-                  }}>{tab.label}</Text>
+                  >
+                    <Icon
+                      symbol={
+                        tab.key === 'bidding' ? 'hammer.fill' :
+                        tab.key === 'buynow' ? 'tag.fill' :
+                        tab.key === 'sold' ? 'checkmark.seal.fill' :
+                        'banknote.fill'
+                      }
+                      fallback={tab.icon}
+                      size={20}
+                      tint={active ? '#fff' : '#6B7280'}
+                    />
+                    <Text style={{
+                      fontSize: 10, fontWeight: '700',
+                      color: active ? '#fff' : '#6B7280',
+                      marginTop: 4,
+                    }}>{tab.label}</Text>
                   {hasOffersbadge && (
                     <View style={{
                       position: 'absolute', top: 6, right: 6,
@@ -1928,7 +1942,7 @@ export default function LiveAuctionRoom() {
                     {(item.photos[0] as any)?.url ? (
                       <Image source={{ uri: (item.photos[0] as any).url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                     ) : (
-                      <Text style={{ fontSize: 24 }}>📦</Text>
+                      <Icon symbol="shippingbox.fill" fallback="📦" size={28} tint="rgba(255,255,255,0.4)" />
                     )}
                   </View>
                   <View style={{ flex: 1 }}>
@@ -2000,9 +2014,9 @@ export default function LiveAuctionRoom() {
                         fontSize: 13, fontWeight: '700',
                       }}>
                         {soldSubTab === 'all' ? 'All modes'
-                          : soldSubTab === 'auction' ? '🔨 Swipe'
-                          : soldSubTab === 'chat' ? '💬 Chat'
-                          : '🏷️ Buy Now'}
+                          : soldSubTab === 'auction' ? 'Swipe'
+                          : soldSubTab === 'chat' ? 'Chat'
+                          : 'Buy Now'}
                       </Text>
                       <Text style={{ color: '#4B5563', fontSize: 11 }}>⇄</Text>
                     </TouchableOpacity>
@@ -2061,7 +2075,7 @@ export default function LiveAuctionRoom() {
                           {item.photos[0]?.url ? (
                             <Image source={{ uri: item.photos[0].url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                           ) : (
-                            <Text style={{ fontSize: 24 }}>📦</Text>
+                            <Icon symbol="shippingbox.fill" fallback="📦" size={28} tint="rgba(255,255,255,0.4)" />
                           )}
                         </View>
                         <View style={{ flex: 1 }}>
@@ -2111,7 +2125,12 @@ export default function LiveAuctionRoom() {
                             fontSize: 10, fontWeight: '700',
                             color: isBuyNow ? '#10B981' : itemMode === 'chat' ? '#A78BFA' : '#60A5FA',
                           }}>
-                            {isBuyNow ? '🏷️' : itemMode === 'chat' ? '💬' : '🔨'}
+                            <Icon
+                              symbol={isBuyNow ? 'tag.fill' : itemMode === 'chat' ? 'bubble.left.fill' : 'hammer.fill'}
+                              fallback={isBuyNow ? '🏷️' : itemMode === 'chat' ? '💬' : '🔨'}
+                              size={10}
+                              tint={isBuyNow ? '#10B981' : itemMode === 'chat' ? '#A78BFA' : '#60A5FA'}
+                            />
                           </Text>
                         </View>
                       </View>
@@ -2300,7 +2319,7 @@ export default function LiveAuctionRoom() {
                     {item.photos[0]?.url ? (
                       <Image source={{ uri: item.photos[0].url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                     ) : (
-                      <Text style={{ fontSize: 24 }}>📦</Text>
+                      <Icon symbol="shippingbox.fill" fallback="📦" size={28} tint="rgba(255,255,255,0.4)" />
                     )}
                   </View>
                   <View style={{ flex: 1 }}>
@@ -2393,7 +2412,7 @@ export default function LiveAuctionRoom() {
                 }}
                 onPress={() => setItemMode('auction')}
               >
-                <Text style={{ fontSize: 22, marginBottom: 4 }}>🔨</Text>
+                <Icon symbol="hammer.fill" fallback="🔨" size={24} tint={itemMode === 'auction' ? '#1A56DB' : '#6B7280'} />
                 <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Swipe</Text>
                 <Text style={{ color: '#6B7280', fontSize: 10, marginTop: 2 }}>Timer · auto bid</Text>
               </TouchableOpacity>
@@ -2405,7 +2424,7 @@ export default function LiveAuctionRoom() {
                 }}
                 onPress={() => setItemMode('chat')}
               >
-                <Text style={{ fontSize: 22, marginBottom: 4 }}>💬</Text>
+                <Icon symbol="bubble.left.fill" fallback="💬" size={24} tint={itemMode === 'chat' ? '#7C3AED' : '#6B7280'} />
                 <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Chat Bid</Text>
                 <Text style={{ color: '#6B7280', fontSize: 10, marginTop: 2 }}>Buyers type bids</Text>
               </TouchableOpacity>
@@ -2550,7 +2569,7 @@ export default function LiveAuctionRoom() {
                   flexDirection: 'row', gap: 10, alignItems: 'flex-start',
                   backgroundColor: '#1F2937', borderRadius: 12, padding: 12,
                 }}>
-                  <Text style={{ fontSize: 14 }}>💡</Text>
+                  <Icon symbol="lightbulb.fill" fallback="💡" size={14} tint="#4B5563" />
                   <Text style={{ color: '#4B5563', fontSize: 12, flex: 1, lineHeight: 18 }}>
                     Buyers bid by typing in chat. Tap a message to crown the winner.
                   </Text>
@@ -2611,21 +2630,37 @@ export default function LiveAuctionRoom() {
       {saleToast && (
         <View style={{
           position: 'absolute',
-          top: insets.top + 16, left: 24, right: 24,
-          backgroundColor: 'rgba(16,185,129,0.95)',
-          borderRadius: 16, padding: 16,
-          flexDirection: 'row', alignItems: 'center', gap: 12,
+          top: insets.top + 16, left: 16, right: 16,
+          borderRadius: 20,
+          overflow: 'hidden',
           zIndex: 998,
+          shadowColor: '#10B981',
+          shadowOpacity: 0.4,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: 4 },
         }}>
-          <Text style={{ fontSize: 32 }}>🎉</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
-              {saleToast.winner} won!
-            </Text>
-            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12 }} numberOfLines={1}>
-              {saleToast.title} — {formatPHP(saleToast.amount)}
-            </Text>
-          </View>
+          <BlurView
+            intensity={55}
+            tint="dark"
+            style={{
+              flexDirection: 'row', alignItems: 'center', gap: 12,
+              paddingHorizontal: 16, paddingVertical: 14,
+              backgroundColor: 'rgba(16,185,129,0.35)',
+              borderWidth: 1,
+              borderColor: 'rgba(16,185,129,0.5)',
+              borderRadius: 20,
+            }}
+          >
+            <Text style={{ fontSize: 28 }}>🎉</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }} numberOfLines={1}>
+                {saleToast.winner} won!
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 1 }} numberOfLines={1}>
+                {saleToast.title} — {formatPHP(saleToast.amount)}
+              </Text>
+            </View>
+          </BlurView>
         </View>
       )}
 
@@ -2779,7 +2814,21 @@ export default function LiveAuctionRoom() {
                     }}
                     disabled={addingItem}
                   >
-                    <Text style={{ fontSize: 20, marginBottom: 4 }}>{opt.icon}</Text>
+                    <Icon
+                      symbol={
+                        opt.mode === 'queue' ? 'shippingbox.fill' :
+                        opt.mode === 'now' ? 'hammer.fill' :
+                        'tag.fill'
+                      }
+                      fallback={opt.icon}
+                      size={22}
+                      tint={active
+                        ? opt.mode === 'now' ? '#DC2626'
+                          : opt.mode === 'buynow' ? '#10B981'
+                          : '#1A56DB'
+                        : '#6B7280'
+                      }
+                    />
                     <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{opt.label}</Text>
                     <Text style={{ color: '#6B7280', fontSize: 10, marginTop: 2 }}>{opt.sub}</Text>
                   </TouchableOpacity>
@@ -2798,7 +2847,7 @@ export default function LiveAuctionRoom() {
                   }}
                   onPress={() => setBuyNowMode('shop')}
                 >
-                  <Text style={{ fontSize: 20, marginBottom: 4 }}>🏪</Text>
+                  <Icon symbol="storefront.fill" fallback="🏪" size={22} tint={buyNowMode === 'shop' ? '#10B981' : '#6B7280'} />
                   <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Shop Only</Text>
                   <Text style={{ color: '#6B7280', fontSize: 10, marginTop: 2 }}>Sits in Buy Now tab</Text>
                 </TouchableOpacity>
@@ -2818,7 +2867,7 @@ export default function LiveAuctionRoom() {
                     setBuyNowMode('live');
                   }}
                 >
-                  <Text style={{ fontSize: 20, marginBottom: 4 }}>📺</Text>
+                  <Icon symbol="tv.fill" fallback="📺" size={22} tint={buyNowMode === 'live' ? '#10B981' : '#6B7280'} />
                   <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Show Live</Text>
                   <Text style={{ color: '#6B7280', fontSize: 10, marginTop: 2 }}>Viewers swipe to buy</Text>
                 </TouchableOpacity>
