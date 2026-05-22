@@ -28,6 +28,36 @@ import { useAuthStore } from '../../../src/stores/auth.store';
 import { useHMS } from '../../../src/hooks/useHMS';
 import { HMSVideoView } from '../../../src/components/stream/HMSView';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
+import { SymbolView, SFSymbol } from 'expo-symbols';
+
+// ─── Cross-platform icon: SF Symbol on iOS, emoji on Android ──────
+function Icon({
+  symbol,
+  fallback,
+  size = 22,
+  tint = '#fff',
+}: {
+  symbol: SFSymbol;
+  fallback: string;
+  size?: number;
+  tint?: string;
+}) {
+  if (Platform.OS === 'ios') {
+    return (
+      <SymbolView
+        name={symbol}
+        size={size}
+        tintColor={tint}
+        weight="semibold"
+        type="hierarchical"
+      />
+    );
+  }
+  return <Text style={{ fontSize: size - 4, color: tint }}>{fallback}</Text>;
+}
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -99,17 +129,24 @@ function SwipeBidButton({ label, sublabel, onBid, color = '#1A56DB' }: {
   const THRESHOLD = SCREEN_WIDTH * 0.5;
   const MAX_DRAG = SCREEN_WIDTH - 48 - 64;
   const onBidRef = useRef(onBid);
+  const hasFiredRef = useRef(false);
   useEffect(() => { onBidRef.current = onBid; }, [onBid]);
 
   const panResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: () => {
+      hasFiredRef.current = false;
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    },
     onPanResponderMove: (_, g) => {
       const val = Math.max(0, Math.min(g.dx, MAX_DRAG));
       translateX.setValue(val);
     },
     onPanResponderRelease: (_, g) => {
-      if (g.dx >= THRESHOLD) {
+      if (g.dx >= THRESHOLD && !hasFiredRef.current) {
+        hasFiredRef.current = true;
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         onBidRef.current();
         Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
       } else {
@@ -120,39 +157,44 @@ function SwipeBidButton({ label, sublabel, onBid, color = '#1A56DB' }: {
 
   return (
     <View style={{
-      backgroundColor: color, borderRadius: 16,
-      height: 60, overflow: 'hidden', justifyContent: 'center',
+      backgroundColor: color,
+      borderRadius: 10,
+      height: 56,
+      overflow: 'hidden',
+      justifyContent: 'center',
     }}>
-      {/* Fading chevrons — right side hint */}
-      <View style={{ position: 'absolute', right: 14, flexDirection: 'row', gap: 3, alignItems: 'center' }}>
-        {([0.15, 0.35, 0.6] as const).map((op, i) => (
-          <Text key={i} style={{ color: '#fff', fontSize: 18, opacity: op, lineHeight: 22 }}>›</Text>
+      <View style={{
+        position: 'absolute', right: 12,
+        flexDirection: 'row', alignItems: 'center',
+      }}>
+        {([0.12, 0.28, 0.55] as const).map((op, i) => (
+          <Text key={i} style={{ color: '#fff', fontSize: 16, opacity: op }}>›</Text>
         ))}
       </View>
-      {/* Label — offset right so it never overlaps handle */}
-      <View style={{ position: 'absolute', left: 72, right: 48, alignItems: 'center' }}>
-        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16, letterSpacing: 0.2 }} numberOfLines={1}>
+      <View style={{ position: 'absolute', left: 66, right: 40, alignItems: 'center' }}>
+        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15, letterSpacing: 0.1 }} numberOfLines={1}>
           {label}
         </Text>
-        <Text style={{ color: 'rgba(191,219,254,0.8)', fontSize: 10, marginTop: 2 }}>
+        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 9, marginTop: 2 }}>
           {sublabel}
         </Text>
       </View>
-      {/* Draggable handle */}
       <Animated.View
         style={{
           transform: [{ translateX }],
-          width: 56, height: 52, borderRadius: 13, marginLeft: 4,
-          backgroundColor: 'rgba(255,255,255,0.18)',
-          borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+          width: 48, height: 48, borderRadius: 8,
+          marginLeft: 4,
+          backgroundColor: '#fff',
           alignItems: 'center', justifyContent: 'center',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.2,
+          shadowRadius: 4,
+          elevation: 4,
         }}
         {...panResponder.panHandlers}
       >
-        <Text style={{ fontSize: 20 }}>🔨</Text>
-        <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 8, fontWeight: '700', marginTop: 1, letterSpacing: 1 }}>
-          SLIDE
-        </Text>
+        <Icon symbol="chevron.right.2" fallback=">>" size={20} tint={color} />
       </Animated.View>
     </View>
   );
@@ -933,20 +975,21 @@ export default function LiveAuctionRoom() {
   const CHAT_ROW_HEIGHT = 60;
   const SELLER_BUTTON_HEIGHT = (() => {
     if (!isSeller) return 0;
-    const extraHeight = currentItem?.mode === 'chat' || currentItem?.mode === 'buynow' ? 56 : 0;
+    const extraHeight = currentItem?.mode === 'chat' || currentItem?.mode === 'buynow' ? 52 : 0;
     const gapHeight = currentItem?.mode === 'chat' || currentItem?.mode === 'buynow' ? 8 : 0;
-    return extraHeight + gapHeight + 52;
+    return extraHeight + gapHeight + 48;
   })();
   const BUYER_BUTTON_HEIGHT = (() => {
     if (isSeller) return 0;
-    if (!currentItem) return 56;
-    if (currentItem.mode === 'chat') return 68;
-    return 68;
+    if (!currentItem) return 52;
+    if (currentItem.mode === 'chat') return 64;
+    return 56;
   })();
   const ACTION_HEIGHT = isSeller ? SELLER_BUTTON_HEIGHT : BUYER_BUTTON_HEIGHT;
-  const BOTTOM_BAR_HEIGHT = BOTTOM_PADDING + 12 + CHAT_ROW_HEIGHT + ACTION_HEIGHT;
+  const BOTTOM_BAR_HEIGHT = BOTTOM_PADDING + 12 + CHAT_ROW_HEIGHT + 8 + ACTION_HEIGHT;
+  const ITEM_BAR_HEIGHT = currentItem ? 78 : 0;
   const ITEM_BAR_BOTTOM = BOTTOM_BAR_HEIGHT + 8;
-  const CONTROLS_BOTTOM = ITEM_BAR_BOTTOM + (currentItem ? 76 : 0);
+  const CONTROLS_BOTTOM = ITEM_BAR_BOTTOM + ITEM_BAR_HEIGHT + 8;
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -955,6 +998,18 @@ export default function LiveAuctionRoom() {
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#111827' }}>
         {renderVideoBackground()}
       </View>
+
+      {/* ── Bottom Gradient Scrim ── */}
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.85)']}
+        locations={[0, 0.4, 1]}
+        style={{
+          position: 'absolute',
+          left: 0, right: 0, bottom: 0,
+          height: SCREEN_HEIGHT * 0.55,
+          pointerEvents: 'none',
+        }}
+      />
 
       {/* ── Top Bar: seller info + close ── */}
       <View style={{
@@ -1026,127 +1081,132 @@ export default function LiveAuctionRoom() {
           right: 12,
           bottom: CONTROLS_BOTTOM,
           alignItems: 'center',
-          gap: 12,
+          gap: 14,
         }}>
           {/* Mute */}
           <TouchableOpacity
-            style={{ alignItems: 'center', gap: 3 }}
+            style={{ alignItems: 'center', gap: 4 }}
             onPress={() => void hms.toggleMute()}
-            activeOpacity={0.75}
+            activeOpacity={0.7}
           >
             <View style={{
-              width: 38, height: 38, borderRadius: 19,
-              backgroundColor: hms.isMuted
-                ? 'rgba(220,38,38,0.75)'
-                : 'rgba(255,255,255,0.15)',
+              width: 42, height: 42, borderRadius: 21,
+              backgroundColor: hms.isMuted ? 'rgba(220,38,38,0.85)' : 'rgba(255,255,255,0.18)',
               borderWidth: 1,
-              borderColor: hms.isMuted
-                ? 'rgba(220,38,38,0.5)'
-                : 'rgba(255,255,255,0.25)',
+              borderColor: hms.isMuted ? 'rgba(220,38,38,0.6)' : 'rgba(255,255,255,0.28)',
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <Text style={{ fontSize: 16 }}>{hms.isMuted ? '🔇' : '🎙️'}</Text>
+              <Icon
+                symbol={hms.isMuted ? 'mic.slash.fill' : 'mic.fill'}
+                fallback={hms.isMuted ? '🔇' : '🎙️'}
+                size={18}
+              />
             </View>
-            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>
+            <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>
               {hms.isMuted ? 'Unmute' : 'Mute'}
             </Text>
           </TouchableOpacity>
 
           {/* Camera */}
           <TouchableOpacity
-            style={{ alignItems: 'center', gap: 3 }}
+            style={{ alignItems: 'center', gap: 4 }}
             onPress={() => void hms.toggleCamera()}
-            activeOpacity={0.75}
+            activeOpacity={0.7}
           >
             <View style={{
-              width: 38, height: 38, borderRadius: 19,
-              backgroundColor: hms.isCameraOff
-                ? 'rgba(220,38,38,0.75)'
-                : 'rgba(255,255,255,0.15)',
+              width: 42, height: 42, borderRadius: 21,
+              backgroundColor: hms.isCameraOff ? 'rgba(220,38,38,0.85)' : 'rgba(255,255,255,0.18)',
               borderWidth: 1,
-              borderColor: hms.isCameraOff
-                ? 'rgba(220,38,38,0.5)'
-                : 'rgba(255,255,255,0.25)',
+              borderColor: hms.isCameraOff ? 'rgba(220,38,38,0.6)' : 'rgba(255,255,255,0.28)',
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <Text style={{ fontSize: 16 }}>{hms.isCameraOff ? '📵' : '📹'}</Text>
+              <Icon
+                symbol={hms.isCameraOff ? 'video.slash.fill' : 'video.fill'}
+                fallback={hms.isCameraOff ? '📵' : '📹'}
+                size={18}
+              />
             </View>
-            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>
+            <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>
               {hms.isCameraOff ? 'Start' : 'Stop'}
             </Text>
           </TouchableOpacity>
 
           {/* Flip */}
           <TouchableOpacity
-            style={{ alignItems: 'center', gap: 3 }}
+            style={{ alignItems: 'center', gap: 4 }}
             onPress={() => void hms.switchCamera()}
-            activeOpacity={0.75}
+            activeOpacity={0.7}
           >
             <View style={{
-              width: 38, height: 38, borderRadius: 19,
-              backgroundColor: 'rgba(255,255,255,0.15)',
-              borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+              width: 42, height: 42, borderRadius: 21,
+              backgroundColor: 'rgba(255,255,255,0.18)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <Text style={{ fontSize: 16 }}>🔄</Text>
+              <Icon symbol="arrow.triangle.2.circlepath.camera.fill" fallback="🔄" size={18} />
             </View>
-            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>Flip</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>Flip</Text>
           </TouchableOpacity>
 
           {/* Reactions */}
-            <TouchableOpacity
-              style={{ alignItems: 'center', gap: 3 }}
-              activeOpacity={0.7}
-              onPress={() => {
-                reactButtonRef.current?.measureInWindow((_x, y, _w, h) => {
-                  const screenH = Dimensions.get('window').height;
-                  const buttonCenterFromBottom = screenH - (y + h / 2);
-                  reactButtonBottomRef.current = buttonCenterFromBottom - 21; // 21 = half pill height
-                  setShowReactions(prev => !prev);
-                });
+          <TouchableOpacity
+            style={{ alignItems: 'center', gap: 4 }}
+            activeOpacity={0.7}
+            onPress={() => {
+              reactButtonRef.current?.measureInWindow((_x, y, _w, h) => {
+                const screenH = Dimensions.get('window').height;
+                const buttonCenterFromBottom = screenH - (y + h / 2);
+                reactButtonBottomRef.current = buttonCenterFromBottom - 21;
+                setShowReactions(prev => !prev);
+              });
+            }}
+          >
+            <View
+              ref={reactButtonRef}
+              style={{
+                width: 42, height: 42, borderRadius: 21,
+                backgroundColor: showReactions ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.18)',
+                borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+                alignItems: 'center', justifyContent: 'center',
               }}
             >
-              <View
-                ref={reactButtonRef}
-                style={{
-                  width: 38, height: 38, borderRadius: 19,
-                  backgroundColor: showReactions ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)',
-                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
-                  alignItems: 'center', justifyContent: 'center',
-                }}
-              >
-                <Text style={{ fontSize: 18 }}>{showReactions ? '✕' : '😊'}</Text>
-              </View>
-              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>React</Text>
-            </TouchableOpacity>
+              <Icon
+                symbol={showReactions ? 'xmark' : 'face.smiling.fill'}
+                fallback={showReactions ? '✕' : '😊'}
+                size={18}
+              />
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>React</Text>
+          </TouchableOpacity>
 
           {/* Shop */}
           <TouchableOpacity
-            style={{ alignItems: 'center', gap: 3 }}
+            style={{ alignItems: 'center', gap: 4 }}
             onPress={() => setShowShop(true)}
-            activeOpacity={0.75}
+            activeOpacity={0.7}
           >
             <View style={{
-              width: 38, height: 38, borderRadius: 19,
-              backgroundColor: 'rgba(255,255,255,0.15)',
-              borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+              width: 42, height: 42, borderRadius: 21,
+              backgroundColor: 'rgba(255,255,255,0.18)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <Text style={{ fontSize: 16 }}>🛍️</Text>
+              <Icon symbol="bag.fill" fallback="🛍️" size={18} />
               {pendingOffers.length > 0 && (
                 <View style={{
-                  position: 'absolute', top: -2, right: -2,
+                  position: 'absolute', top: -3, right: -3,
                   backgroundColor: '#DC2626', borderRadius: 999,
-                  width: 14, height: 14,
+                  minWidth: 16, height: 16, paddingHorizontal: 3,
                   alignItems: 'center', justifyContent: 'center',
+                  borderWidth: 1.5, borderColor: '#000',
                 }}>
-                  <Text style={{ color: '#fff', fontSize: 8, fontWeight: '700' }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>
                     {pendingOffers.length}
                   </Text>
                 </View>
               )}
             </View>
-            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>Shop</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>Shop</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1158,79 +1218,80 @@ export default function LiveAuctionRoom() {
           right: 12,
           bottom: CONTROLS_BOTTOM,
           alignItems: 'center',
-          gap: 12,
+          gap: 14,
         }}>
-
-        {/* Reactions */}
-            <TouchableOpacity
-              style={{ alignItems: 'center', gap: 3 }}
-              activeOpacity={0.7}
-              onPress={() => {
-                reactButtonRef.current?.measureInWindow((_x, y, _w, h) => {
-                  const screenH = Dimensions.get('window').height;
-                  const buttonCenterFromBottom = screenH - (y + h / 2);
-                  reactButtonBottomRef.current = buttonCenterFromBottom - 21; // 21 = half pill height
-                  setShowReactions(prev => !prev);
-                });
+          {/* Reactions */}
+          <TouchableOpacity
+            style={{ alignItems: 'center', gap: 4 }}
+            activeOpacity={0.7}
+            onPress={() => {
+              reactButtonRef.current?.measureInWindow((_x, y, _w, h) => {
+                const screenH = Dimensions.get('window').height;
+                const buttonCenterFromBottom = screenH - (y + h / 2);
+                reactButtonBottomRef.current = buttonCenterFromBottom - 21;
+                setShowReactions(prev => !prev);
+              });
+            }}
+          >
+            <View
+              ref={reactButtonRef}
+              style={{
+                width: 42, height: 42, borderRadius: 21,
+                backgroundColor: showReactions ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.18)',
+                borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+                alignItems: 'center', justifyContent: 'center',
               }}
             >
-              <View
-                ref={reactButtonRef}
-                style={{
-                  width: 38, height: 38, borderRadius: 19,
-                  backgroundColor: showReactions ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.15)',
-                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
-                  alignItems: 'center', justifyContent: 'center',
-                }}
-              >
-                <Text style={{ fontSize: 18 }}>{showReactions ? '✕' : '😊'}</Text>
-              </View>
-              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>React</Text>
-            </TouchableOpacity>
+              <Icon
+                symbol={showReactions ? 'xmark' : 'face.smiling.fill'}
+                fallback={showReactions ? '✕' : '😊'}
+                size={18}
+              />
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>React</Text>
+          </TouchableOpacity>
 
           {/* Share */}
-          <TouchableOpacity style={{ alignItems: 'center', gap: 4 }} activeOpacity={0.75}>
-            {/* Share */}
-            <TouchableOpacity style={{ alignItems: 'center', gap: 3 }} activeOpacity={0.75}>
-              <View style={{
-                width: 38, height: 38, borderRadius: 19,
-                backgroundColor: 'rgba(255,255,255,0.15)',
-                borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
-                alignItems: 'center', justifyContent: 'center',
-              }}>
-                <Text style={{ fontSize: 16 }}>↑</Text>
-              </View>
-              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>Share</Text>
-            </TouchableOpacity>
+          <TouchableOpacity style={{ alignItems: 'center', gap: 4 }} activeOpacity={0.7}>
+            <View style={{
+              width: 42, height: 42, borderRadius: 21,
+              backgroundColor: 'rgba(255,255,255,0.18)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Icon symbol="square.and.arrow.up" fallback="↑" size={18} />
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>Share</Text>
+          </TouchableOpacity>
 
-            {/* Shop */}
-            <TouchableOpacity
-              style={{ alignItems: 'center', gap: 3 }}
-              onPress={() => setShowShop(true)}
-              activeOpacity={0.75}
-            >
-              <View style={{
-                width: 38, height: 38, borderRadius: 19,
-                backgroundColor: 'rgba(255,255,255,0.15)',
-                borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
-                alignItems: 'center', justifyContent: 'center',
-              }}>
-                <Text style={{ fontSize: 16 }}>🛍️</Text>
-                {biddingItems.length > 0 && (
-                  <View style={{
-                    position: 'absolute', top: -2, right: -2,
-                    backgroundColor: '#DC2626', borderRadius: 999,
-                    width: 14, height: 14,
-                    alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    <Text style={{ color: '#fff', fontSize: 8, fontWeight: '700' }}>
-                      {biddingItems.length}
-                    </Text>
-                  </View>
-                )}
-              </View>
-              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 9, fontWeight: '600' }}>Shop</Text>
-            </TouchableOpacity>
+          {/* Shop */}
+          <TouchableOpacity
+            style={{ alignItems: 'center', gap: 4 }}
+            onPress={() => setShowShop(true)}
+            activeOpacity={0.7}
+          >
+            <View style={{
+              width: 42, height: 42, borderRadius: 21,
+              backgroundColor: 'rgba(255,255,255,0.18)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Icon symbol="bag.fill" fallback="🛍️" size={18} />
+              {biddingItems.length > 0 && (
+                <View style={{
+                  position: 'absolute', top: -3, right: -3,
+                  backgroundColor: '#DC2626', borderRadius: 999,
+                  minWidth: 16, height: 16, paddingHorizontal: 3,
+                  alignItems: 'center', justifyContent: 'center',
+                  borderWidth: 1.5, borderColor: '#000',
+                }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>
+                    {biddingItems.length}
+                  </Text>
+                </View>
+              )}
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>Shop</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1239,8 +1300,8 @@ export default function LiveAuctionRoom() {
       <View style={{
         position: 'absolute',
         left: 0,
-        right: isSeller ? 68 : 68, // indent right for both seller and viewer controls
-        bottom: CHAT_ROW_HEIGHT + ACTION_HEIGHT + BOTTOM_PADDING + 12 + (currentItem ? 84 : 8) + keyboardHeight,
+        right: 60,
+        bottom: BOTTOM_BAR_HEIGHT + ITEM_BAR_HEIGHT + (currentItem ? 16 : 8) + keyboardHeight,
         height: 200,
       }}>
         <FlatList
@@ -1360,30 +1421,37 @@ export default function LiveAuctionRoom() {
             }
 
             return (
-              <View style={{ marginBottom: 6, flexDirection: 'row', alignItems: 'center' }}>
-                <View style={{
-                  flex: 1,
-                  backgroundColor: 'rgba(0,0,0,0.60)', borderRadius: 18,
-                  paddingHorizontal: 12, paddingVertical: 6,
-                  flexDirection: 'row', gap: 6, alignItems: 'center', flexShrink: 1,
-                }}>
-                  <Text style={{ color: '#1A56DB', fontSize: 11, fontWeight: '700' }}>
-                    {item.displayName}
-                  </Text>
-                  <Text style={{ color: '#fff', fontSize: 11, flexShrink: 1 }}>
-                    {item.message}
+              <View style={{ marginBottom: 4, flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ flexShrink: 1, maxWidth: '88%' }}>
+                  <Text
+                    style={{
+                      color: '#fff', fontSize: 13,
+                      lineHeight: 18,
+                      textShadowColor: 'rgba(0,0,0,0.85)',
+                      textShadowOffset: { width: 0, height: 1 },
+                      textShadowRadius: 3,
+                    }}
+                  >
+                    <Text style={{ fontWeight: '700', color: 'rgba(255,255,255,0.95)' }}>
+                      {item.displayName}
+                    </Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.6)' }}>{'  '}</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.95)' }}>{item.message}</Text>
                   </Text>
                 </View>
                 {isSeller && currentItem?.mode === 'chat' && item.type !== 'item-divider' && (
                   <TouchableOpacity
-                    style={{ paddingHorizontal: 8, paddingVertical: 4 }}
+                    style={{
+                      paddingHorizontal: 8, paddingVertical: 4,
+                      marginLeft: 6,
+                    }}
                     onPress={() => setDeclaringWinner({
                       userId: item.userId,
                       displayName: item.displayName,
                       message: item.message,
                     })}
                   >
-                    <Text style={{ fontSize: 16 }}>👑</Text>
+                    <Icon symbol="crown.fill" fallback="👑" size={18} tint="#F59E0B" />
                   </TouchableOpacity>
                 )}
               </View>
@@ -1393,332 +1461,341 @@ export default function LiveAuctionRoom() {
       </View>
 
 
-      {/* ── Current Item Bar ── */}
+      {/* ── Current Item Bar — Premium frosted card ── */}
       {currentItem && (
-        <View style={{ 
-          position: 'absolute', 
-          left: 16, right: 16, 
-          // Push up more when seller has skip button showing
-          bottom: (isSeller && (currentItem.mode === 'chat' || currentItem.mode === 'buynow') ? 210 : 152) + keyboardHeight
+        <View style={{
+          position: 'absolute',
+          left: 12, right: 12,
+          bottom: ITEM_BAR_BOTTOM,
+          borderRadius: 16,
+          overflow: 'hidden',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.35,
+          shadowRadius: 12,
         }}>
-          <View style={{
-            backgroundColor: 'rgba(0,0,0,0.70)', borderRadius: 16,
-            paddingHorizontal: 16, paddingVertical: 12,
-            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-          }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
-              {currentItem.photos[0]?.url && (
-                <Image
-                  source={{ uri: currentItem.photos[0].url }}
-                  style={{ width: 40, height: 40, borderRadius: 10 }}
-                  resizeMode="cover"
-                />
-              )}
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
-                  {currentItem.title}
-                </Text>
+          <BlurView
+            intensity={45}
+            tint="dark"
+            style={{
+              paddingHorizontal: 14,
+              paddingVertical: 12,
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(17,24,39,0.55)',
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.08)',
+              borderRadius: 16,
+            }}
+          >
+            {/* Thumbnail */}
+            {currentItem.photos[0]?.url ? (
+              <Image
+                source={{ uri: currentItem.photos[0].url }}
+                style={{
+                  width: 48, height: 48, borderRadius: 10,
+                  marginRight: 12,
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.15)',
+                }}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={{
+                width: 48, height: 48, borderRadius: 10,
+                marginRight: 12,
+                backgroundColor: 'rgba(255,255,255,0.08)',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Icon symbol="shippingbox.fill" fallback="📦" size={22} tint="rgba(255,255,255,0.5)" />
+              </View>
+            )}
+
+            {/* Title + status */}
+            <View style={{ flex: 1, marginRight: 10 }}>
+              <Text
+                style={{ color: '#fff', fontSize: 13, fontWeight: '700', letterSpacing: 0.1 }}
+                numberOfLines={1}
+              >
+                {currentItem.title}
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3, gap: 5 }}>
                 {winnerBanner ? (
-                  <Text style={{ color: '#10B981', fontSize: 11, fontWeight: '700' }}>
-                    🏆 {winnerBanner}
-                  </Text>
+                  <>
+                    <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#10B981' }} />
+                    <Text style={{ color: '#10B981', fontSize: 10, fontWeight: '600' }} numberOfLines={1}>
+                      {winnerBanner}
+                    </Text>
+                  </>
                 ) : (
-                  <Text style={{ color: '#9CA3AF', fontSize: 11 }}>
+                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, fontWeight: '500' }} numberOfLines={1}>
                     {currentItem.totalBids} bid{currentItem.totalBids !== 1 ? 's' : ''}
-                    {currentItem.highestBidderName ? ` · ${currentItem.highestBidderName} leading` : ''}
+                    {currentItem.highestBidderName ? ` · ${currentItem.highestBidderName}` : ''}
                   </Text>
                 )}
               </View>
             </View>
-            <View style={{ alignItems: 'flex-end', gap: 4 }}>
-              <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 15 }}>
+
+            {/* Price + timer column */}
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={{
+                color: '#fff',
+                fontSize: 22,
+                fontWeight: '800',
+                letterSpacing: -0.6,
+                fontVariant: ['tabular-nums'],
+                lineHeight: 24,
+              }}>
                 {formatPHP(currentItem.currentPrice)}
               </Text>
               {timerRemaining !== null && (
                 <View style={{
-                  backgroundColor: timerPaused ? '#6B7280' : timerRemaining <= counterbidSeconds ? '#DC2626' : '#1A56DB',
-                  borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, minWidth: 48, alignItems: 'center',
+                  marginTop: 4,
+                  backgroundColor: timerPaused
+                    ? 'rgba(107,114,128,0.85)'
+                    : timerRemaining <= counterbidSeconds
+                      ? '#DC2626'
+                      : '#1A56DB',
+                  borderRadius: 6,
+                  paddingHorizontal: 8,
+                  paddingVertical: 2,
+                  minWidth: 46,
+                  alignItems: 'center',
+                  shadowColor: timerRemaining <= counterbidSeconds ? '#DC2626' : '#1A56DB',
+                  shadowOpacity: 0.5,
+                  shadowRadius: 6,
+                  shadowOffset: { width: 0, height: 0 },
+                }}>
+                  <Text style={{
+                    color: '#fff',
+                    fontWeight: '800',
+                    fontSize: 12,
+                    fontVariant: ['tabular-nums'],
+                    letterSpacing: 0.3,
                   }}>
-                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18 }}>
-                      {timerPaused ? '⏸' : `${timerRemaining}s`}
-                    </Text>
+                    {timerPaused ? 'PAUSED' : `${timerRemaining}s`}
+                  </Text>
                 </View>
               )}
             </View>
-          </View>
+          </BlurView>
         </View>
       )}
 
-      {/* ── Bottom Controls ── */}
+      {/* ── Bottom Controls — no panel, sits in gradient scrim ── */}
       <View style={{
         position: 'absolute', bottom: keyboardHeight, left: 0, right: 0,
+        backgroundColor: 'transparent',
         paddingBottom: BOTTOM_PADDING, paddingTop: 12,
       }}>
         {/* Chat input row */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12, paddingHorizontal: 16 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8, paddingHorizontal: 16 }}>
           <TextInput
             style={{
               flex: 1,
-              backgroundColor: 'rgba(255,255,255,0.08)',
-              borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-              borderRadius: 999,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+              borderRadius: 22,
               paddingHorizontal: 16, paddingVertical: 11,
               color: '#fff', fontSize: 13,
             }}
             placeholder="Say something..."
-            placeholderTextColor="rgba(255,255,255,0.3)"
+            placeholderTextColor="rgba(255,255,255,0.25)"
             value={chatInput}
             onChangeText={setChatInput}
             onSubmitEditing={handleSendChat}
             returnKeyType="send"
           />
           <TouchableOpacity
-            style={{
-              width: 38, height: 38, borderRadius: 19,
-              backgroundColor: chatInput.trim() ? '#1A56DB' : 'rgba(255,255,255,0.08)',
-              borderWidth: 1,
-              borderColor: chatInput.trim() ? '#1A56DB' : 'rgba(255,255,255,0.1)',
-              alignItems: 'center', justifyContent: 'center',
-            }}
-            onPress={handleSendChat}
-          >
-            <Text style={{ color: '#fff', fontSize: 14 }}>↑</Text>
-          </TouchableOpacity>
+              style={{
+                width: 40, height: 40, borderRadius: 20,
+                backgroundColor: chatInput.trim() ? '#1A56DB' : 'rgba(255,255,255,0.1)',
+                borderWidth: 1,
+                borderColor: chatInput.trim() ? '#1A56DB' : 'rgba(255,255,255,0.15)',
+                alignItems: 'center', justifyContent: 'center',
+              }}
+              onPress={handleSendChat}
+            >
+              <Icon symbol="arrow.up" fallback="↑" size={16} tint="#fff" />
+            </TouchableOpacity>
         </View>
-        
-        {/* Bid button — viewers only */}
+
+        {/* Buyer bid actions */}
         {!isSeller && (
-          currentItem ? (
-            currentItem.mode === 'buynow' ? (
-              <View style={{ paddingHorizontal: 16, flexDirection: 'row', gap: 8 }}>
-                {/* Custom / Offer button */}
-                <TouchableOpacity
-                  style={{
-                    backgroundColor: 'rgba(255,255,255,0.08)',
-                    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
-                    borderRadius: 14, paddingHorizontal: 14,
-                    alignItems: 'center', justifyContent: 'center',
-                    height: 60,
-                  }}
-                  onPress={() => {
-                    const liveItem = currentItemRef.current;
-                    if (!liveItem) return;
-                    setSelectedBuyNowItem({
-                      id: liveItem.itemId,
-                      title: liveItem.title,
-                      price: liveItem.currentPrice,
-                      minimumOffer: 0,
-                    });
-                    setLiveOfferPercent(-20);
-                    setLiveCustomOffer('');
-                    setShowLiveOfferModal(true);
-                  }}
-                >
-                  <Text style={{ color: '#fff', fontSize: 16 }}>💰</Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 9, fontWeight: '700', marginTop: 2 }}>OFFER</Text>
-                </TouchableOpacity>
-
-                {/* Swipe to Buy */}
-                <View style={{ flex: 1 }}>
-                  <SwipeBidButton
-                    label={`Buy Now — ${formatPHP(currentItem.currentPrice)}`}
-                    sublabel="Swipe to buy · first come first served"
-                    color="#10B981"
-                    onBid={() => {
-                      if (claimingBuyNow) return;
-                      setClaimingBuyNow(true);
-                      claimBuyNow(currentItem.itemId, user?.id ?? '', user?.displayName ?? 'Buyer');
+          <View style={{ paddingHorizontal: 16 }}>
+            {currentItem ? (
+              currentItem.mode === 'buynow' ? (
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: 'rgba(255,255,255,0.07)',
+                      borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+                      borderRadius: 10, paddingHorizontal: 16,
+                      alignItems: 'center', justifyContent: 'center', height: 56,
                     }}
-                  />
+                    onPress={() => {
+                      const liveItem = currentItemRef.current;
+                      if (!liveItem) return;
+                      setSelectedBuyNowItem({ id: liveItem.itemId, title: liveItem.title, price: liveItem.currentPrice, minimumOffer: 0 });
+                      setLiveOfferPercent(-20);
+                      setLiveCustomOffer('');
+                      setShowLiveOfferModal(true);
+                    }}
+                  >
+                    <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '600' }}>Offer</Text>
+                  </TouchableOpacity>
+                  <View style={{ flex: 1 }}>
+                    <SwipeBidButton
+                      label={`Buy Now — ${formatPHP(currentItem.currentPrice)}`}
+                      sublabel="Swipe to buy · first come"
+                      color="#10B981"
+                      onBid={() => {
+                        if (claimingBuyNow) return;
+                        setClaimingBuyNow(true);
+                        claimBuyNow(currentItem.itemId, user?.id ?? '', user?.displayName ?? 'Buyer');
+                      }}
+                    />
+                  </View>
                 </View>
-              </View>
-            ) : currentItem.mode === 'chat' ? (
-              <View style={{
-                backgroundColor: 'rgba(124,58,237,0.15)',
-                borderWidth: 1, borderColor: '#7C3AED',
-                borderRadius: 16, paddingVertical: 14, alignItems: 'center',
-                marginHorizontal: 16,
-              }}>
-                <Text style={{ color: '#A78BFA', fontWeight: '700', fontSize: 15 }}>
-                  💬 Type your bid in chat!
-                </Text>
-                <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 4 }}>
-                  {currentItem.currentPrice > 0
-                    ? `Starting at ${formatPHP(currentItem.currentPrice)}`
-                    : 'Highest bid when seller closes wins'}
-                </Text>
-              </View>
+              ) : currentItem.mode === 'chat' ? (
+                <View style={{
+                  backgroundColor: 'rgba(124,58,237,0.1)',
+                  borderWidth: 1, borderColor: 'rgba(124,58,237,0.25)',
+                  borderRadius: 10, paddingVertical: 14, alignItems: 'center',
+                }}>
+                  <Text style={{ color: '#A78BFA', fontWeight: '700', fontSize: 14 }}>
+                    Type your bid in chat
+                  </Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.25)', fontSize: 10, marginTop: 3 }}>
+                    {currentItem.currentPrice > 0
+                      ? `Starting at ${formatPHP(currentItem.currentPrice)}`
+                      : 'Highest bid when seller closes wins'}
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: 'rgba(255,255,255,0.07)',
+                      borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+                      borderRadius: 10, paddingHorizontal: 16,
+                      alignItems: 'center', justifyContent: 'center', height: 56,
+                      opacity: broadcasterReconnecting ? 0.4 : 1,
+                    }}
+                    onPress={() => {
+                      if (broadcasterReconnecting) return;
+                      setCustomBidInput('');
+                      setShowCustomBid(true);
+                    }}
+                  >
+                    <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '600' }}>Custom</Text>
+                  </TouchableOpacity>
+                  <View style={{ flex: 1 }}>
+                    <SwipeBidButton
+                      label={currentItem.totalBids === 0
+                        ? `Bid ${formatPHP(currentItem.currentPrice)}`
+                        : `Bid ${formatPHP(currentItem.currentPrice + getBidIncrement(currentItem.currentPrice))}`
+                      }
+                      sublabel={currentItem.totalBids === 0
+                        ? `Opening bid`
+                        : `Current: ${formatPHP(currentItem.currentPrice)}`
+                      }
+                      onBid={() => {
+                        if (broadcasterReconnecting) return;
+                        const latest = currentItemRef.current;
+                        if (!latest) return;
+                        const bidAmount = latest.totalBids === 0
+                          ? latest.currentPrice
+                          : latest.currentPrice + getBidIncrement(latest.currentPrice);
+                        setCurrentItem(prev => prev ? {
+                          ...prev,
+                          currentPrice: bidAmount,
+                          totalBids: prev.totalBids + 1,
+                          highestBidderName: user?.displayName ?? 'You',
+                        } : prev);
+                        setWinnerBanner(`${user?.displayName ?? 'You'} is winning!`);
+                        if (timerRemaining !== null && timerRemaining <= counterbidSeconds + 1) {
+                          setTimerRemaining(counterbidSeconds);
+                        }
+                        placeBid(latest.itemId, bidAmount, user?.id ?? '');
+                      }}
+                    />
+                  </View>
+                </View>
+              )
             ) : (
-            <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 16 }}>
-              {/* Custom bid button */}
-              <TouchableOpacity
-                style={{
-                  backgroundColor: 'rgba(255,255,255,0.08)',
-                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
-                  borderRadius: 14, paddingHorizontal: 14,
-                  alignItems: 'center', justifyContent: 'center',
-                  height: 60,
-                  opacity: broadcasterReconnecting ? 0.4 : 1,
-                }}
-                onPress={() => {
-                  if (broadcasterReconnecting) return;
-                  setCustomBidInput('');
-                  setShowCustomBid(true);
-                }}
-              >
-                <Text style={{ color: '#fff', fontSize: 16 }}>✏️</Text>
-                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 9, fontWeight: '700', marginTop: 2 }}>CUSTOM</Text>
-              </TouchableOpacity>
-
-              {/* Swipe bid button */}
-              <View style={{ flex: 1 }}>
-                <SwipeBidButton
-                  label={currentItem.totalBids === 0
-                    ? `Bid ${formatPHP(currentItem.currentPrice)}`
-                    : `Bid ${formatPHP(currentItem.currentPrice + getBidIncrement(currentItem.currentPrice))}`
-                  }
-                  sublabel={currentItem.totalBids === 0
-                    ? `Start at ${formatPHP(currentItem.currentPrice)}`
-                    : `Current: ${formatPHP(currentItem.currentPrice)}`
-                  }
-                  onBid={() => {
-                    if (broadcasterReconnecting) return;
-                    const latest = currentItemRef.current;
-                    if (!latest) return;
-                    const bidAmount = latest.totalBids === 0
-                      ? latest.currentPrice
-                      : latest.currentPrice + getBidIncrement(latest.currentPrice);
-
-                    // Optimistic update — instant UI before server confirms
-                    setCurrentItem(prev => prev ? {
-                      ...prev,
-                      currentPrice: bidAmount,
-                      totalBids: prev.totalBids + 1,
-                      highestBidderName: user?.displayName ?? 'You',
-                    } : prev);
-                    setWinnerBanner(`${user?.displayName ?? 'You'} is winning!`);
-                   if (timerRemaining !== null && timerRemaining <= counterbidSeconds + 1) {
-                      setTimerRemaining(counterbidSeconds);
-                    }
-
-                    placeBid(latest.itemId, bidAmount, user?.id ?? '');
-                  }}
-                />
+              <View style={{
+                backgroundColor: 'rgba(255,255,255,0.04)',
+                borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+                borderRadius: 10, paddingVertical: 14, alignItems: 'center',
+              }}>
+                <Text style={{ color: 'rgba(255,255,255,0.2)', fontWeight: '500', fontSize: 13 }}>
+                  Waiting for next item
+                </Text>
               </View>
-            </View>
-            )
-          ) : (
-            <View style={{
-              backgroundColor: 'rgba(255,255,255,0.05)',
-              borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
-              borderRadius: 16, paddingVertical: 16, alignItems: 'center',
-              marginHorizontal: 16,
-            }}>
-              <Text style={{ color: 'rgba(255,255,255,0.35)', fontWeight: '600', fontSize: 13 }}>
-                Waiting for next item...
-              </Text>
-            </View>
-          )
+            )}
+          </View>
         )}
 
-        {/* Seller bottom controls */}
+        {/* Seller actions */}
         {isSeller && (
-          <View style={{ gap: 8 }}>
-            {/* Pull Back to Shop — only during live buy now */}
+          <View style={{ paddingHorizontal: 16, gap: 8 }}>
             {currentItem?.mode === 'buynow' && (
               <TouchableOpacity
                 style={{
-                  backgroundColor: 'rgba(16,185,129,0.15)',
-                  borderWidth: 1, borderColor: '#10B981',
-                  borderRadius: 16, paddingVertical: 12, alignItems: 'center',
-                  marginHorizontal: 0,
+                  backgroundColor: 'rgba(16,185,129,0.1)',
+                  borderWidth: 1, borderColor: 'rgba(16,185,129,0.25)',
+                  borderRadius: 10, paddingVertical: 11, alignItems: 'center',
                 }}
                 onPress={() => {
-                  Alert.alert(
-                    'Pull Back to Shop?',
-                    `Remove "${currentItem.title}" from live and put it back in the Buy Now tab.`,
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      {
-                        text: 'Pull Back',
-                        onPress: () => {
-                          if (!user?.id) return;
-                          pullBuyNow(currentItem.itemId, user.id);
-                        },
-                      },
-                    ]
-                  );
+                  Alert.alert('Pull Back to Shop?', `Remove "${currentItem.title}" from live and put it back in the Buy Now tab.`, [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Pull Back', onPress: () => { if (!user?.id) return; pullBuyNow(currentItem.itemId, user.id); } },
+                  ]);
                 }}
                 activeOpacity={0.85}
               >
-                <Text style={{ color: '#10B981', fontWeight: '700', fontSize: 14 }}>
-                  ↩ Pull Back to Shop
-                </Text>
-                <Text style={{ color: '#065F46', fontSize: 11, marginTop: 2 }}>
-                  Returns to Buy Now tab
-                </Text>
+                <Text style={{ color: '#10B981', fontWeight: '600', fontSize: 13 }}>Pull Back to Shop</Text>
               </TouchableOpacity>
             )}
-            {/* Skip Item — only during chat bid */}
             {currentItem?.mode === 'chat' && (
               <TouchableOpacity
                 style={{
-                  backgroundColor: skipping ? 'rgba(107,114,128,0.15)' : 'rgba(245,158,11,0.15)',
-                  borderWidth: 1, borderColor: skipping ? '#6B7280' : '#F59E0B',
-                  borderRadius: 16, paddingVertical: 12, alignItems: 'center',
+                  backgroundColor: skipping ? 'rgba(107,114,128,0.1)' : 'rgba(245,158,11,0.1)',
+                  borderWidth: 1, borderColor: skipping ? 'rgba(107,114,128,0.25)' : 'rgba(245,158,11,0.25)',
+                  borderRadius: 10, paddingVertical: 11, alignItems: 'center',
                   opacity: skipping ? 0.6 : 1,
                 }}
                 disabled={skipping}
                 onPress={() => {
-                  Alert.alert(
-                    'Skip Item?',
-                    `No sale for "${currentItem.title}"? It will go back to the queue.`,
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      {
-                        text: 'Skip Item',
-                        style: 'destructive',
-                        onPress: () => {
-                          if (!currentItem || !user?.id) return;
-                          setSkipping(true);
-                          skipChatItem(currentItem.itemId, user.id);
-                          // Reset after 3s fallback in case socket doesn't respond
-                          setTimeout(() => setSkipping(false), 3000);
-                        },
-                      },
-                    ]
-                  );
+                  Alert.alert('Skip Item?', `No sale for "${currentItem.title}"? It will go back to the queue.`, [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Skip Item', style: 'destructive', onPress: () => {
+                      if (!currentItem || !user?.id) return;
+                      setSkipping(true);
+                      skipChatItem(currentItem.itemId, user.id);
+                      setTimeout(() => setSkipping(false), 3000);
+                    }},
+                  ]);
                 }}
                 activeOpacity={0.85}
               >
-                {skipping ? (
-                  <ActivityIndicator color="#F59E0B" size="small" />
-                ) : (
-                  <>
-                    <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 14 }}>
-                      ⏭ Skip Item — No Sale
-                    </Text>
-                    <Text style={{ color: '#92400E', fontSize: 11, marginTop: 2 }}>
-                      Item goes back to queue
-                    </Text>
-                  </>
-                )}
+                {skipping
+                  ? <ActivityIndicator color="#F59E0B" size="small" />
+                  : <Text style={{ color: '#F59E0B', fontWeight: '600', fontSize: 13 }}>Skip Item — No Sale</Text>
+                }
               </TouchableOpacity>
             )}
-
-            {/* End Live */}
             <TouchableOpacity
               style={{
-                backgroundColor: 'rgba(220,38,38,0.15)',
-                borderWidth: 1, borderColor: '#DC2626',
-                borderRadius: 16, paddingVertical: 14, alignItems: 'center',
+                backgroundColor: 'rgba(220,38,38,0.1)',
+                borderWidth: 1, borderColor: 'rgba(220,38,38,0.25)',
+                borderRadius: 10, paddingVertical: 12, alignItems: 'center',
               }}
               onPress={() => void handleLeave()}
               activeOpacity={0.85}
             >
-              <Text style={{ color: '#F87171', fontWeight: '700', fontSize: 15 }}>
-                End Live
-              </Text>
+              <Text style={{ color: '#F87171', fontWeight: '600', fontSize: 14 }}>End Live</Text>
             </TouchableOpacity>
           </View>
         )}
