@@ -2,9 +2,10 @@ import { Module } from '@nestjs/common';
 import { BiddingGateway } from './bidding.gateway';
 import { BiddingService } from './bidding.service';
 import { MaxBidsModule } from '../max-bids/max-bids.module';
+import { OrdersModule } from '../orders/orders.module';
 
 @Module({
-  imports: [MaxBidsModule],
+  imports: [MaxBidsModule, OrdersModule],
   providers: [BiddingGateway, BiddingService],
   exports: [BiddingService, BiddingGateway],
 })

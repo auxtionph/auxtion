@@ -60,4 +60,43 @@ export class OrdersController {
   cancelOrder(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ordersService.cancelOrder(user.id, id);
   }
+
+  @Get('address/default')
+  getDefaultAddress(@CurrentUser() user: AuthUser) {
+    return this.ordersService.getDefaultAddress(user.id);
+  }
+
+  @Patch(':id/mark-paid')
+  @HttpCode(HttpStatus.OK)
+  markPaid(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ordersService.markPaid(user.id, id);
+  }
+
+  @Patch(':id/shipping-address')
+  @HttpCode(HttpStatus.OK)
+  updateShippingAddress(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body()
+    body: {
+      name: string;
+      phone: string;
+      line1: string;
+      city: string;
+      province: string;
+      postalCode: string;
+    },
+  ) {
+    return this.ordersService.updateShippingAddress(user.id, id, body);
+  }
+
+  @Patch(':id/dispute')
+  @HttpCode(HttpStatus.OK)
+  disputeOrder(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: { reason: string },
+  ) {
+    return this.ordersService.disputeOrder(user.id, id, body.reason);
+  }
 }

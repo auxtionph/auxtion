@@ -7,24 +7,241 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ── ENUMS ─────────────────────────────────────────────────────────────────────
+model MaxBid {
+  id         String     @id
+  auctionId  String
+  itemId     String
+  userId     String
+  amount     Int
+  isActive   Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime
+  auctions   auctions   @relation(fields: [auctionId], references: [id])
+  shop_items shop_items @relation(fields: [itemId], references: [id])
+  users      users      @relation(fields: [userId], references: [id])
 
-enum UserRole {
-  BUYER
-  SELLER
-  ADMIN
+  @@unique([itemId, userId])
+  @@index([itemId, isActive])
+  @@index([userId])
 }
 
-enum SellerTier {
-  NEW
-  ESTABLISHED
-  POWER
+model auction_chat_messages {
+  id          String   @id
+  auctionId   String
+  userId      String
+  displayName String
+  message     String
+  timestamp   BigInt
+  createdAt   DateTime @default(now())
+  auctions    auctions @relation(fields: [auctionId], references: [id])
+
+  @@index([auctionId, createdAt])
 }
 
-enum SellerApplicationStatus {
-  PENDING
-  APPROVED
-  REJECTED
+model auctions {
+  id                    String                  @id
+  sellerId              String
+  title                 String
+  status                AuctionStatus           @default(SCHEDULED)
+  startTime             DateTime
+  endTime               DateTime?
+  streamUrl             String?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime
+  actualStartTime       DateTime?
+  originalStartTime     DateTime?
+  coverImageUrl         String?
+  MaxBid                MaxBid[]
+  auction_chat_messages auction_chat_messages[]
+  users                 users                   @relation(fields: [sellerId], references: [id])
+  bids                  bids[]
+  shop_items            shop_items[]
+}
+
+model bids {
+  id         String     @id
+  auctionId  String
+  itemId     String
+  bidderId   String
+  amount     Int
+  isWinning  Boolean    @default(false)
+  placedAt   DateTime   @default(now())
+  auctions   auctions   @relation(fields: [auctionId], references: [id])
+  users      users      @relation(fields: [bidderId], references: [id])
+  shop_items shop_items @relation(fields: [itemId], references: [id])
+}
+
+model disputes {
+  id         String        @id
+  orderId    String        @unique
+  raisedBy   String
+  reason     String
+  status     DisputeStatus @default(OPEN)
+  resolvedBy String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime
+  orders     orders        @relation(fields: [orderId], references: [id])
+}
+
+model item_notifications {
+  id         String     @id
+  itemId     String
+  userId     String
+  createdAt  DateTime   @default(now())
+  shop_items shop_items @relation(fields: [itemId], references: [id])
+  users      users      @relation(fields: [userId], references: [id])
+
+  @@unique([itemId, userId])
+}
+
+model offers {
+  id                           String      @id
+  itemId                       String
+  buyerId                      String
+  sellerId                     String
+  amount                       Int
+  status                       OfferStatus @default(PENDING)
+  expiresAt                    DateTime
+  createdAt                    DateTime    @default(now())
+  updatedAt                    DateTime
+  users_offers_buyerIdTousers  users       @relation("offers_buyerIdTousers", fields: [buyerId], references: [id])
+  shop_items                   shop_items  @relation(fields: [itemId], references: [id])
+  users_offers_sellerIdTousers users       @relation("offers_sellerIdTousers", fields: [sellerId], references: [id])
+}
+
+model orders {
+  id                           String        @id
+  buyerId                      String
+  sellerId                     String
+  itemId                       String
+  auctionId                    String?
+  amount                       Int
+  status                       OrderStatus   @default(PENDING_PAYMENT)
+  courier                      Courier?
+  trackingNumber               String?
+  shippedAt                    DateTime?
+  deliveredAt                  DateTime?
+  autoConfirmAt                DateTime?
+  payoutStatus                 PayoutStatus  @default(HELD)
+  payoutReleaseAt              DateTime?
+  payoutReleasedAt             DateTime?
+  cancelReason                 CancelReason?
+  createdAt                    DateTime      @default(now())
+  updatedAt                    DateTime
+  commissionAmount             Int           @default(0)
+  mode                         String        @default("chat")
+  paidAt                       DateTime?
+  paymentMethod                PaymentMethod @default(MANUAL)
+  processingFee                Int           @default(0)
+  sellerPayout                 Int           @default(0)
+  shippingCity                 String?
+  shippingLine1                String?
+  shippingName                 String?
+  shippingPhone                String?
+  shippingPostalCode           String?
+  shippingProvince             String?
+  disputes                     disputes?
+  users_orders_buyerIdTousers  users         @relation("orders_buyerIdTousers", fields: [buyerId], references: [id])
+  shop_items                   shop_items    @relation(fields: [itemId], references: [id])
+  users_orders_sellerIdTousers users         @relation("orders_sellerIdTousers", fields: [sellerId], references: [id])
+  payments                     payments?
+}
+
+model payments {
+  id           String        @id
+  orderId      String        @unique
+  userId       String
+  amount       Int
+  status       PaymentStatus @default(PENDING)
+  paymongoRef  String?
+  failedAt     DateTime?
+  cancelledAt  DateTime?
+  cancelReason CancelReason?
+  retryCount   Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime
+  orders       orders        @relation(fields: [orderId], references: [id])
+}
+
+model seller_applications {
+  id             String                  @id
+  userId         String                  @unique
+  fullName       String
+  idImageUrl     String
+  contactNo      String
+  description    String
+  payoutInfo     String
+  status         SellerApplicationStatus @default(PENDING)
+  rejectedReason String?
+  reviewedBy     String?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime
+  users          users                   @relation(fields: [userId], references: [id])
+}
+
+model shop_items {
+  id                 String               @id
+  sellerId           String
+  auctionId          String?
+  title              String
+  description        String
+  price              Int
+  minimumOffer       Int
+  type               ShopItemType         @default(AUCTION)
+  status             ShopItemStatus       @default(AVAILABLE)
+  queueOrder         Int?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime
+  originalPrice      Int                  @default(0)
+  mode               String               @default("auction")
+  photos             Json                 @default("[]")
+  MaxBid             MaxBid[]
+  bids               bids[]
+  item_notifications item_notifications[]
+  offers             offers[]
+  orders             orders[]
+  auctions           auctions?            @relation(fields: [auctionId], references: [id])
+  users              users                @relation(fields: [sellerId], references: [id])
+}
+
+model user_addresses {
+  id         String   @id
+  userId     String
+  name       String
+  phone      String
+  line1      String
+  city       String
+  province   String
+  postalCode String
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  users      users    @relation(fields: [userId], references: [id])
+}
+
+model users {
+  id                            String               @id
+  email                         String               @unique
+  phone                         String?              @unique
+  displayName                   String
+  avatarUrl                     String?
+  password                      String
+  role                          UserRole             @default(BUYER)
+  sellerTier                    SellerTier           @default(NEW)
+  totalSales                    Int                  @default(0)
+  isVerified                    Boolean              @default(false)
+  createdAt                     DateTime             @default(now())
+  updatedAt                     DateTime
+  MaxBid                        MaxBid[]
+  auctions                      auctions[]
+  bids                          bids[]
+  item_notifications            item_notifications[]
+  offers_offers_buyerIdTousers  offers[]             @relation("offers_buyerIdTousers")
+  offers_offers_sellerIdTousers offers[]             @relation("offers_sellerIdTousers")
+  orders_orders_buyerIdTousers  orders[]             @relation("orders_buyerIdTousers")
+  orders_orders_sellerIdTousers orders[]             @relation("orders_sellerIdTousers")
+  seller_applications           seller_applications?
+  shop_items                    shop_items[]
+  user_addresses                user_addresses[]
 }
 
 enum AuctionStatus {
@@ -32,53 +249,6 @@ enum AuctionStatus {
   LIVE
   ENDED
   CANCELLED
-}
-
-enum ShopItemType {
-  AUCTION
-  BUY_NOW
-  GIVEAWAY
-}
-
-enum ShopItemStatus {
-  AVAILABLE
-  QUEUED
-  LIVE
-  LIVE_BUYNOW
-  SOLD
-  CANCELLED
-}
-
-enum OfferStatus {
-  PENDING
-  ACCEPTED
-  DECLINED
-  EXPIRED
-  CANCELLED
-}
-
-enum OrderStatus {
-  PENDING_PAYMENT
-  PAID
-  SHIPPED
-  DELIVERED
-  COMPLETED
-  CANCELLED
-  DISPUTED
-}
-
-enum PaymentStatus {
-  PENDING
-  PAID
-  FAILED
-  CANCELLED
-  REFUNDED
-}
-
-enum PayoutStatus {
-  HELD
-  RELEASED
-  FROZEN
 }
 
 enum CancelReason {
@@ -102,246 +272,75 @@ enum DisputeStatus {
   RESOLVED_SELLER
 }
 
-// ── MODELS ────────────────────────────────────────────────────────────────────
-
-model User {
-  id          String     @id @default(cuid())
-  email       String     @unique
-  phone       String?    @unique
-  displayName String
-  avatarUrl   String?
-  password    String
-  role        UserRole   @default(BUYER)
-  sellerTier  SellerTier @default(NEW)
-  totalSales  Int        @default(0)
-  isVerified  Boolean    @default(false)
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-
-  sellerApplication SellerApplication?
-  auctions          Auction[]
-  shopItems         ShopItem[]
-  bids              Bid[]
-  buyerOffers       Offer[]            @relation("BuyerOffers")
-  sellerOffers      Offer[]            @relation("SellerOffers")
-  buyerOrders       Order[]            @relation("BuyerOrders")
-  sellerOrders      Order[]            @relation("SellerOrders")
-  itemNotifications ItemNotification[]
-  maxBids   MaxBid[]
-
-  @@map("users")
+enum OfferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  CANCELLED
 }
 
-model SellerApplication {
-  id             String                  @id @default(cuid())
-  userId         String                  @unique
-  fullName       String
-  idImageUrl     String
-  contactNo      String
-  description    String
-  payoutInfo     String
-  status         SellerApplicationStatus @default(PENDING)
-  rejectedReason String?
-  reviewedBy     String?
-  createdAt      DateTime                @default(now())
-  updatedAt      DateTime                @updatedAt
-
-  user User @relation(fields: [userId], references: [id])
-
-  @@map("seller_applications")
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  SHIPPED
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  DISPUTED
+  PENDING_MANUAL_PAYMENT
 }
 
-model Auction {
-  id        String        @id @default(cuid())
-  sellerId  String
-  title     String
-  status    AuctionStatus @default(SCHEDULED)
-  startTime DateTime
-  originalStartTime DateTime?
-  actualStartTime DateTime?
-  endTime   DateTime?
-  streamUrl String?
-  coverImageUrl String?
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-
-  seller    User       @relation(fields: [sellerId], references: [id])
-  shopItems ShopItem[]
-  bids      Bid[]
-  chatMessages AuctionChatMessage[]
-  maxBids   MaxBid[]
-
-  @@map("auctions")
+enum PaymentMethod {
+  CARD
+  GCASH
+  MAYA
+  MANUAL
 }
 
-model ShopItem {
-  id           String         @id @default(cuid())
-  sellerId     String
-  auctionId    String?
-  title        String
-  description  String
-  photos        Json     @default("[]")
-  price        Int
-  minimumOffer Int
-  type         ShopItemType   @default(AUCTION)
-  status       ShopItemStatus @default(AVAILABLE)
-  queueOrder   Int?
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  originalPrice  Int  @default(0)
-  mode           String @default("auction")
-
-  seller            User               @relation(fields: [sellerId], references: [id])
-  auction           Auction?           @relation(fields: [auctionId], references: [id])
-  bids              Bid[]
-  offers            Offer[]
-  orders            Order[]
-  itemNotifications ItemNotification[]
-  maxBids   MaxBid[]
-
-  @@map("shop_items")
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELLED
+  REFUNDED
 }
 
-model Bid {
-  id        String   @id @default(cuid())
-  auctionId String
-  itemId    String
-  bidderId  String
-  amount    Int
-  isWinning Boolean  @default(false)
-  placedAt  DateTime @default(now())
-
-  auction Auction  @relation(fields: [auctionId], references: [id])
-  item    ShopItem @relation(fields: [itemId], references: [id])
-  bidder  User     @relation(fields: [bidderId], references: [id])
-
-  @@map("bids")
+enum PayoutStatus {
+  HELD
+  RELEASED
+  FROZEN
 }
 
-model Offer {
-  id        String      @id @default(cuid())
-  itemId    String
-  buyerId   String
-  sellerId  String
-  amount    Int
-  status    OfferStatus @default(PENDING)
-  expiresAt DateTime
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-
-  item   ShopItem @relation(fields: [itemId], references: [id])
-  buyer  User     @relation("BuyerOffers", fields: [buyerId], references: [id])
-  seller User     @relation("SellerOffers", fields: [sellerId], references: [id])
-
-  @@map("offers")
+enum SellerApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
-model Order {
-  id               String        @id @default(cuid())
-  buyerId          String
-  sellerId         String
-  itemId           String
-  auctionId        String?
-  amount           Int
-  status           OrderStatus   @default(PENDING_PAYMENT)
-  courier          Courier?
-  trackingNumber   String?
-  shippedAt        DateTime?
-  deliveredAt      DateTime?
-  autoConfirmAt    DateTime?
-  payoutStatus     PayoutStatus  @default(HELD)
-  payoutReleaseAt  DateTime?
-  payoutReleasedAt DateTime?
-  cancelReason     CancelReason?
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
-
-  buyer   User     @relation("BuyerOrders", fields: [buyerId], references: [id])
-  seller  User     @relation("SellerOrders", fields: [sellerId], references: [id])
-  item    ShopItem @relation(fields: [itemId], references: [id])
-  payment Payment?
-  dispute Dispute?
-
-  @@map("orders")
+enum SellerTier {
+  NEW
+  ESTABLISHED
+  POWER
 }
 
-model Payment {
-  id           String        @id @default(cuid())
-  orderId      String        @unique
-  userId       String
-  amount       Int
-  status       PaymentStatus @default(PENDING)
-  paymongoRef  String?
-  failedAt     DateTime?
-  cancelledAt  DateTime?
-  cancelReason CancelReason?
-  retryCount   Int           @default(0)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-
-  order Order @relation(fields: [orderId], references: [id])
-
-  @@map("payments")
+enum ShopItemStatus {
+  AVAILABLE
+  QUEUED
+  LIVE
+  SOLD
+  CANCELLED
+  LIVE_BUYNOW
 }
 
-model Dispute {
-  id         String        @id @default(cuid())
-  orderId    String        @unique
-  raisedBy   String
-  reason     String
-  status     DisputeStatus @default(OPEN)
-  resolvedBy String?
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
-
-  order Order @relation(fields: [orderId], references: [id])
-
-  @@map("disputes")
+enum ShopItemType {
+  AUCTION
+  BUY_NOW
+  GIVEAWAY
 }
 
-model ItemNotification {
-  id        String   @id @default(cuid())
-  itemId    String
-  userId    String
-  createdAt DateTime @default(now())
-
-  item ShopItem @relation(fields: [itemId], references: [id])
-  user User     @relation(fields: [userId], references: [id])
-
-  @@unique([itemId, userId])
-  @@map("item_notifications")
-}
-
-model AuctionChatMessage {
-  id          String   @id @default(cuid())
-  auctionId   String
-  userId      String
-  displayName String
-  message     String
-  timestamp   BigInt
-  createdAt   DateTime @default(now())
-
-  auction Auction @relation(fields: [auctionId], references: [id])
-
-  @@index([auctionId, createdAt])
-  @@map("auction_chat_messages")
-}
-
-model MaxBid {
-  id        String   @id @default(cuid())
-  auctionId String
-  itemId    String
-  userId    String
-  amount    Int
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  auction   Auction  @relation(fields: [auctionId], references: [id])
-  item      ShopItem @relation(fields: [itemId], references: [id])
-  user      User     @relation(fields: [userId], references: [id])
-
-  @@unique([itemId, userId])
-  @@index([itemId, isActive])
-  @@index([userId])
+enum UserRole {
+  BUYER
+  SELLER
+  ADMIN
 }
