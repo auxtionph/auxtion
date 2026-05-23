@@ -1580,53 +1580,72 @@ export default function LiveAuctionRoom() {
             const isBidMsg = currentItem?.mode === 'chat' && isCurrentItemMsg && /^\s*[\d,]+\s*$/.test(item.message);
             const parsedBidAmount = isBidMsg ? parseInt(item.message.replace(/,/g, '')) * 100 : 0;
             const isBidTooLow = isBidMsg && parsedBidAmount < (currentItem?.currentPrice ?? 0);
+            const isOwnMessage = item.userId === user?.id;
+            const initials = item.displayName ? item.displayName.charAt(0).toUpperCase() : '?';
+
             return (
               <View style={{
-                marginBottom: 5,
+                marginBottom: 6,
                 flexDirection: 'row',
-                alignItems: 'center',
+                alignItems: 'flex-start',
+                gap: 7,
               }}>
+                {/* Avatar */}
                 <View style={{
-                  flexShrink: 1,
-                  maxWidth: isSeller ? '78%' : '88%',
-                  ...(isBidMsg ? {
-                    backgroundColor: isBidTooLow ? 'rgba(220,38,38,0.08)' : 'rgba(245,158,11,0.08)',
-                    borderLeftWidth: 3,
-                    borderLeftColor: isBidTooLow ? '#DC2626' : '#F59E0B',
-                    borderRadius: 6,
-                    paddingHorizontal: 8,
-                    paddingVertical: 4,
-                  } : {}),
+                  width: 26, height: 26, borderRadius: 13,
+                  backgroundColor: isOwnMessage ? '#1A56DB' : '#374151',
+                  alignItems: 'center', justifyContent: 'center',
+                  flexShrink: 0,
+                  marginTop: 1,
                 }}>
-                  <Text
-                    style={{
-                      color: '#fff', fontSize: 13,
+                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>
+                    {initials}
+                  </Text>
+                </View>
+
+                {/* Name + message */}
+                <View style={{ flexShrink: 1, maxWidth: isSeller ? '72%' : '82%' }}>
+                  <Text style={{
+                    color: isOwnMessage ? '#60A5FA' : 'rgba(255,255,255,0.55)',
+                    fontSize: 10,
+                    fontWeight: '700',
+                    marginBottom: 2,
+                    letterSpacing: 0.1,
+                  }}>
+                    {item.displayName}
+                  </Text>
+                  <View style={{
+                    ...(isBidMsg ? {
+                      backgroundColor: isBidTooLow ? 'rgba(220,38,38,0.08)' : 'rgba(245,158,11,0.08)',
+                      borderLeftWidth: 3,
+                      borderLeftColor: isBidTooLow ? '#DC2626' : '#F59E0B',
+                      borderRadius: 6,
+                      paddingHorizontal: 8,
+                      paddingVertical: 4,
+                    } : {}),
+                  }}>
+                    <Text style={{
+                      color: isBidMsg
+                        ? (isBidTooLow ? '#FCA5A5' : '#FCD34D')
+                        : 'rgba(255,255,255,0.92)',
+                      fontSize: isBidMsg ? 15 : 13,
+                      fontWeight: isBidMsg ? '800' : '400',
                       lineHeight: 18,
                       textShadowColor: isBidMsg ? 'transparent' : 'rgba(0,0,0,0.85)',
                       textShadowOffset: { width: 0, height: 1 },
                       textShadowRadius: 3,
-                    }}
-                  >
-                    <Text style={{
-                      fontWeight: '700',
-                      color: isBidMsg ? (isBidTooLow ? '#F87171' : '#F59E0B') : 'rgba(255,255,255,0.95)',
                     }}>
-                      {item.displayName}
+                      {isBidMsg
+                        ? `₱${parseInt(item.message.replace(/,/g, '')).toLocaleString()}`
+                        : item.message}
                     </Text>
-                    <Text style={{ color: 'rgba(255,255,255,0.4)' }}>{'  '}</Text>
-                    <Text style={{
-                      color: isBidMsg ? (isBidTooLow ? '#FCA5A5' : '#FCD34D') : 'rgba(255,255,255,0.95)',
-                      fontWeight: isBidMsg ? '800' : '400',
-                      fontSize: isBidMsg ? 15 : 13,
-                    }}>
-                      {isBidMsg ? `₱${parseInt(item.message.replace(/,/g, '')).toLocaleString()}` : item.message}
-                    </Text>
-                  </Text>
+                  </View>
                 </View>
+
+                {/* Crown button — seller only */}
                 {isSeller && currentItem?.mode === 'chat' && isBidMsg && !isBidTooLow && (
                   <TouchableOpacity
                     style={{
-                      marginLeft: 8,
                       backgroundColor: 'rgba(245,158,11,0.15)',
                       borderWidth: 1,
                       borderColor: 'rgba(245,158,11,0.35)',
@@ -1635,6 +1654,7 @@ export default function LiveAuctionRoom() {
                       paddingVertical: 5,
                       alignItems: 'center',
                       justifyContent: 'center',
+                      flexShrink: 0,
                     }}
                     onPress={() => setDeclaringWinner({
                       userId: item.userId,
