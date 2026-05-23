@@ -126,11 +126,20 @@ function SwipeBidButton({ label, sublabel, onBid, color = '#1A56DB' }: {
   color?: string;
 }) {
   const translateX = useRef(new Animated.Value(0)).current;
+  const flashAnim = useRef(new Animated.Value(0)).current;
   const THRESHOLD = SCREEN_WIDTH * 0.5;
   const MAX_DRAG = SCREEN_WIDTH - 48 - 64;
   const onBidRef = useRef(onBid);
   const hasFiredRef = useRef(false);
   useEffect(() => { onBidRef.current = onBid; }, [onBid]);
+
+  const triggerSuccess = () => {
+    Animated.sequence([
+      Animated.timing(flashAnim, { toValue: 1, duration: 120, useNativeDriver: false }),
+      Animated.delay(400),
+      Animated.timing(flashAnim, { toValue: 0, duration: 400, useNativeDriver: false }),
+    ]).start();
+  };
 
   const panResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => true,
@@ -147,6 +156,7 @@ function SwipeBidButton({ label, sublabel, onBid, color = '#1A56DB' }: {
       if (g.dx >= THRESHOLD && !hasFiredRef.current) {
         hasFiredRef.current = true;
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        triggerSuccess();
         onBidRef.current();
         Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
       } else {
@@ -155,46 +165,54 @@ function SwipeBidButton({ label, sublabel, onBid, color = '#1A56DB' }: {
     },
   })).current;
 
+  const bgColor = flashAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [color, '#10B981'],
+  });
+
   return (
-    <View style={{
-      backgroundColor: color,
-      borderRadius: 10,
-      height: 56,
-      overflow: 'hidden',
-      justifyContent: 'center',
-    }}>
-      <View style={{
-        position: 'absolute', right: 12,
-        flexDirection: 'row', alignItems: 'center',
+    <View>
+      {/* Swipe bar */}
+      <Animated.View style={{
+        backgroundColor: bgColor,
+        borderRadius: 10,
+        height: 56,
+        overflow: 'hidden',
+        justifyContent: 'center',
       }}>
-        {([0.12, 0.28, 0.55] as const).map((op, i) => (
-          <Text key={i} style={{ color: '#fff', fontSize: 16, opacity: op }}>›</Text>
-        ))}
-      </View>
-      <View style={{ position: 'absolute', left: 66, right: 40, alignItems: 'center' }}>
-        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15, letterSpacing: 0.1 }} numberOfLines={1}>
-          {label}
-        </Text>
-        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 9, marginTop: 2 }}>
-          {sublabel}
-        </Text>
-      </View>
-      <Animated.View
-        style={{
-          transform: [{ translateX }],
-          width: 48, height: 48, borderRadius: 8,
-          marginLeft: 4,
-          backgroundColor: '#fff',
-          alignItems: 'center', justifyContent: 'center',
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.2,
-          shadowRadius: 4,
-          elevation: 4,
-        }}
-        {...panResponder.panHandlers}
-      >
-        <Icon symbol="chevron.right.2" fallback=">>" size={20} tint={color} />
+        <View style={{
+          position: 'absolute', right: 12,
+          flexDirection: 'row', alignItems: 'center',
+        }}>
+          {([0.12, 0.28, 0.55] as const).map((op, i) => (
+            <Text key={i} style={{ color: '#fff', fontSize: 16, opacity: op }}>›</Text>
+          ))}
+        </View>
+        <View style={{ position: 'absolute', left: 66, right: 40, alignItems: 'center' }}>
+          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15, letterSpacing: 0.1 }} numberOfLines={1}>
+            {label}
+          </Text>
+          <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 9, marginTop: 2 }}>
+            {sublabel}
+          </Text>
+        </View>
+        <Animated.View
+          style={{
+            transform: [{ translateX }],
+            width: 48, height: 48, borderRadius: 8,
+            marginLeft: 4,
+            backgroundColor: '#fff',
+            alignItems: 'center', justifyContent: 'center',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.2,
+            shadowRadius: 4,
+            elevation: 4,
+          }}
+          {...panResponder.panHandlers}
+        >
+          <Icon symbol="chevron.right.2" fallback=">>" size={20} tint={color} />
+        </Animated.View>
       </Animated.View>
     </View>
   );
@@ -310,6 +328,11 @@ export default function LiveAuctionRoom() {
   const [showReactions, setShowReactions] = useState(false);
   const reactButtonRef = useRef<View>(null);
   const reactButtonBottomRef = useRef<number>(0);
+  const currentItemStartedAtRef = useRef<number>(0);
+  const liveItemFromApiRef = useRef<{ itemId: string; title: string; startedAt: number } | null>(null);
+  const soldItemWinnersRef = useRef<Record<string, { userId: string; displayName: string; amount: number; mode: string }>>({});
+  const pendingChatHistoryRef = useRef<Array<{ userId: string; displayName: string; message: string; timestamp: number }> | null>(null);
+  const processChatHistoryRef = useRef<((messages: Array<{ userId: string; displayName: string; message: string; timestamp: number }>) => void) | null>(null);
 
   useEffect(() => {
     currentItemRef.current = currentItem;
@@ -333,6 +356,7 @@ export default function LiveAuctionRoom() {
 
   useEffect(() => {
     void auctionsApi.getById(id).then(data => {
+      auctionRef.current = data;
       setAuction(data);
       // Seed sold items from DB — captures mode for items sold before joining
       const soldFromDb = data.shopItems.filter(i => i.status === 'SOLD');
@@ -354,6 +378,11 @@ export default function LiveAuctionRoom() {
       }
       const liveItem = data.shopItems.find(i => i.status === 'LIVE');
       if (liveItem) {
+        liveItemFromApiRef.current = {
+          itemId: liveItem.id,
+          title: liveItem.title,
+          startedAt: liveItem.updatedAt ? new Date(liveItem.updatedAt).getTime() : 0,
+        };
         setCurrentItem(prev => {
           if (prev && prev.itemId === liveItem.id && prev.totalBids > 0) return prev;
           const base = {
@@ -378,10 +407,18 @@ export default function LiveAuctionRoom() {
           }
           return base;
         });
+        // Late joiner — allow all history messages to be highlighted as bids
+        currentItemStartedAtRef.current = 0;
         // Restore winner banner if bid state was pending
         if (pendingBidStateRef.current) {
           setWinnerBanner(`${pendingBidStateRef.current.bidderName} is winning!`);
         }
+      }
+      // Flush any chat history that arrived before getById resolved
+      if (pendingChatHistoryRef.current) {
+        const pending = pendingChatHistoryRef.current;
+        pendingChatHistoryRef.current = null;
+        processChatHistoryRef.current?.(pending);
       }
     });
   }, [id]);
@@ -392,6 +429,106 @@ export default function LiveAuctionRoom() {
     amount: number;
     mode: 'auction' | 'chat' | 'buynow';
   }>>({});
+
+  useEffect(() => {
+    soldItemWinnersRef.current = soldItemWinners;
+  }, [soldItemWinners]);
+
+  useEffect(() => {
+    processChatHistoryRef.current = (messages) => {
+      const mapped: ChatMsg[] = messages.map(m => ({
+        id: `hist-${m.timestamp}-${m.userId}`,
+        userId: m.userId,
+        displayName: m.displayName,
+        message: m.message,
+        timestamp: m.timestamp,
+      }));
+
+      const liveItem = liveItemFromApiRef.current;
+      if (liveItem) {
+        const alreadyHasDivider = mapped.some(
+          m => m.type === 'item-divider' && m.itemTitle === liveItem.title
+        );
+        if (!alreadyHasDivider) {
+          const dividerTimestamp = liveItem.startedAt > 0 ? liveItem.startedAt : (
+            messages.length > 0 ? Math.min(...messages.map(m => m.timestamp)) - 1 : Date.now()
+          );
+          mapped.unshift({
+            id: `divider-late-${liveItem.itemId}`,
+            userId: '__system__',
+            displayName: '',
+            message: '',
+            timestamp: dividerTimestamp,
+            type: 'item-divider',
+            itemTitle: liveItem.title,
+          });
+          currentItemStartedAtRef.current = dividerTimestamp;
+        } else {
+          const existingDivider = mapped.find(
+            m => m.type === 'item-divider' && m.itemTitle === liveItem.title
+          );
+          currentItemStartedAtRef.current = existingDivider?.timestamp ?? 0;
+        }
+      }
+
+      mapped.sort((a, b) => a.timestamp - b.timestamp);
+
+      const soldShopItems = auctionRef.current?.shopItems.filter(i => i.status === 'SOLD') ?? [];
+      soldShopItems.forEach(soldItem => {
+        const alreadyHasWinner = mapped.some(
+          m => m.type === 'system_winner' && m.itemTitle === soldItem.title
+        );
+        if (!alreadyHasWinner && soldItem.updatedAt) {
+          mapped.push({
+            id: `winner-rejoin-${soldItem.id}`,
+            userId: '__system__',
+            displayName: '',
+            message: soldItem.title,
+            timestamp: new Date(soldItem.updatedAt).getTime(),
+            type: 'system_winner',
+            itemTitle: soldItem.title,
+            winnerAmount: soldItemWinnersRef.current[soldItem.id]?.amount ?? soldItem.price,
+          });
+        }
+      });
+
+      mapped.sort((a, b) => a.timestamp - b.timestamp);
+
+      const winnerMsgs = mapped.filter(m => m.type === 'system_winner');
+      winnerMsgs.forEach((winnerMsg, idx) => {
+        const itemTitle = winnerMsg.itemTitle;
+        if (!itemTitle) return;
+        const alreadyHas = mapped.some(
+          m => m.type === 'item-divider' && m.itemTitle === itemTitle
+        );
+        if (alreadyHas) return;
+        const prevWinnerTimestamp = idx === 0 ? 0 : winnerMsgs[idx - 1].timestamp;
+        const firstMsgInCluster = mapped.find(
+          m => m.timestamp > prevWinnerTimestamp &&
+          m.timestamp < winnerMsg.timestamp &&
+          m.type !== 'item-divider' &&
+          m.type !== 'system_winner' &&
+          m.type !== 'system_offer'
+        );
+        const dividerTimestamp = firstMsgInCluster
+          ? firstMsgInCluster.timestamp - 1
+          : winnerMsg.timestamp - 1;
+        mapped.push({
+          id: `divider-sold-${itemTitle}-${dividerTimestamp}`,
+          userId: '__system__',
+          displayName: '',
+          message: '',
+          timestamp: dividerTimestamp,
+          type: 'item-divider',
+          itemTitle,
+        });
+      });
+
+      mapped.sort((a, b) => a.timestamp - b.timestamp);
+      setChatMessages(mapped);
+    };
+  }); // no deps — always captures fresh refs
+
   const [saleToast, setSaleToast] = useState<{ winner: string; amount: number; title: string } | null>(null);
 
   const [timerPaused, setTimerPaused] = useState(false);
@@ -440,6 +577,7 @@ export default function LiveAuctionRoom() {
       pendingBidStateRef.current = null;
       setMyMaxBid(undefined);
       setMaxBidEnabled(false);
+      currentItemStartedAtRef.current = Date.now();
       // Inject a visual divider so seller knows new item started
       setChatMessages(prev => [...prev, {
         id: `divider-${data.itemId}-${Date.now()}`,
@@ -521,13 +659,11 @@ export default function LiveAuctionRoom() {
       setViewerCount(data.count);
     }, []),
     onChatHistory: useCallback((messages: Array<{ userId: string; displayName: string; message: string; timestamp: number }>) => {
-      setChatMessages(messages.map((m: { userId: string; displayName: string; message: string; timestamp: number }) => ({
-        id: `hist-${m.timestamp}-${m.userId}`,
-        userId: m.userId,
-        displayName: m.displayName,
-        message: m.message,
-        timestamp: m.timestamp,
-      })));
+      if (!liveItemFromApiRef.current) {
+        pendingChatHistoryRef.current = messages;
+        return;
+      }
+      processChatHistoryRef.current?.(messages);
     }, []),
     onAuctionEnded: useCallback(() => {
       console.log('onAuctionEnded callback fired!');
@@ -851,13 +987,27 @@ export default function LiveAuctionRoom() {
     if (isSeller) return;
 
     if (hms.isJoined) {
+      if (wasJoinedRef.current) {
+        // Rejoin — refresh auction state and re-populate liveItemFromApiRef
+        void auctionsApi.getById(id).then(data => {
+          auctionRef.current = data;
+          setAuction(data);
+          const liveItem = data.shopItems.find(i => i.status === 'LIVE');
+          if (liveItem) {
+            liveItemFromApiRef.current = {
+              itemId: liveItem.id,
+              title: liveItem.title,
+              startedAt: liveItem.updatedAt ? new Date(liveItem.updatedAt).getTime() : 0,
+            };
+          }
+        });
+      }
       wasJoinedRef.current = true;
-      setViewerConnecting(false); // connected — clear overlay
+      setViewerConnecting(false);
     } else if (wasJoinedRef.current) {
-      // Was connected before but now disconnected — buyer's own connection dropped
       setViewerConnecting(true);
     }
-  }, [hms.isJoined, isSeller]);
+  }, [hms.isJoined, isSeller, id]);
 
   // ── Buyer: show overlay driven by timer-paused socket event ──────
   useEffect(() => {
@@ -1055,7 +1205,10 @@ export default function LiveAuctionRoom() {
               borderRadius: 999,
               paddingHorizontal: 10, paddingVertical: 6,
             }}>
-              <Text style={{ color: '#fff', fontSize: 11 }}>👁 {viewerCount}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <Icon symbol="eye.fill" fallback="👁" size={11} tint="rgba(255,255,255,0.85)" />
+                <Text style={{ color: '#fff', fontSize: 11 }}>{viewerCount}</Text>
+              </View>
             </View>
           )}
         </View>
@@ -1070,7 +1223,7 @@ export default function LiveAuctionRoom() {
           }}
           onPress={() => void handleLeave()}
         >
-          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>✕</Text>
+          <Icon symbol="xmark" fallback="✕" size={14} tint="#fff" />
         </TouchableOpacity>
       </View>
 
@@ -1410,7 +1563,7 @@ export default function LiveAuctionRoom() {
                   alignItems: 'center',
                   gap: 10,
                 }}>
-                  <Text style={{ fontSize: 22 }}>🏆</Text>
+                <Icon symbol="trophy.fill" fallback="🏆" size={22} tint="#F59E0B" />
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: '#F59E0B', fontWeight: '800', fontSize: 13 }}>
                       {item.message} won!
@@ -1423,38 +1576,74 @@ export default function LiveAuctionRoom() {
               );
             }
 
+            const isCurrentItemMsg = item.timestamp >= currentItemStartedAtRef.current;
+            const isBidMsg = currentItem?.mode === 'chat' && isCurrentItemMsg && /^\s*[\d,]+\s*$/.test(item.message);
+            const parsedBidAmount = isBidMsg ? parseInt(item.message.replace(/,/g, '')) * 100 : 0;
+            const isBidTooLow = isBidMsg && parsedBidAmount < (currentItem?.currentPrice ?? 0);
             return (
-              <View style={{ marginBottom: 4, flexDirection: 'row', alignItems: 'center' }}>
-                <View style={{ flexShrink: 1, maxWidth: '88%' }}>
+              <View style={{
+                marginBottom: 5,
+                flexDirection: 'row',
+                alignItems: 'center',
+              }}>
+                <View style={{
+                  flexShrink: 1,
+                  maxWidth: isSeller ? '78%' : '88%',
+                  ...(isBidMsg ? {
+                    backgroundColor: isBidTooLow ? 'rgba(220,38,38,0.08)' : 'rgba(245,158,11,0.08)',
+                    borderLeftWidth: 3,
+                    borderLeftColor: isBidTooLow ? '#DC2626' : '#F59E0B',
+                    borderRadius: 6,
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                  } : {}),
+                }}>
                   <Text
                     style={{
                       color: '#fff', fontSize: 13,
                       lineHeight: 18,
-                      textShadowColor: 'rgba(0,0,0,0.85)',
+                      textShadowColor: isBidMsg ? 'transparent' : 'rgba(0,0,0,0.85)',
                       textShadowOffset: { width: 0, height: 1 },
                       textShadowRadius: 3,
                     }}
                   >
-                    <Text style={{ fontWeight: '700', color: 'rgba(255,255,255,0.95)' }}>
+                    <Text style={{
+                      fontWeight: '700',
+                      color: isBidMsg ? (isBidTooLow ? '#F87171' : '#F59E0B') : 'rgba(255,255,255,0.95)',
+                    }}>
                       {item.displayName}
                     </Text>
-                    <Text style={{ color: 'rgba(255,255,255,0.6)' }}>{'  '}</Text>
-                    <Text style={{ color: 'rgba(255,255,255,0.95)' }}>{item.message}</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.4)' }}>{'  '}</Text>
+                    <Text style={{
+                      color: isBidMsg ? (isBidTooLow ? '#FCA5A5' : '#FCD34D') : 'rgba(255,255,255,0.95)',
+                      fontWeight: isBidMsg ? '800' : '400',
+                      fontSize: isBidMsg ? 15 : 13,
+                    }}>
+                      {isBidMsg ? `₱${parseInt(item.message.replace(/,/g, '')).toLocaleString()}` : item.message}
+                    </Text>
                   </Text>
                 </View>
-                {isSeller && currentItem?.mode === 'chat' && item.type !== 'item-divider' && (
+                {isSeller && currentItem?.mode === 'chat' && isBidMsg && !isBidTooLow && (
                   <TouchableOpacity
                     style={{
-                      paddingHorizontal: 8, paddingVertical: 4,
-                      marginLeft: 6,
+                      marginLeft: 8,
+                      backgroundColor: 'rgba(245,158,11,0.15)',
+                      borderWidth: 1,
+                      borderColor: 'rgba(245,158,11,0.35)',
+                      borderRadius: 8,
+                      paddingHorizontal: 8,
+                      paddingVertical: 5,
+                      alignItems: 'center',
+                      justifyContent: 'center',
                     }}
                     onPress={() => setDeclaringWinner({
                       userId: item.userId,
                       displayName: item.displayName,
                       message: item.message,
                     })}
+                    activeOpacity={0.7}
                   >
-                    <Icon symbol="crown.fill" fallback="👑" size={18} tint="#F59E0B" />
+                    <Icon symbol="crown.fill" fallback="👑" size={14} tint="#F59E0B" />
                   </TouchableOpacity>
                 )}
               </View>
@@ -2599,15 +2788,6 @@ export default function LiveAuctionRoom() {
                 };
                 setCurrentItem(optimistic);
                 currentItemRef.current = optimistic;
-                setChatMessages(prev => [...prev, {
-                  id: `divider-${selectedItem.id}-${Date.now()}`,
-                  userId: '__system__',
-                  displayName: '',
-                  message: '',
-                  timestamp: Date.now(),
-                  type: 'item-divider' as const,
-                  itemTitle: selectedItem.title,
-                }]);
                 if (itemMode === 'auction') {
                   startItemTimer(selectedItem.id, user.id, startSeconds, startCounterbid);
                 } else {
@@ -2630,7 +2810,7 @@ export default function LiveAuctionRoom() {
       {saleToast && (
         <View style={{
           position: 'absolute',
-          top: insets.top + 16, left: 16, right: 16,
+          top: insets.top + 68, left: 16, right: 16,
           borderRadius: 20,
           overflow: 'hidden',
           zIndex: 998,
