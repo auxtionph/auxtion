@@ -7,7 +7,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateShopItemDto } from './dto/create-shop-item.dto';
 import { UpdateShopItemDto } from './dto/update-shop-item.dto';
 import { ReorderQueueDto } from './dto/reorder-queue.dto';
-import { ShopItemStatus, ShopItemType } from '@prisma/client';
+import { ShopItemStatus, ShopItemType, Prisma } from '@prisma/client';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -92,7 +92,7 @@ export class ShopItemsService {
         title: dto.title,
         description: dto.description,
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        photos: (dto.photos ?? []) as any,
+        photos: (dto.photos ?? []) as unknown as Prisma.InputJsonValue,
         price: dto.price,
         minimumOffer,
         type: dto.type,
@@ -175,7 +175,10 @@ export class ShopItemsService {
         ...(dto.title && { title: dto.title }),
         ...(dto.description && { description: dto.description }),
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        ...(dto.photos !== undefined && { photos: dto.photos as any }),
+        ...(dto.photos !== undefined && {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          photos: dto.photos as unknown as Prisma.InputJsonValue,
+        }),
         ...(dto.price && { price: dto.price, minimumOffer }),
         ...(dto.type && { type: dto.type }),
         ...(dto.queueOrder !== undefined && { queueOrder: dto.queueOrder }),
