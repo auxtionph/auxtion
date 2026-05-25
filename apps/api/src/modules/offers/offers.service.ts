@@ -8,12 +8,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { OfferStatus, ShopItemStatus, ShopItemType } from '@prisma/client';
 import { BiddingGateway } from '../bidding/bidding.gateway';
+import { PaymentsService } from '../payments/payments.service';
 
 @Injectable()
 export class OffersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly biddingGateway: BiddingGateway,
+    private readonly paymentsService: PaymentsService,
   ) {}
 
   // ── Make Offer ─────────────────────────────────────────────────────────────
@@ -29,7 +31,10 @@ export class OffersService {
       throw new BadRequestException('Offers can only be made on Buy Now items');
     }
 
-    if (item.status !== ShopItemStatus.AVAILABLE && item.status !== ShopItemStatus.LIVE_BUYNOW) {
+    if (
+      item.status !== ShopItemStatus.AVAILABLE &&
+      item.status !== ShopItemStatus.LIVE_BUYNOW
+    ) {
       throw new BadRequestException('This item is not available for offers');
     }
 
@@ -176,6 +181,20 @@ export class OffersService {
         auctionId: activeAuction.id,
         timestamp: Date.now(),
       });
+    }
+
+    // ── Create PayMongo order for accepted offer ──────────────────────────
+    try {
+      await this.paymentsService.createPaymongoOrder({
+        buyerId: offer.buyerId,
+        sellerId,
+        itemId: offer.itemId,
+        amount: offer.amount,
+        mode: 'buynow',
+      });
+    } catch (e) {
+      // Log but don't fail — item is already SOLD, order can be created manually
+      console.error(`Order creation failed for accepted offer ${offerId}:`, e);
     }
 
     return accepted;

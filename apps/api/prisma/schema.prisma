@@ -68,19 +68,19 @@ enum OrderStatus {
   PENDING_MANUAL_PAYMENT
 }
 
+enum PaymentMethod {
+  CARD
+  GCASH
+  MAYA
+  MANUAL
+}
+
 enum PaymentStatus {
   PENDING
   PAID
   FAILED
   CANCELLED
   REFUNDED
-}
-
-enum PaymentMethod {
-  CARD
-  GCASH
-  MAYA
-  MANUAL
 }
 
 enum PayoutStatus {
@@ -135,8 +135,8 @@ model User {
   buyerOrders       Order[]            @relation("BuyerOrders")
   sellerOrders      Order[]            @relation("SellerOrders")
   itemNotifications ItemNotification[]
-  maxBids           MaxBid[]
-  addresses         UserAddress[]
+  maxBids   MaxBid[]
+  addresses UserAddress[]
 
   @@map("users")
 }
@@ -161,44 +161,44 @@ model SellerApplication {
 }
 
 model Auction {
-  id                String        @id @default(cuid())
-  sellerId          String
-  title             String
-  status            AuctionStatus @default(SCHEDULED)
-  startTime         DateTime
+  id        String        @id @default(cuid())
+  sellerId  String
+  title     String
+  status    AuctionStatus @default(SCHEDULED)
+  startTime DateTime
   originalStartTime DateTime?
-  actualStartTime   DateTime?
-  endTime           DateTime?
-  streamUrl         String?
-  coverImageUrl     String?
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  actualStartTime DateTime?
+  endTime   DateTime?
+  streamUrl String?
+  coverImageUrl String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
-  seller       User                 @relation(fields: [sellerId], references: [id])
-  shopItems    ShopItem[]
-  bids         Bid[]
+  seller    User       @relation(fields: [sellerId], references: [id])
+  shopItems ShopItem[]
+  bids      Bid[]
   chatMessages AuctionChatMessage[]
-  maxBids      MaxBid[]
+  maxBids   MaxBid[]
 
   @@map("auctions")
 }
 
 model ShopItem {
-  id            String         @id @default(cuid())
-  sellerId      String
-  auctionId     String?
-  title         String
-  description   String
-  photos        Json           @default("[]")
-  price         Int
-  minimumOffer  Int
-  type          ShopItemType   @default(AUCTION)
-  status        ShopItemStatus @default(AVAILABLE)
-  queueOrder    Int?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  originalPrice Int            @default(0)
-  mode          String         @default("auction")
+  id           String         @id @default(cuid())
+  sellerId     String
+  auctionId    String?
+  title        String
+  description  String
+  photos        Json     @default("[]")
+  price        Int
+  minimumOffer Int
+  type         ShopItemType   @default(AUCTION)
+  status       ShopItemStatus @default(AVAILABLE)
+  queueOrder   Int?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  originalPrice  Int  @default(0)
+  mode           String @default("auction")
 
   seller            User               @relation(fields: [sellerId], references: [id])
   auction           Auction?           @relation(fields: [auctionId], references: [id])
@@ -206,7 +206,7 @@ model ShopItem {
   offers            Offer[]
   orders            Order[]
   itemNotifications ItemNotification[]
-  maxBids           MaxBid[]
+  maxBids   MaxBid[]
 
   @@map("shop_items")
 }
@@ -246,24 +246,22 @@ model Offer {
 }
 
 model Order {
-  id                   String        @id @default(cuid())
-  buyerId              String
-  sellerId             String
-  itemId               String
-  auctionId            String?
-  amount               Int
-  status               OrderStatus   @default(PENDING_PAYMENT)
-  courier              Courier?
-  trackingNumber       String?
-  shippedAt            DateTime?
-  deliveredAt          DateTime?
-  autoConfirmAt        DateTime?
-  payoutStatus         PayoutStatus  @default(HELD)
-  payoutReleaseAt      DateTime?
-  payoutReleasedAt     DateTime?
+  id               String        @id @default(cuid())
+  buyerId          String
+  sellerId         String
+  itemId           String
+  auctionId        String?
+  amount           Int
+  status           OrderStatus   @default(PENDING_PAYMENT)
+  courier          Courier?
+  trackingNumber   String?
+  shippedAt        DateTime?
+  deliveredAt      DateTime?
+  autoConfirmAt    DateTime?
+  payoutStatus     PayoutStatus  @default(HELD)
+  payoutReleaseAt  DateTime?
+  payoutReleasedAt DateTime?
   cancelReason         CancelReason?
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
   commissionAmount     Int           @default(0)
   mode                 String        @default("chat")
   paidAt               DateTime?
@@ -276,6 +274,8 @@ model Order {
   shippingPhone        String?
   shippingPostalCode   String?
   shippingProvince     String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
   buyer   User     @relation("BuyerOrders", fields: [buyerId], references: [id])
   seller  User     @relation("SellerOrders", fields: [sellerId], references: [id])
@@ -297,6 +297,10 @@ model Payment {
   cancelledAt    DateTime?
   cancelReason   CancelReason?
   retryCount     Int           @default(0)
+  checkoutUrl    String?
+  webhookEventId String?       @unique
+  paidAt         DateTime?
+  expiresAt      DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -358,9 +362,9 @@ model MaxBid {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  auction Auction  @relation(fields: [auctionId], references: [id])
-  item    ShopItem @relation(fields: [itemId], references: [id])
-  user    User     @relation(fields: [userId], references: [id])
+  auction   Auction  @relation(fields: [auctionId], references: [id])
+  item      ShopItem @relation(fields: [itemId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
 
   @@unique([itemId, userId])
   @@index([itemId, isActive])

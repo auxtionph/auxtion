@@ -34,6 +34,12 @@ export class OrdersController {
     return this.ordersService.getSellerOrders(user.id);
   }
 
+  // ⚠️ Static routes MUST come before :id routes
+  @Get('address/default')
+  getDefaultAddress(@CurrentUser() user: AuthUser) {
+    return this.ordersService.getDefaultAddress(user.id);
+  }
+
   @Get(':id')
   getOrderById(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ordersService.getOrderById(user.id, id);
@@ -59,11 +65,6 @@ export class OrdersController {
   @HttpCode(HttpStatus.OK)
   cancelOrder(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ordersService.cancelOrder(user.id, id);
-  }
-
-  @Get('address/default')
-  getDefaultAddress(@CurrentUser() user: AuthUser) {
-    return this.ordersService.getDefaultAddress(user.id);
   }
 
   @Patch(':id/mark-paid')
