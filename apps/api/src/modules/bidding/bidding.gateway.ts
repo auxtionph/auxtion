@@ -13,6 +13,8 @@ import { Logger } from '@nestjs/common';
 import { BiddingService } from './bidding.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MaxBidsService } from '../max-bids/max-bids.service';
+import { PaymentsService } from '../payments/payments.service';
+import { OrdersService } from '../orders/orders.service';
 
 interface PlaceBidPayload {
   auctionId: string;
@@ -115,6 +117,8 @@ export class BiddingGateway
     private readonly biddingService: BiddingService,
     private readonly prisma: PrismaService,
     private readonly maxBidsService: MaxBidsService,
+    private readonly paymentsService: PaymentsService,
+    private readonly ordersService: OrdersService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -674,6 +678,20 @@ export class BiddingGateway
       timestamp: Date.now(),
     });
 
+    // ── Create manual order (Mode 2 — GCash outside app) ────────────────────
+    try {
+      await this.ordersService.createManual({
+        itemId,
+        auctionId,
+        sellerId: auction.sellerId,
+        buyerId: winnerId,
+        amount,
+        mode: 'chat',
+      });
+    } catch (e) {
+      this.logger.error(`Chat order creation failed for item ${itemId}:`, e);
+    }
+
     this.logger.log(
       `Chat bid winner declared: ${winnerName} won item ${itemId} at ${amount}`,
     );
@@ -909,6 +927,25 @@ export class BiddingGateway
         timestamp: Date.now(),
       });
 
+      // ── Create order for winner ──────────────────────────────────────────
+      if (result.winner) {
+        try {
+          await this.paymentsService.createPaymongoOrder({
+            buyerId: result.winner.userId,
+            sellerId: auction.sellerId,
+            itemId,
+            auctionId,
+            amount: result.winner.amount,
+            mode: 'auction',
+          });
+          this.logger.log(
+            `Order created for winner ${result.winner.displayName}`,
+          );
+        } catch (e) {
+          this.logger.error(`Order creation failed for item ${itemId}:`, e);
+        }
+      }
+
       this.logger.log(
         `Item ${itemId} auto-sold to ${result.winner?.displayName ?? 'no winner'}`,
       );
@@ -995,6 +1032,20 @@ export class BiddingGateway
       buyerId,
       buyerName,
     });
+
+    // ── Create order for buyer ───────────────────────────────────────────────
+    try {
+      await this.paymentsService.createPaymongoOrder({
+        buyerId,
+        sellerId: item.sellerId,
+        itemId,
+        auctionId,
+        amount: item.price,
+        mode: 'buynow',
+      });
+    } catch (e) {
+      this.logger.error(`Buy Now order creation failed for item ${itemId}:`, e);
+    }
 
     this.logger.log(`Buy Now claimed: ${itemId} by ${buyerName}`);
   }

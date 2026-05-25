@@ -6,7 +6,12 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ShipOrderDto } from './dto/ship-order.dto';
-import { OrderStatus, PayoutStatus, SellerTier } from '@prisma/client';
+import {
+  OrderStatus,
+  PayoutStatus,
+  SellerTier,
+  PaymentMethod,
+} from '@prisma/client';
 
 @Injectable()
 export class OrdersService {
@@ -279,5 +284,137 @@ export class OrdersService {
         data: { sellerTier: SellerTier.ESTABLISHED },
       });
     }
+  }
+
+  // ── Create Manual Order (Chat Bid / Mode 2) ────────────────────────────────
+
+  async createManual(params: {
+    itemId: string;
+    auctionId: string;
+    sellerId: string;
+    buyerId: string;
+    amount: number;
+    mode: string;
+  }) {
+    const COMMISSION_RATE = 0.05;
+    const commission = Math.round(params.amount * COMMISSION_RATE);
+    const payout = params.amount - commission;
+
+    return this.prisma.order.create({
+      data: {
+        itemId: params.itemId,
+        auctionId: params.auctionId,
+        sellerId: params.sellerId,
+        buyerId: params.buyerId,
+        amount: params.amount,
+        commissionAmount: commission,
+        processingFee: 0,
+        sellerPayout: payout,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+        paymentMethod: PaymentMethod.MANUAL,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        status: OrderStatus.PENDING_MANUAL_PAYMENT,
+        mode: params.mode,
+      },
+      include: {
+        item: { select: { id: true, title: true, photos: true } },
+        buyer: { select: { id: true, displayName: true } },
+        seller: { select: { id: true, displayName: true } },
+      },
+    });
+  }
+
+  // ── Mark Manual Payment Paid (Seller confirms GCash received) ──────────────
+
+  async markPaid(sellerId: string, orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.sellerId !== sellerId)
+      throw new ForbiddenException('You do not own this order');
+    if (order.status !== OrderStatus.PENDING_MANUAL_PAYMENT)
+      throw new BadRequestException('Order is not awaiting manual payment');
+
+    return this.prisma.order.update({
+      where: { id: orderId },
+      data: { status: OrderStatus.PAID, paidAt: new Date() },
+    });
+  }
+
+  // ── Update Shipping Address (Buyer) ────────────────────────────────────────
+
+  async updateShippingAddress(
+    buyerId: string,
+    orderId: string,
+    address: {
+      name: string;
+      phone: string;
+      line1: string;
+      city: string;
+      province: string;
+      postalCode: string;
+    },
+  ) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.buyerId !== buyerId)
+      throw new ForbiddenException('Access denied');
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+    const existing = await this.prisma.userAddress.findFirst({
+      where: { userId: buyerId, isDefault: true },
+    });
+    if (!existing) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      await this.prisma.userAddress.create({
+        data: { userId: buyerId, ...address, isDefault: true },
+      });
+    }
+
+    return this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        shippingName: address.name,
+        shippingPhone: address.phone,
+        shippingLine1: address.line1,
+        shippingCity: address.city,
+        shippingProvince: address.province,
+        shippingPostalCode: address.postalCode,
+      },
+    });
+  }
+
+  // ── Get Default Address (Buyer) ────────────────────────────────────────────
+
+  getDefaultAddress(userId: string) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-member-access
+    return this.prisma.userAddress.findFirst({
+      where: { userId, isDefault: true },
+    });
+  }
+
+  // ── Dispute Order (Buyer) ──────────────────────────────────────────────────
+
+  async disputeOrder(buyerId: string, orderId: string, reason: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.buyerId !== buyerId)
+      throw new ForbiddenException('Access denied');
+    if (order.status !== OrderStatus.SHIPPED)
+      throw new BadRequestException('Can only dispute shipped orders');
+
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { status: OrderStatus.DISPUTED },
+    });
+
+    return this.prisma.dispute.create({
+      data: { orderId, raisedBy: buyerId, reason },
+    });
   }
 }
