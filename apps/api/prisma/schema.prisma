@@ -266,18 +266,22 @@ model Order {
 }
 
 model Payment {
-  id           String        @id @default(cuid())
-  orderId      String        @unique
-  userId       String
-  amount       Int
-  status       PaymentStatus @default(PENDING)
-  paymongoRef  String?
-  failedAt     DateTime?
-  cancelledAt  DateTime?
-  cancelReason CancelReason?
-  retryCount   Int           @default(0)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  id             String        @id @default(cuid())
+  orderId        String        @unique
+  userId         String
+  amount         Int
+  status         PaymentStatus @default(PENDING)
+  paymongoRef    String?
+  failedAt       DateTime?
+  cancelledAt    DateTime?
+  cancelReason   CancelReason?
+  retryCount     Int           @default(0)
+  checkoutUrl    String?
+  webhookEventId String?       @unique
+  paidAt         DateTime?
+  expiresAt      DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   order Order @relation(fields: [orderId], references: [id])
 
