@@ -1,6 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { SaveAddressDto } from './dto/save-address.dto';
+import { SavePaymentMethodsDto } from './dto/save-payment-methods.dto';
 
 @Injectable()
 export class UsersService {
@@ -21,15 +27,133 @@ export class UsersService {
         isVerified: true,
         createdAt: true,
         sellerApplication: {
-          select: {
-            status: true,
-            createdAt: true,
-          },
+          select: { status: true, createdAt: true },
         },
       },
     });
-
     if (!user) throw new NotFoundException('User not found');
+    return user;
+  }
+
+  // ── Profile Status (used by mobile gate check) ──────────────────────────
+  async getProfileStatus(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        gcashNumber: true,
+        gcashName: true,
+        bankName: true,
+        bankAccountNumber: true,
+        bankAccountName: true,
+        addresses: {
+          where: { isDefault: true },
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            line1: true,
+            city: true,
+            province: true,
+            postalCode: true,
+          },
+          take: 1,
+        },
+      },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+    const address = user.addresses[0] ?? null;
+    const hasAddress = !!address;
+    const hasGcash = !!(user.gcashNumber && user.gcashName);
+    const hasBank = !!(
+      user.bankName &&
+      user.bankAccountNumber &&
+      user.bankAccountName
+    );
+    const hasPaymentMethod = hasGcash || hasBank;
+
+    return {
+      isComplete: hasAddress && hasPaymentMethod,
+      hasAddress,
+      hasPaymentMethod,
+      address,
+      paymentMethods: {
+        gcash: hasGcash
+          ? { number: user.gcashNumber, name: user.gcashName }
+          : null,
+        bank: hasBank
+          ? {
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+              name: user.bankName,
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+              accountNumber: user.bankAccountNumber,
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+              accountName: user.bankAccountName,
+            }
+          : null,
+      },
+    };
+  }
+
+  // ── Save / Update Default Address ──────────────────────────────────────
+  async saveAddress(userId: string, dto: SaveAddressDto) {
+    // Unset any existing default, then create new default in one transaction
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const [, address] = await this.prisma.$transaction([
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      this.prisma.userAddress.updateMany({
+        where: { userId, isDefault: true },
+        data: { isDefault: false },
+      }),
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      this.prisma.userAddress.create({
+        data: {
+          userId,
+          name: dto.name,
+          phone: dto.phone,
+          line1: dto.line1,
+          city: dto.city,
+          province: dto.province,
+          postalCode: dto.postalCode,
+          isDefault: true,
+        },
+      }),
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+    return address;
+  }
+
+  // ── Save / Update Payment Methods ──────────────────────────────────────
+  async savePaymentMethods(userId: string, dto: SavePaymentMethodsDto) {
+    // At least one method must be provided
+    const hasGcash = dto.gcashNumber && dto.gcashName;
+    const hasBank =
+      dto.bankName && dto.bankAccountNumber && dto.bankAccountName;
+    if (!hasGcash && !hasBank) {
+      throw new BadRequestException(
+        'Provide at least one payment method (GCash or Bank).',
+      );
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        gcashNumber: dto.gcashNumber ?? null,
+        gcashName: dto.gcashName ?? null,
+        bankName: dto.bankName ?? null,
+        bankAccountNumber: dto.bankAccountNumber ?? null,
+        bankAccountName: dto.bankAccountName ?? null,
+      },
+      select: {
+        id: true,
+        gcashNumber: true,
+        gcashName: true,
+        bankName: true,
+        bankAccountNumber: true,
+        bankAccountName: true,
+      },
+    });
 
     return user;
   }
@@ -52,7 +176,6 @@ export class UsersService {
         updatedAt: true,
       },
     });
-
     return user;
   }
 
@@ -69,9 +192,7 @@ export class UsersService {
         createdAt: true,
       },
     });
-
     if (!user) throw new NotFoundException('User not found');
-
     return user;
   }
 
@@ -79,10 +200,7 @@ export class UsersService {
     if (!search?.trim()) return [];
     return this.prisma.user.findMany({
       where: {
-        displayName: {
-          contains: search,
-          mode: 'insensitive',
-        },
+        displayName: { contains: search, mode: 'insensitive' },
       },
       select: {
         id: true,

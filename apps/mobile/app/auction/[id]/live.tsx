@@ -22,6 +22,7 @@ LogBox.ignoreLogs(['[HMS] ON_ERROR']);
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { auctionsApi, AuctionDetail } from '../../../src/services/api/auctions.api';
+import { apiClient } from '../../../src/services/api/client';
 import { useAuctionSocket } from '../../../src/hooks/useSocket';
 import { formatPHP } from '@auxtion/utils';
 import { useAuthStore } from '../../../src/stores/auth.store';
@@ -319,6 +320,19 @@ export default function LiveAuctionRoom() {
   const pendingBidStateRef = useRef<BidUpdateData | null>(null);
   const [skipping, setSkipping] = useState(false);
   const [claimingBuyNow, setClaimingBuyNow] = useState(false);
+
+  // ── Profile Gate ─────────────────────────────────────────────────
+  const [profileComplete, setProfileComplete] = useState<boolean | null>(null);
+  const [showProfileGate, setShowProfileGate] = useState(false);
+  const [profileStep, setProfileStep] = useState<'address' | 'payment'>('address');
+  const [addressForm, setAddressForm] = useState({
+    name: '', phone: '', line1: '', city: '', province: '', postalCode: '',
+  });
+  const [paymentForm, setPaymentForm] = useState({
+    gcashNumber: '', gcashName: '',
+    bankName: '', bankAccountNumber: '', bankAccountName: '',
+  });
+  const [savingProfile, setSavingProfile] = useState(false);
   const insets = useSafeAreaInsets();
   const [soldSubTab, setSoldSubTab] = useState<'all' | 'auction' | 'chat' | 'buynow'>('all');
   const [soldSort, setSoldSort] = useState<'recent' | 'high' | 'low'>('recent');
@@ -353,6 +367,45 @@ export default function LiveAuctionRoom() {
     const hide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
     return () => { show.remove(); hide.remove(); };
   }, [insets.bottom]);
+
+  // ── Check profile completeness on mount (buyers only) ────────────
+  useEffect(() => {
+    if (isSeller) return;
+    void apiClient.get('/users/me/profile-status').then(res => {
+      const data = res.data.data as {
+        isComplete: boolean;
+        address?: { name: string; phone: string; line1: string; city: string; province: string; postalCode: string } | null;
+        paymentMethods?: { gcash?: { number: string; name: string } | null; bank?: { name: string; accountNumber: string; accountName: string } | null };
+      };
+      setProfileComplete(data.isComplete);
+      // Pre-fill form if partial data exists
+      if (data.address) {
+        setAddressForm({
+          name: data.address.name ?? '',
+          phone: data.address.phone ?? '',
+          line1: data.address.line1 ?? '',
+          city: data.address.city ?? '',
+          province: data.address.province ?? '',
+          postalCode: data.address.postalCode ?? '',
+        });
+      }
+      if (data.paymentMethods?.gcash) {
+        setPaymentForm(prev => ({
+          ...prev,
+          gcashNumber: data.paymentMethods!.gcash!.number ?? '',
+          gcashName: data.paymentMethods!.gcash!.name ?? '',
+        }));
+      }
+      if (data.paymentMethods?.bank) {
+        setPaymentForm(prev => ({
+          ...prev,
+          bankName: data.paymentMethods!.bank!.name ?? '',
+          bankAccountNumber: data.paymentMethods!.bank!.accountNumber ?? '',
+          bankAccountName: data.paymentMethods!.bank!.accountName ?? '',
+        }));
+      }
+    }).catch(() => setProfileComplete(false));
+  }, [isSeller]);
 
   useEffect(() => {
     void auctionsApi.getById(id).then(data => {
@@ -1914,6 +1967,11 @@ export default function LiveAuctionRoom() {
                       }
                       onBid={() => {
                         if (broadcasterReconnecting) return;
+                        if (!profileComplete) {
+                          setProfileStep('address');
+                          setShowProfileGate(true);
+                          return;
+                        }
                         const latest = currentItemRef.current;
                         if (!latest) return;
                         const bidAmount = latest.totalBids === 0
@@ -3263,6 +3321,12 @@ export default function LiveAuctionRoom() {
               }}
               onPress={() => {
                 if (maxBidEnabled) return;
+                if (!profileComplete) {
+                  setShowCustomBid(false);
+                  setProfileStep('address');
+                  setShowProfileGate(true);
+                  return;
+                }
                 const latest = currentItemRef.current;
                 if (!latest || !customBidInput) return;
                 const amount = parseInt(customBidInput) * 100;
@@ -3918,6 +3982,239 @@ export default function LiveAuctionRoom() {
             </View>
           </ScrollView>
         </View>
+      </Modal>
+
+      {/* ── Profile Gate Modal ── */}
+      <Modal
+        visible={showProfileGate}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowProfileGate(false)}
+      >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+          <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.75)' }}>
+            <View style={{
+              backgroundColor: '#111827',
+              borderTopLeftRadius: 24, borderTopRightRadius: 24,
+              padding: 24, paddingBottom: insets.bottom + 24,
+              maxHeight: '90%',
+            }}>
+              {/* Header */}
+              <View style={{ alignItems: 'center', marginBottom: 4 }}>
+                <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: '#374151', marginBottom: 16 }} />
+                <Text style={{ fontSize: 28, marginBottom: 8 }}>
+                  {profileStep === 'address' ? '📦' : '💳'}
+                </Text>
+                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 4 }}>
+                  {profileStep === 'address' ? 'Shipping Address' : 'Payment Method'}
+                </Text>
+                <Text style={{ color: '#6B7280', fontSize: 13, textAlign: 'center' }}>
+                  {profileStep === 'address'
+                    ? 'Required before you can bid — so the seller knows where to ship.'
+                    : 'Add at least one so the seller can receive your payment.'}
+                </Text>
+              </View>
+
+              {/* Step indicators */}
+              <View style={{ flexDirection: 'row', gap: 6, justifyContent: 'center', marginTop: 16, marginBottom: 20 }}>
+                {(['address', 'payment'] as const).map((step, i) => (
+                  <View key={step} style={{
+                    height: 3, flex: 1, borderRadius: 2,
+                    backgroundColor: profileStep === step || (step === 'address' && profileStep === 'payment')
+                      ? '#1A56DB' : '#374151',
+                  }} />
+                ))}
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                {profileStep === 'address' ? (
+                  <View style={{ gap: 10 }}>
+                    {([
+                      { key: 'name', label: 'Full Name', placeholder: 'Juan dela Cruz', keyboard: 'default' },
+                      { key: 'phone', label: 'Phone Number', placeholder: '09XX XXX XXXX', keyboard: 'phone-pad' },
+                      { key: 'line1', label: 'Street / Barangay', placeholder: '123 Rizal St., Brgy. San Jose', keyboard: 'default' },
+                      { key: 'city', label: 'City / Municipality', placeholder: 'Quezon City', keyboard: 'default' },
+                      { key: 'province', label: 'Province', placeholder: 'Metro Manila', keyboard: 'default' },
+                      { key: 'postalCode', label: 'Postal Code', placeholder: '1100', keyboard: 'numeric' },
+                    ] as const).map(field => (
+                      <View key={field.key}>
+                        <Text style={{ color: '#6B7280', fontSize: 10, fontWeight: '700', marginBottom: 4, letterSpacing: 0.5 }}>
+                          {field.label.toUpperCase()}
+                        </Text>
+                        <TextInput
+                          style={{
+                            backgroundColor: '#1F2937', borderRadius: 10,
+                            borderWidth: 1, borderColor: addressForm[field.key] ? '#1A56DB' : '#374151',
+                            padding: 12, color: '#fff', fontSize: 14,
+                          }}
+                          placeholder={field.placeholder}
+                          placeholderTextColor="#4B5563"
+                          value={addressForm[field.key]}
+                          onChangeText={val => setAddressForm(prev => ({ ...prev, [field.key]: val }))}
+                          keyboardType={field.keyboard as any}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <View style={{ gap: 16 }}>
+                    {/* GCash section */}
+                    <View style={{
+                      backgroundColor: '#1F2937', borderRadius: 14,
+                      borderWidth: 1, borderColor: paymentForm.gcashNumber ? '#1A56DB' : '#374151',
+                      padding: 14,
+                    }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                        <Text style={{ fontSize: 20 }}>📱</Text>
+                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>GCash</Text>
+                        <Text style={{ color: '#6B7280', fontSize: 11 }}>(optional if bank added)</Text>
+                      </View>
+                      {[
+                        { key: 'gcashNumber', label: 'GCash Number', placeholder: '09XX XXX XXXX', keyboard: 'phone-pad' },
+                        { key: 'gcashName', label: 'Account Name', placeholder: 'JUAN D.', keyboard: 'default' },
+                      ].map(field => (
+                        <View key={field.key} style={{ marginBottom: 10 }}>
+                          <Text style={{ color: '#6B7280', fontSize: 10, fontWeight: '700', marginBottom: 4, letterSpacing: 0.5 }}>
+                            {field.label.toUpperCase()}
+                          </Text>
+                          <TextInput
+                            style={{
+                              backgroundColor: '#111827', borderRadius: 10,
+                              borderWidth: 1, borderColor: paymentForm[field.key as keyof typeof paymentForm] ? '#1A56DB' : '#2D3748',
+                              padding: 12, color: '#fff', fontSize: 14,
+                            }}
+                            placeholder={field.placeholder}
+                            placeholderTextColor="#4B5563"
+                            value={paymentForm[field.key as keyof typeof paymentForm]}
+                            onChangeText={val => setPaymentForm(prev => ({ ...prev, [field.key]: val }))}
+                            keyboardType={field.keyboard as any}
+                          />
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Divider */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <View style={{ flex: 1, height: 1, backgroundColor: '#1F2937' }} />
+                      <Text style={{ color: '#4B5563', fontSize: 11, fontWeight: '600' }}>OR</Text>
+                      <View style={{ flex: 1, height: 1, backgroundColor: '#1F2937' }} />
+                    </View>
+
+                    {/* Bank section */}
+                    <View style={{
+                      backgroundColor: '#1F2937', borderRadius: 14,
+                      borderWidth: 1, borderColor: paymentForm.bankName ? '#10B981' : '#374151',
+                      padding: 14,
+                    }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                        <Text style={{ fontSize: 20 }}>🏦</Text>
+                        <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Bank Transfer</Text>
+                        <Text style={{ color: '#6B7280', fontSize: 11 }}>(optional if GCash added)</Text>
+                      </View>
+                      {[
+                        { key: 'bankName', label: 'Bank Name', placeholder: 'BPI, BDO, Metrobank...', keyboard: 'default' },
+                        { key: 'bankAccountNumber', label: 'Account Number', placeholder: '1234 5678 9012', keyboard: 'numeric' },
+                        { key: 'bankAccountName', label: 'Account Name', placeholder: 'JUAN DELA CRUZ', keyboard: 'default' },
+                      ].map(field => (
+                        <View key={field.key} style={{ marginBottom: 10 }}>
+                          <Text style={{ color: '#6B7280', fontSize: 10, fontWeight: '700', marginBottom: 4, letterSpacing: 0.5 }}>
+                            {field.label.toUpperCase()}
+                          </Text>
+                          <TextInput
+                            style={{
+                              backgroundColor: '#111827', borderRadius: 10,
+                              borderWidth: 1, borderColor: paymentForm[field.key as keyof typeof paymentForm] ? '#10B981' : '#2D3748',
+                              padding: 12, color: '#fff', fontSize: 14,
+                            }}
+                            placeholder={field.placeholder}
+                            placeholderTextColor="#4B5563"
+                            value={paymentForm[field.key as keyof typeof paymentForm]}
+                            onChangeText={val => setPaymentForm(prev => ({ ...prev, [field.key]: val }))}
+                            keyboardType={field.keyboard as any}
+                          />
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                <View style={{ height: 20 }} />
+              </ScrollView>
+
+              {/* CTA */}
+              <TouchableOpacity
+                style={{
+                  backgroundColor: savingProfile ? '#374151' : '#1A56DB',
+                  borderRadius: 14, paddingVertical: 16,
+                  alignItems: 'center', marginTop: 16,
+                  opacity: savingProfile ? 0.6 : 1,
+                }}
+                disabled={savingProfile}
+                onPress={async () => {
+                  if (profileStep === 'address') {
+                    const { name, phone, line1, city, province, postalCode } = addressForm;
+                    if (!name || !phone || !line1 || !city || !province || !postalCode) {
+                      Alert.alert('Missing Info', 'Please fill in all address fields.');
+                      return;
+                    }
+                    setSavingProfile(true);
+                    try {
+                      await apiClient.post('/users/me/address', addressForm);
+                      setProfileStep('payment');
+                    } catch {
+                      Alert.alert('Error', 'Failed to save address. Please try again.');
+                    } finally {
+                      setSavingProfile(false);
+                    }
+                  } else {
+                    const { gcashNumber, gcashName, bankName, bankAccountNumber, bankAccountName } = paymentForm;
+                    const hasGcash = gcashNumber && gcashName;
+                    const hasBank = bankName && bankAccountNumber && bankAccountName;
+                    if (!hasGcash && !hasBank) {
+                      Alert.alert('Payment Method Required', 'Add at least one — GCash or Bank Transfer.');
+                      return;
+                    }
+                    setSavingProfile(true);
+                    try {
+                      await apiClient.patch('/users/me/payment-methods', paymentForm);
+                      setProfileComplete(true);
+                      setShowProfileGate(false);
+                      Alert.alert('✅ Profile Complete!', 'You can now place bids.');
+                    } catch {
+                      Alert.alert('Error', 'Failed to save payment method. Please try again.');
+                    } finally {
+                      setSavingProfile(false);
+                    }
+                  }
+                }}
+              >
+                {savingProfile ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+                    {profileStep === 'address' ? 'Save Address →' : '✅ Complete Profile'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+
+              {profileStep === 'payment' && (
+                <TouchableOpacity
+                  style={{ marginTop: 12, alignItems: 'center' }}
+                  onPress={() => setProfileStep('address')}
+                >
+                  <Text style={{ color: '#6B7280', fontSize: 13 }}>← Back to Address</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                style={{ marginTop: 8, alignItems: 'center' }}
+                onPress={() => setShowProfileGate(false)}
+              >
+                <Text style={{ color: '#4B5563', fontSize: 12 }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ── Reaction Picker Pill ── */}

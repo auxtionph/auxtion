@@ -3,8 +3,10 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ConfigService } from '@nestjs/config';
 import { ShipOrderDto } from './dto/ship-order.dto';
 import {
   OrderStatus,
@@ -15,7 +17,12 @@ import {
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(OrdersService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {}
 
   // ── Get Buyer Orders ───────────────────────────────────────────────────────
 
@@ -90,6 +97,7 @@ export class OrdersService {
   async markAsShipped(sellerId: string, orderId: string, dto: ShipOrderDto) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
+      include: { item: { select: { title: true } } },
     });
 
     if (!order) throw new NotFoundException('Order not found');
@@ -102,9 +110,9 @@ export class OrdersService {
 
     const shippedAt = new Date();
     const autoConfirmAt = new Date(shippedAt);
-    autoConfirmAt.setDate(autoConfirmAt.getDate() + 5); // 5 days
+    autoConfirmAt.setDate(autoConfirmAt.getDate() + 5);
 
-    return this.prisma.order.update({
+    await this.prisma.order.update({
       where: { id: orderId },
       data: {
         status: OrderStatus.SHIPPED,
@@ -114,6 +122,102 @@ export class OrdersService {
         autoConfirmAt,
       },
     });
+
+    // ── Create AfterShip tracking (non-fatal if fails) ──────────────
+    void this.createAfterShipTracking(
+      dto.trackingNumber,
+      dto.courier,
+      orderId,
+      order.item.title,
+    );
+
+    return { success: true, orderId };
+  }
+
+  // ── AfterShip: Create Tracking Entry ──────────────────────────────────────
+
+  private async createAfterShipTracking(
+    trackingNumber: string,
+    courier: string,
+    orderId: string,
+    itemTitle: string,
+  ) {
+    const apiKey = this.configService.get<string>('AFTERSHIP_API_KEY');
+    if (!apiKey) {
+      this.logger.warn(
+        'AFTERSHIP_API_KEY not set — skipping tracking creation',
+      );
+      return;
+    }
+
+    const courierSlugMap: Record<string, string> = {
+      JT_EXPRESS: 'jtexpress-ph',
+      LBC: 'lbc',
+      NINJA_VAN: 'ninjavan-philippines',
+      FLASH_EXPRESS: 'flash-express',
+      GRAB_EXPRESS: 'grab-express',
+      OTHER: '',
+    };
+
+    const slug = courierSlugMap[courier];
+    if (!slug) {
+      this.logger.warn(`No AfterShip slug for courier ${courier} — skipping`);
+      return;
+    }
+
+    try {
+      const res = await fetch('https://api.aftership.com/v4/trackings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'as-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          tracking: {
+            tracking_number: trackingNumber,
+            slug,
+            title: itemTitle,
+            custom_fields: { orderId },
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        this.logger.error(`AfterShip tracking creation failed: ${err}`);
+      } else {
+        this.logger.log(`AfterShip tracking created for order ${orderId}`);
+      }
+    } catch (err) {
+      this.logger.error(`AfterShip fetch error: ${String(err)}`);
+    }
+  }
+
+  // ── Mark as Delivered (called by AfterShip webhook or auto-confirm) ────────
+
+  async markAsDelivered(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { seller: { select: { sellerTier: true } } },
+    });
+    if (!order) return;
+    if (order.status !== OrderStatus.SHIPPED) return;
+
+    const payoutReleaseAt = this.calculatePayoutReleaseDate(
+      order.seller.sellerTier,
+    );
+
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        status: OrderStatus.DELIVERED,
+        deliveredAt: new Date(),
+        payoutReleaseAt,
+        autoConfirmAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    this.logger.log(`Order ${orderId} marked DELIVERED`);
   }
 
   // ── Confirm Receipt (Buyer) ────────────────────────────────────────────────
