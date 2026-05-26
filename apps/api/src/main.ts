@@ -8,6 +8,27 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Raw body preservation for PayMongo webhook signature verification
+  // Must be registered BEFORE helmet and body parsers
+  app.use(
+    '/api/v1/payments/webhook/paymongo',
+    (req: any, _res: any, next: any) => {
+      let data = '';
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      req.setEncoding('utf8');
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      req.on('data', (chunk: string) => {
+        data += chunk;
+      });
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      req.on('end', () => {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        req.rawBody = data;
+        next();
+      });
+    },
+  );
+
   app.use(helmet());
   app.setGlobalPrefix('api/v1');
 

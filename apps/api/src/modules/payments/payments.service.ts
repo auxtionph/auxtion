@@ -142,7 +142,7 @@ export class PaymentsService {
             amount: order.amount,
             currency: 'PHP',
             description: `Auxtion — ${order.item.title}`,
-            remarks: `Order ${order.id}`,
+            remarks: `auxtion-order-${order.id}`,
           },
         },
       }),
@@ -225,14 +225,25 @@ export class PaymentsService {
     const paymongoRef = payload?.data?.attributes?.data?.id as
       | string
       | undefined;
+
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const metadata = payload?.data?.attributes?.data?.attributes?.metadata as
-      | { orderId?: string }
+    const remarks = payload?.data?.attributes?.data?.attributes?.remarks as
+      | string
       | undefined;
-    const orderId = metadata?.orderId;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const linkRemarks = payload?.data?.attributes?.remarks as
+      | string
+      | undefined;
+
+    let orderId: string | undefined;
+    if (remarks?.startsWith('auxtion-order-')) {
+      orderId = remarks.replace('auxtion-order-', '');
+    } else if (linkRemarks?.startsWith('auxtion-order-')) {
+      orderId = linkRemarks.replace('auxtion-order-', '');
+    }
 
     if (!orderId) {
-      this.logger.warn(`Webhook ${eventId} has no orderId in metadata`);
+      this.logger.warn(`Webhook ${eventId} has no orderId in remarks`);
       return { received: true };
     }
 
