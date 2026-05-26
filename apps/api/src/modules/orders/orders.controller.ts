@@ -37,6 +37,7 @@ export class OrdersController {
   // ⚠️ Static routes MUST come before :id routes
   @Get('address/default')
   getDefaultAddress(@CurrentUser() user: AuthUser) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return this.ordersService.getDefaultAddress(user.id);
   }
 
