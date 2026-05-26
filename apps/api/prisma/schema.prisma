@@ -138,6 +138,13 @@ model User {
   maxBids   MaxBid[]
   addresses UserAddress[]
 
+  // ── Payment Methods ─────────────────────────
+  gcashNumber       String?
+  gcashName         String?   // Account holder name on GCash
+  bankName          String?   // e.g. "BPI", "BDO", "Metrobank"
+  bankAccountNumber String?
+  bankAccountName   String?   // Account holder name
+
   @@map("users")
 }
 

@@ -168,6 +168,11 @@ export default function ProfileScreen() {
           action: () => router.push('/(main)/sell'),
         },
         { icon: '📦', label: 'My Orders', action: () => router.push('/(main)/activity') },
+        ...(user?.role === 'SELLER' ? [{
+          icon: '🚚',
+          label: 'Manage Shipments',
+          action: () => router.push('/seller/orders'),
+        }] : []),
         { icon: '💰', label: 'Payouts', action: () => {} },
       ],
     },

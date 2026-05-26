@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
+import { Linking } from 'react-native';
 import { apiClient } from '../../src/services/api/client';
 import { formatPHP } from '@auxtion/utils';
 
@@ -71,6 +72,23 @@ export default function OrderDetailScreen() {
       router.back();
     } finally {
       setLoading(false);
+    }
+  };
+
+  const [paying, setPaying] = useState(false);
+
+  const handlePayNow = async () => {
+    setPaying(true);
+    try {
+      const res = await apiClient.post(`/payments/${id}/initiate`);
+      const { checkoutUrl } = res.data.data as { checkoutUrl: string };
+      await Linking.openURL(checkoutUrl);
+      // Poll for payment status after returning
+      setTimeout(() => void fetchOrder(), 3000);
+    } catch {
+      Alert.alert('Error', 'Failed to initiate payment. Please try again.');
+    } finally {
+      setPaying(false);
     }
   };
 
@@ -195,12 +213,34 @@ export default function OrderDetailScreen() {
               <Text className="text-gray-500 text-xs mb-2">SHIPPING</Text>
               <View className="flex-row items-center justify-between mb-1">
                 <Text className="text-gray-400 text-sm">Courier</Text>
-                <Text className="text-white text-sm font-semibold">{order.courier}</Text>
+                <Text className="text-white text-sm font-semibold">
+                  {order.courier?.replace(/_/g, ' ')}
+                </Text>
               </View>
-              <View className="flex-row items-center justify-between">
-                <Text className="text-gray-400 text-sm">Tracking</Text>
-                <Text className="text-[#1A56DB] text-sm font-semibold">{order.trackingNumber}</Text>
+              <View className="flex-row items-center justify-between mb-3">
+                <Text className="text-gray-400 text-sm">Tracking #</Text>
+                <Text className="text-[#1A56DB] text-sm font-semibold font-mono">
+                  {order.trackingNumber}
+                </Text>
               </View>
+              <TouchableOpacity
+                className="bg-blue-900/20 border border-blue-800/40 rounded-xl py-3 items-center"
+                onPress={() => {
+                  const urls: Record<string, string> = {
+                    JT_EXPRESS: `https://www.jtexpress.ph/trajectoryQuery?bills=${order.trackingNumber}`,
+                    LBC: `https://www.lbcexpress.com/track/?tracking_no=${order.trackingNumber}`,
+                    NINJA_VAN: `https://www.ninjavan.co/en-ph/tracking?id=${order.trackingNumber}`,
+                    FLASH_EXPRESS: `https://www.flashexpress.ph/tracking/?se=${order.trackingNumber}`,
+                    GRAB_EXPRESS: `https://food.grab.com/ph/en/`,
+                    OTHER: `https://track.aftership.com/${order.trackingNumber}`,
+                  };
+                  const url = urls[order.courier ?? 'OTHER'] ??
+                    `https://track.aftership.com/${order.trackingNumber}`;
+                  void Linking.openURL(url);
+                }}
+              >
+                <Text className="text-[#60A5FA] font-semibold text-sm">🔍 Track Package</Text>
+              </TouchableOpacity>
               {order.autoConfirmAt && order.status === 'SHIPPED' && (
                 <View className="mt-3 pt-3 border-t border-gray-800">
                   <Text className="text-gray-600 text-xs">
@@ -227,6 +267,28 @@ export default function OrderDetailScreen() {
           <View className="h-32" />
         </View>
       </ScrollView>
+
+      {/* Pay Now CTA */}
+      {order.status === 'PENDING_PAYMENT' && (
+        <View className="absolute bottom-0 left-0 right-0 px-6 pb-10 pt-4 bg-[#1E2A3A] border-t border-gray-800">
+          <TouchableOpacity
+            className={`bg-[#1A56DB] rounded-2xl py-4 items-center ${paying ? 'opacity-60' : ''}`}
+            onPress={() => void handlePayNow()}
+            disabled={paying}
+          >
+            {paying ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <Text className="text-white font-bold text-base">💳 Pay Now</Text>
+                <Text className="text-blue-200 text-xs mt-0.5">
+                  {formatPHP(order.amount)} via GCash / QR Ph
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Confirm Receipt CTA */}
       {order.status === 'SHIPPED' && (

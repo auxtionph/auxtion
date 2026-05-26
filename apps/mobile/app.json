@@ -60,7 +60,6 @@
           }
         }
       ],
-
       [
         "expo-image-picker",
         {
@@ -68,7 +67,8 @@
           "cameraPermission": "Auxtion needs access to your camera to capture item photos."
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true

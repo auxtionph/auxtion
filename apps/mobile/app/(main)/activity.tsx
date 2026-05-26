@@ -77,10 +77,12 @@ const STATUS_COLORS: Record<string, string> = {
   ACCEPTED: '#10B981',
   DECLINED: '#DC2626',
   EXPIRED: '#6B7280',
+  PENDING_MANUAL_PAYMENT: '#F59E0B',
 };
 
 const STATUS_LABELS: Record<string, string> = {
   PENDING_PAYMENT: 'Awaiting Payment',
+  PENDING_MANUAL_PAYMENT: 'Awaiting GCash',
   PAID: 'Paid',
   SHIPPED: 'Shipped',
   DELIVERED: 'Delivered',
