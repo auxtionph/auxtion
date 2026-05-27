@@ -15,6 +15,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { MaxBidsService } from '../max-bids/max-bids.service';
 import { PaymentsService } from '../payments/payments.service';
 import { OrdersService } from '../orders/orders.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 interface PlaceBidPayload {
   auctionId: string;
@@ -119,6 +120,7 @@ export class BiddingGateway
     private readonly maxBidsService: MaxBidsService,
     private readonly paymentsService: PaymentsService,
     private readonly ordersService: OrdersService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -688,6 +690,16 @@ export class BiddingGateway
         amount,
         mode: 'chat',
       });
+      // Notify winner
+      const item = await this.prisma.shopItem.findUnique({
+        where: { id: itemId },
+        select: { title: true },
+      });
+      void this.notifications.sendToUser(winnerId, {
+        title: '🎉 You won!',
+        body: `You won ${item?.title ?? 'an item'} for ₱${(amount / 100).toLocaleString()}. Pay now to secure it!`,
+        data: { screen: 'order' },
+      });
     } catch (e) {
       this.logger.error(`Chat order creation failed for item ${itemId}:`, e);
     }
@@ -941,6 +953,16 @@ export class BiddingGateway
           this.logger.log(
             `Order created for winner ${result.winner.displayName}`,
           );
+          // Notify winner
+          const item = await this.prisma.shopItem.findUnique({
+            where: { id: itemId },
+            select: { title: true },
+          });
+          void this.notifications.sendToUser(result.winner.userId, {
+            title: '🎉 You won!',
+            body: `You won ${item?.title ?? 'an item'} for ₱${(result.winner.amount / 100).toLocaleString()}. Pay now to secure it!`,
+            data: { screen: 'order' },
+          });
         } catch (e) {
           this.logger.error(`Order creation failed for item ${itemId}:`, e);
         }
