@@ -814,9 +814,9 @@ export class BiddingGateway
       }
     });
 
-    // Reset any LIVE items back to QUEUED — covers chat bid items with no winner
+    // Reset LIVE swipe-auction items back to QUEUED (chat bid items are left as-is — seller declares winner)
     void this.prisma.shopItem.updateMany({
-      where: { auctionId: payload.auctionId, status: 'LIVE' },
+      where: { auctionId: payload.auctionId, status: 'LIVE', mode: 'auction' },
       data: { status: 'QUEUED' },
     });
 

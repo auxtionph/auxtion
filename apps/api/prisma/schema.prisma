@@ -191,6 +191,7 @@ model Auction {
   chatMessages    AuctionChatMessage[]
   maxBids         MaxBid[]
   followers       AuctionFollower[]
+  orders          Order[]
 
   @@map("auctions")
 }
@@ -292,6 +293,7 @@ model Order {
   buyer   User     @relation("BuyerOrders", fields: [buyerId], references: [id])
   seller  User     @relation("SellerOrders", fields: [sellerId], references: [id])
   item    ShopItem @relation(fields: [itemId], references: [id])
+  auction Auction? @relation(fields: [auctionId], references: [id])
   payment Payment?
   dispute Dispute?
 

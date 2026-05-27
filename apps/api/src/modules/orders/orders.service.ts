@@ -61,6 +61,14 @@ export class OrdersService {
         payment: {
           select: { status: true, paymongoRef: true },
         },
+        auction: {
+          select: {
+            id: true,
+            title: true,
+            actualStartTime: true,
+            startTime: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
