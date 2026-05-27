@@ -2,7 +2,6 @@ import {
   View,
   Text,
   TouchableOpacity,
-  FlatList,
   ActivityIndicator,
   RefreshControl,
   Alert,
@@ -21,6 +20,7 @@ import { formatPHP } from '@auxtion/utils';
 
 type OrderStatus =
   | 'PENDING_PAYMENT'
+  | 'PENDING_MANUAL_PAYMENT'
   | 'PAID'
   | 'SHIPPED'
   | 'DELIVERED'
@@ -64,10 +64,25 @@ interface SellerOrder {
     status: string;
     paymongoRef?: string;
   };
+  auction?: {
+    id: string;
+    title: string;
+    actualStartTime?: string;
+    startTime: string;
+  };
+}
+
+interface AuctionGroup {
+  auctionId: string;
+  auctionTitle: string;
+  date: string;
+  orders: SellerOrder[];
+  isExpanded: boolean;
 }
 
 const STATUS_CONFIG: Record<OrderStatus, { label: string; color: string; bg: string }> = {
-  PENDING_PAYMENT: { label: 'Awaiting Payment', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' },
+  PENDING_PAYMENT:        { label: 'Awaiting Payment',  color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' },
+  PENDING_MANUAL_PAYMENT: { label: 'Awaiting GCash/Bank', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' },
   PAID:            { label: 'Paid — Ship Now',  color: '#10B981', bg: 'rgba(16,185,129,0.12)' },
   SHIPPED:         { label: 'Shipped',           color: '#3B82F6', bg: 'rgba(59,130,246,0.12)' },
   DELIVERED:       { label: 'Delivered',         color: '#8B5CF6', bg: 'rgba(139,92,246,0.12)' },
@@ -106,7 +121,16 @@ export default function SellerOrdersScreen() {
   const fetchOrders = useCallback(async () => {
     try {
       const res = await apiClient.get('/orders/selling');
-      setOrders(res.data.data as SellerOrder[]);
+      const data = res.data.data as SellerOrder[];
+      setOrders(data);
+      // Auto-expand groups with PAID orders
+      setExpandedGroups(prev => {
+        const next = new Set(prev);
+        data.forEach(o => {
+          if (o.status === 'PAID' && o.auction?.id) next.add(o.auction.id);
+        });
+        return next;
+      });
     } catch {
       Alert.alert('Error', 'Failed to load orders');
     } finally {
@@ -148,11 +172,54 @@ export default function SellerOrdersScreen() {
     }
   };
 
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
   const filtered = orders.filter(o => {
     if (filterTab === 'all') return true;
     return o.status === filterTab;
   });
 
+  const grouped: AuctionGroup[] = (() => {
+    const map = new Map<string, AuctionGroup>();
+    filtered.forEach(order => {
+      const key = order.auction?.id ?? 'no-auction';
+      const title = order.auction?.title ?? 'Direct Sale';
+      const rawDate = order.auction?.actualStartTime ?? order.auction?.startTime ?? order.createdAt;
+      const date = new Date(rawDate).toLocaleDateString('en-PH', {
+        month: 'short', day: 'numeric', year: 'numeric',
+      });
+      if (!map.has(key)) {
+        map.set(key, {
+          auctionId: key,
+          auctionTitle: title,
+          date,
+          orders: [],
+          isExpanded: expandedGroups.has(key) || key === 'no-auction',
+        });
+      }
+      map.get(key)!.orders.push(order);
+    });
+    // Sort orders within each group newest first
+    map.forEach(group => {
+      group.orders.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    });
+    return Array.from(map.values()).sort((a, b) => {
+      const aDate = a.orders[0]?.auction?.actualStartTime ?? a.orders[0]?.auction?.startTime ?? a.orders[0]?.createdAt ?? '';
+      const bDate = b.orders[0]?.auction?.actualStartTime ?? b.orders[0]?.auction?.startTime ?? b.orders[0]?.createdAt ?? '';
+      return new Date(bDate).getTime() - new Date(aDate).getTime();
+    });
+  })();
+
+  const toggleGroup = (auctionId: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(auctionId)) next.delete(auctionId);
+      else next.add(auctionId);
+      return next;
+    });
+  };
+
+  // Auto-expand groups with PAID orders
   const paidCount = orders.filter(o => o.status === 'PAID').length;
 
   const tabs: { key: FilterTab; label: string; count?: number }[] = [
@@ -169,10 +236,8 @@ export default function SellerOrdersScreen() {
     return (
       <View style={{
         backgroundColor: '#111827',
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: isPaid ? 'rgba(16,185,129,0.3)' : '#1F2937',
-        marginBottom: 12,
+        borderRadius: 0,
+        borderWidth: 0,
         overflow: 'hidden',
       }}>
         {/* Paid urgency banner */}
@@ -185,6 +250,18 @@ export default function SellerOrdersScreen() {
             <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#10B981' }} />
             <Text style={{ color: '#10B981', fontSize: 11, fontWeight: '700' }}>
               Payment received — ready to ship
+            </Text>
+          </View>
+        )}
+        {order.status === 'PENDING_MANUAL_PAYMENT' && (
+          <View style={{
+            backgroundColor: 'rgba(245,158,11,0.12)',
+            paddingHorizontal: 14, paddingVertical: 6,
+            flexDirection: 'row', alignItems: 'center', gap: 6,
+          }}>
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#F59E0B' }} />
+            <Text style={{ color: '#F59E0B', fontSize: 11, fontWeight: '700' }}>
+              Awaiting GCash / bank payment
             </Text>
           </View>
         )}
@@ -274,6 +351,39 @@ export default function SellerOrdersScreen() {
           </Text>
 
           {/* CTA */}
+          {order.status === 'PENDING_MANUAL_PAYMENT' && (
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#F59E0B',
+                borderRadius: 12, paddingVertical: 12,
+                alignItems: 'center', marginBottom: 8,
+              }}
+              onPress={() => {
+                Alert.alert(
+                  'Mark as Paid?',
+                  `Confirm that ${order.buyer.displayName} has paid ${formatPHP(order.amount)} via GCash or bank transfer.`,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Confirm Payment',
+                      onPress: async () => {
+                        try {
+                          await apiClient.patch(`/orders/${order.id}/mark-paid`);
+                          void fetchOrders();
+                        } catch {
+                          Alert.alert('Error', 'Failed to mark as paid. Try again.');
+                        }
+                      },
+                    },
+                  ],
+                );
+              }}
+            >
+              <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>
+                💰 Mark as Paid
+              </Text>
+            </TouchableOpacity>
+          )}
           {isPaid && (
             <TouchableOpacity
               style={{
@@ -375,37 +485,92 @@ export default function SellerOrdersScreen() {
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color="#1A56DB" />
         </View>
+      ) : grouped.length === 0 ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 }}>
+          <Text style={{ fontSize: 48, marginBottom: 16 }}>📦</Text>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 8 }}>
+            No orders yet
+          </Text>
+          <Text style={{ color: '#6B7280', fontSize: 14, textAlign: 'center', paddingHorizontal: 40 }}>
+            {filterTab === 'PAID'
+              ? 'No paid orders waiting to ship'
+              : 'Orders from your auctions will appear here'}
+          </Text>
+        </View>
       ) : (
-        <FlatList
-          data={filtered}
-          keyExtractor={o => o.id}
-          renderItem={renderOrder}
-          contentContainerStyle={{
-            padding: 16,
-            paddingBottom: insets.bottom + 32,
-            flexGrow: 1,
-          }}
+        <ScrollView
+          contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 32 }}
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor="#1A56DB"
-            />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#1A56DB" />
           }
-          ListEmptyComponent={
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 }}>
-              <Text style={{ fontSize: 48, marginBottom: 16 }}>📦</Text>
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 8 }}>
-                No orders yet
-              </Text>
-              <Text style={{ color: '#6B7280', fontSize: 14, textAlign: 'center', paddingHorizontal: 40 }}>
-                {filterTab === 'PAID'
-                  ? 'No paid orders waiting to ship'
-                  : 'Orders from your auctions will appear here'}
-              </Text>
-            </View>
-          }
-        />
+          showsVerticalScrollIndicator={false}
+        >
+          {grouped.map(group => {
+            const isExpanded = expandedGroups.has(group.auctionId);
+            const groupPaidCount = group.orders.filter(o => o.status === 'PAID').length;
+            return (
+              <View key={group.auctionId} style={{ marginBottom: 16 }}>
+                {/* Group header */}
+                <TouchableOpacity
+                  onPress={() => toggleGroup(group.auctionId)}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center',
+                    backgroundColor: '#111827',
+                    borderRadius: isExpanded ? 16 : 16,
+                    borderBottomLeftRadius: isExpanded ? 0 : 16,
+                    borderBottomRightRadius: isExpanded ? 0 : 16,
+                    padding: 14,
+                    borderWidth: 1,
+                    borderColor: groupPaidCount > 0 ? 'rgba(16,185,129,0.3)' : '#1F2937',
+                    gap: 10,
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
+                      📺 {group.auctionTitle}
+                    </Text>
+                    <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>
+                      {group.date} · {group.orders.length} order{group.orders.length !== 1 ? 's' : ''}
+                    </Text>
+                  </View>
+                  {groupPaidCount > 0 && (
+                    <View style={{
+                      backgroundColor: '#10B981', borderRadius: 999,
+                      paddingHorizontal: 8, paddingVertical: 3,
+                    }}>
+                      <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>
+                        {groupPaidCount} to ship
+                      </Text>
+                    </View>
+                  )}
+                  <Text style={{ color: '#6B7280', fontSize: 16 }}>
+                    {isExpanded ? '▾' : '▸'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Orders in group */}
+                {isExpanded && (
+                  <View style={{
+                    borderWidth: 1, borderTopWidth: 0,
+                    borderColor: groupPaidCount > 0 ? 'rgba(16,185,129,0.3)' : '#1F2937',
+                    borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
+                    overflow: 'hidden',
+                  }}>
+                    {group.orders.map((order, idx) => (
+                      <View key={order.id} style={{
+                        borderTopWidth: idx === 0 ? 0 : 1,
+                        borderTopColor: '#1F2937',
+                      }}>
+                        {renderOrder({ item: order })}
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            );
+          })}
+        </ScrollView>
       )}
 
       {/* ── Ship Modal ── */}
