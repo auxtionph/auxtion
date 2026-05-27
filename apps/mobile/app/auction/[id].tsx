@@ -32,23 +32,49 @@ export default function AuctionDetailScreen() {
   const [showGoLiveModal, setShowGoLiveModal] = useState(false);
   const [following, setFollowing] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
+  const [reminded, setReminded] = useState(() => followStore.get(`auction:${id}`) ?? false);
+  const [reminderLoading, setReminderLoading] = useState(false);
+
+  const handleToggleReminder = async () => {
+    if (reminderLoading) return;
+    setReminderLoading(true);
+    try {
+      const res = await apiClient.post(`/auctions/${id}/follow`);
+      const d = res.data.data as { following: boolean };
+      setReminded(d.following);
+      followStore.set(`auction:${id}`, d.following);
+    } catch {
+      // ignore
+    } finally {
+      setReminderLoading(false);
+    }
+  };
 
   const sellerId = auction?.seller.id;
   const isOwnAuction = sellerId === user?.id;
 
   useEffect(() => {
     if (!sellerId || isOwnAuction || !user?.id) return;
-    // Set from cache instantly to avoid flicker
-    const cached = followStore.get(sellerId);
-    if (cached !== undefined) setFollowing(cached);
-    // Then verify with server
-    void apiClient.get(`/sellers/${sellerId}/follow-status`)
-      .then(res => {
-        const d = res.data.data as { following: boolean };
+    const cachedSeller = followStore.get(sellerId);
+    if (cachedSeller !== undefined) setFollowing(cachedSeller);
+    const cachedAuction = followStore.get(`auction:${id}`);
+    if (cachedAuction !== undefined) setReminded(cachedAuction);
+
+    void Promise.all([
+      apiClient.get(`/sellers/${sellerId}/follow-status`).catch(() => null),
+      apiClient.get(`/auctions/${id}/follow-status`).catch(() => null),
+    ]).then(([sellerRes, auctionRes]) => {
+      if (sellerRes) {
+        const d = sellerRes.data.data as { following: boolean };
         setFollowing(d.following);
         followStore.set(sellerId, d.following);
-      })
-      .catch(() => {});
+      }
+      if (auctionRes) {
+        const d = auctionRes.data.data as { following: boolean };
+        setReminded(d.following);
+        followStore.set(`auction:${id}`, d.following);
+      }
+    });
   }, [sellerId, isOwnAuction, user?.id]);
 
   const handleToggleFollow = async () => {
@@ -789,9 +815,22 @@ export default function AuctionDetailScreen() {
               </TouchableOpacity>
             )}
             {isScheduled && (
-              <TouchableOpacity style={{ backgroundColor: '#F59E0B', borderRadius: 16, paddingVertical: 18, alignItems: 'center' }}>
-                <Text style={{ color: '#000', fontWeight: '700', fontSize: 17 }}>⏰ Set Reminder</Text>
-                <Text style={{ color: '#78350F', fontSize: 12, marginTop: 2 }}>Get notified when this goes live</Text>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: reminded ? '#1F2937' : '#F59E0B',
+                  borderRadius: 16, paddingVertical: 18, alignItems: 'center',
+                  borderWidth: reminded ? 1 : 0, borderColor: '#374151',
+                  opacity: reminderLoading ? 0.6 : 1,
+                }}
+                onPress={() => void handleToggleReminder()}
+                disabled={reminderLoading}
+              >
+                <Text style={{ color: reminded ? '#fff' : '#000', fontWeight: '700', fontSize: 17 }}>
+                  {reminded ? '🔔 Reminder Set ✓' : '⏰ Set Reminder'}
+                </Text>
+                <Text style={{ color: reminded ? '#6B7280' : '#78350F', fontSize: 12, marginTop: 2 }}>
+                  {reminded ? 'Tap to cancel reminder' : 'Get notified when this goes live'}
+                </Text>
               </TouchableOpacity>
             )}
             {isEnded && (
