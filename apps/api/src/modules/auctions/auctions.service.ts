@@ -9,12 +9,14 @@ import { CreateAuctionDto } from './dto/create-auction.dto';
 import { UpdateAuctionDto } from './dto/update-auction.dto';
 import { AuctionStatus, ShopItemStatus, UserRole } from '@prisma/client';
 import { StreamingService } from '../streaming/streaming.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class AuctionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly streamingService: StreamingService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ── Create Auction ─────────────────────────────────────────────────────────
@@ -235,14 +237,33 @@ export class AuctionsService {
       auction.title,
     );
 
-    return this.prisma.auction.update({
+    const liveAuction = await this.prisma.auction.update({
       where: { id: auctionId },
       data: {
         status: AuctionStatus.LIVE,
         streamUrl: roomId,
         actualStartTime: now,
       },
+      include: {
+        seller: { select: { displayName: true } },
+      },
     });
+
+    // ── Notify auction + seller followers ────────────────────────────
+    void Promise.all([
+      this.notifications.sendToAuctionFollowers(auctionId, {
+        title: '🔴 Live now!',
+        body: `${liveAuction.seller.displayName} just went live — tap to join!`,
+        data: { auctionId, screen: 'live' },
+      }),
+      this.notifications.sendToSellerFollowers(sellerId, {
+        title: `🔴 ${liveAuction.seller.displayName} is live!`,
+        body: `${liveAuction.title} — join now before it ends!`,
+        data: { auctionId, screen: 'live' },
+      }),
+    ]);
+
+    return liveAuction;
   }
 
   // ── Get Scheduled Slots ────────────────────────────────────────────────────

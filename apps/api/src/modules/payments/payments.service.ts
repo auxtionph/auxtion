@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { OrderStatus, PaymentStatus, PaymentMethod } from '@prisma/client';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { OrdersService } from '../orders/orders.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class PaymentsService {
@@ -18,6 +19,7 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly ordersService: OrdersService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ── Create Order + Payment record (PayMongo path) ─────────────────────────
@@ -283,6 +285,22 @@ export class PaymentsService {
     this.logger.log(
       `Order ${orderId} marked PAID via webhook ${webhookEventId}`,
     );
+
+    // ── Notify seller ─────────────────────────────────────────────────
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        item: { select: { title: true } },
+        seller: { select: { id: true } },
+      },
+    });
+    if (order) {
+      void this.notifications.sendToUser(order.seller.id, {
+        title: '💰 Payment received!',
+        body: `${order.item.title} has been paid. Ship it now!`,
+        data: { screen: 'seller-orders' },
+      });
+    }
   }
 
   // ── Mark Payment as Failed ─────────────────────────────────────────────────

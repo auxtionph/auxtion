@@ -10,11 +10,13 @@ import {
   StatusBar,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { apiClient } from '../../src/services/api/client';
 import { formatPHP } from '@auxtion/utils';
 import { useAuthStore } from '../../src/stores/auth.store';
+import { followStore } from '../../src/stores/follow.store';
+
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const CARD_WIDTH = (SCREEN_WIDTH - 16 * 2 - 10) / 2;
@@ -58,24 +60,52 @@ export default function UserProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('shows');
-  const [following, setFollowing] = useState(false);
+  const [following, setFollowing] = useState(() => followStore.get(id) ?? false);
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followLoading, setFollowLoading] = useState(false);
+
+  const handleToggleFollow = async () => {
+    if (followLoading) return;
+    setFollowLoading(true);
+    try {
+      const res = await apiClient.post(`/sellers/${id}/follow`);
+      const d = res.data.data as { following: boolean };
+      setFollowing(d.following);
+      followStore.set(id, d.following);
+      setFollowerCount(prev => d.following ? prev + 1 : prev - 1);
+    } catch {
+      // ignore
+    } finally {
+      setFollowLoading(false);
+    }
+  };
 
   const fetchProfile = useCallback(async () => {
     try {
-      const [profileRes, auctionsRes] = await Promise.all([
+      const shouldFetchFollow = !!user?.id && user.id !== id;
+      const [profileRes, auctionsRes, followRes] = await Promise.all([
         apiClient.get(`/users/${id}`),
         apiClient.get(`/auctions/seller/${id}`).catch(() => ({ data: { data: [] } })),
+        shouldFetchFollow
+          ? apiClient.get(`/sellers/${id}/follow-status`).catch(() => null)
+          : Promise.resolve(null),
       ]);
       const p = profileRes.data.data as UserProfile;
       const auctions = auctionsRes.data.data as UserProfile['auctions'];
       setProfile({ ...p, auctions: auctions ?? [] });
+      if (followRes) {
+        const d = followRes.data.data as { following: boolean; followerCount: number };
+        setFollowing(d.following);
+        followStore.set(id, d.following);
+        setFollowerCount(d.followerCount);
+      }
     } catch {
       // ignore
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [id]);
+  }, [id, user?.id]);
 
   useFocusEffect(useCallback(() => {
     void fetchProfile();
@@ -212,12 +242,19 @@ export default function UserProfileScreen() {
                     flex: 1, backgroundColor: following ? '#1F2937' : '#1A56DB',
                     borderRadius: 12, paddingVertical: 13, alignItems: 'center',
                     borderWidth: following ? 1 : 0, borderColor: '#374151',
+                    opacity: followLoading ? 0.6 : 1,
                   }}
-                  onPress={() => setFollowing(f => !f)}
+                  onPress={() => void handleToggleFollow()}
+                  disabled={followLoading}
                 >
                   <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
-                    {following ? 'Following ✓' : 'Follow'}
+                    {following ? 'Following ✓' : '+ Follow'}
                   </Text>
+                  {followerCount > 0 && (
+                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, marginTop: 2 }}>
+                      {followerCount.toLocaleString()} follower{followerCount !== 1 ? 's' : ''}
+                    </Text>
+                  )}
                 </TouchableOpacity>
                 <TouchableOpacity style={{
                   flex: 1, backgroundColor: '#1F2937', borderRadius: 12,
@@ -291,7 +328,7 @@ export default function UserProfileScreen() {
                 <View key={rowIndex} style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
                   {row.map(auction => {
                     const isLive = auction.status === 'LIVE';
-                    const firstPhoto = auction.shopItems[0]?.photos?.[0];
+                    const firstPhoto = auction.shopItems[0]?.photos?.[0]?.url;
                     const isWide = row.length === 1;
                     return (
                       <TouchableOpacity
@@ -301,7 +338,10 @@ export default function UserProfileScreen() {
                           backgroundColor: '#1F2937', borderRadius: 16, overflow: 'hidden',
                           borderWidth: isLive ? 1.5 : 0, borderColor: '#DC2626',
                         }}
-                        onPress={() => router.push(`/auction/${auction.id}`)}
+                        onPress={() => {
+                          router.dismissAll();
+                          router.push(`/auction/${auction.id}`);
+                        }}
                         activeOpacity={0.85}
                       >
                         <View style={{ height: isWide ? 200 : 150, backgroundColor: '#374151', alignItems: 'center', justifyContent: 'center' }}>

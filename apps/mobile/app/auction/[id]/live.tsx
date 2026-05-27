@@ -262,6 +262,58 @@ function FloatingEmoji({ item, onDone }: { item: FloatingEmojiItem; onDone: (id:
   );
 }
 
+// ── Follow Seller Button (live room) ──────────────────────────────────────
+function FollowSellerButton({ sellerId, userId }: { sellerId: string; userId?: string }) {
+  const [following, setFollowing] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!userId || userId === sellerId) return;
+    void apiClient.get(`/sellers/${sellerId}/follow-status`)
+      .then(res => {
+        const d = res.data.data as { following: boolean };
+        setFollowing(d.following);
+      })
+      .catch(() => {});
+  }, [sellerId, userId]);
+
+  const toggle = async () => {
+    if (loading || !userId || userId === sellerId) return;
+    setLoading(true);
+    try {
+      const res = await apiClient.post(`/sellers/${sellerId}/follow`);
+      const d = res.data.data as { following: boolean };
+      setFollowing(d.following);
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!userId || userId === sellerId) return null;
+
+  return (
+    <TouchableOpacity
+      onPress={() => void toggle()}
+      disabled={loading}
+      style={{
+        backgroundColor: following ? 'rgba(255,255,255,0.12)' : '#1A56DB',
+        borderWidth: 1,
+        borderColor: following ? 'rgba(255,255,255,0.25)' : '#1A56DB',
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        opacity: loading ? 0.6 : 1,
+      }}
+    >
+      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+        {following ? '✓ Following' : '+ Follow'}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function LiveAuctionRoom() {
   const { id, role: routeRole } = useLocalSearchParams<{ id: string; role?: string }>();
   const router = useRouter();
@@ -1241,6 +1293,13 @@ export default function LiveAuctionRoom() {
               {auction?.seller.displayName}
             </Text>
           </View>
+          {/* Follow seller button — viewers only */}
+          {!isSeller && auction && (
+            <FollowSellerButton
+              sellerId={auction.seller.id}
+              userId={user?.id}
+            />
+          )}
 
           <View style={{
             flexDirection: 'row', alignItems: 'center', gap: 4,
