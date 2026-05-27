@@ -240,7 +240,7 @@ export default function ExploreScreen() {
               }}
               onPress={() => {
                if (s.type === 'seller' && s.id) {
-                router.push(`/user/${s.id}`);
+                router.push(`/seller/${s.id}`);
                   setSuggestions([]);
                 } else {
                   setSearch(s.label);
@@ -455,7 +455,7 @@ export default function ExploreScreen() {
                     paddingVertical: 14, paddingHorizontal: 4,
                     borderBottomWidth: 1, borderColor: '#1F2937',
                   }}
-                  onPress={() => router.push(`/user/${item.id}`)}
+                  onPress={() => router.push(`/seller/${item.id}`)}
                   activeOpacity={0.8}
                 >
                   <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#1A56DB', alignItems: 'center', justifyContent: 'center' }}>

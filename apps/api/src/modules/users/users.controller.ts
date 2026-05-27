@@ -51,6 +51,14 @@ export class UsersController {
     return this.usersService.saveAddress(user.id, dto);
   }
 
+  @Post('me/push-token')
+  savePushToken(
+    @CurrentUser() user: AuthUser,
+    @Body() body: { token: string },
+  ) {
+    return this.usersService.savePushToken(user.id, body.token);
+  }
+
   @Patch('me/payment-methods')
   savePaymentMethods(
     @CurrentUser() user: AuthUser,

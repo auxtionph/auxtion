@@ -212,4 +212,12 @@ export class UsersService {
       take: 20,
     });
   }
+
+  async savePushToken(userId: string, token: string) {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { pushToken: token },
+    });
+    return { saved: true };
+  }
 }

@@ -15,7 +15,9 @@ import { auctionsApi, AuctionDetail } from '../../src/services/api/auctions.api'
 import { shopItemsApi, ShopItemPhoto } from '../../src/services/api/shop-items.api';
 import { formatPHP } from '@auxtion/utils';
 import { useAuthStore } from '../../src/stores/auth.store';
+import { apiClient } from '../../src/services/api/client';
 import { Ionicons } from '@expo/vector-icons';
+import { followStore } from '../../src/stores/follow.store';
 
 export default function AuctionDetailScreen() {
   const { id, type } = useLocalSearchParams<{ id: string; type?: string }>();
@@ -28,6 +30,41 @@ export default function AuctionDetailScreen() {
   const [error, setError] = useState('');
   const [startingLive, setStartingLive] = useState(false);
   const [showGoLiveModal, setShowGoLiveModal] = useState(false);
+  const [following, setFollowing] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
+
+  const sellerId = auction?.seller.id;
+  const isOwnAuction = sellerId === user?.id;
+
+  useEffect(() => {
+    if (!sellerId || isOwnAuction || !user?.id) return;
+    // Set from cache instantly to avoid flicker
+    const cached = followStore.get(sellerId);
+    if (cached !== undefined) setFollowing(cached);
+    // Then verify with server
+    void apiClient.get(`/sellers/${sellerId}/follow-status`)
+      .then(res => {
+        const d = res.data.data as { following: boolean };
+        setFollowing(d.following);
+        followStore.set(sellerId, d.following);
+      })
+      .catch(() => {});
+  }, [sellerId, isOwnAuction, user?.id]);
+
+  const handleToggleFollow = async () => {
+    if (followLoading || !sellerId) return;
+    setFollowLoading(true);
+    try {
+      const res = await apiClient.post(`/sellers/${sellerId}/follow`);
+      const d = res.data.data as { following: boolean };
+      setFollowing(d.following);
+      if (sellerId) followStore.set(sellerId, d.following);
+    } catch {
+      // ignore
+    } finally {
+      setFollowLoading(false);
+    }
+  };
   const [selectedItem, setSelectedItem] = useState<AuctionDetail['shopItems'][0] | null>(null);
   const [showItemSheet, setShowItemSheet] = useState(false);
 
@@ -36,13 +73,18 @@ export default function AuctionDetailScreen() {
       const data = await auctionsApi.getById(id);
       setAuction(data);
       setError('');
+      // Seed follow state from cache as soon as we know the seller ID
+      if (data.seller.id && user?.id && data.seller.id !== user.id) {
+        const cached = followStore.get(data.seller.id);
+        if (cached !== undefined) setFollowing(cached);
+      }
     } catch {
       setError('Failed to load auction');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [id]);
+  }, [id, user?.id]);
 
   useEffect(() => {
     void fetchAuction();
@@ -217,34 +259,50 @@ export default function AuctionDetailScreen() {
         <View style={{ padding: 20 }}>
 
           {/* Seller Info */}
-          <TouchableOpacity
+          <View
               style={{
                 flexDirection: 'row', alignItems: 'center', gap: 12,
                 backgroundColor: '#111827', borderRadius: 16, padding: 16,
                 borderWidth: 1, borderColor: '#1F2937', marginBottom: 24,
               }}
-              onPress={() => router.push(`/user/${auction.seller.id}` as never)}
+            >
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}
+              onPress={() => router.push(`/seller/${auction.seller.id}` as never)}
               activeOpacity={0.8}
             >
-            <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#1A56DB', alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>
-                {auction.seller.displayName.charAt(0).toUpperCase()}
-              </Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
-                {auction.seller.displayName}
-              </Text>
-              <Text style={{ color: '#6B7280', fontSize: 13 }}>
-                {auction.seller.sellerTier} Seller · {auction.seller.totalSales} sales
-              </Text>
-            </View>
-            {!isSeller && (
-              <TouchableOpacity style={{ backgroundColor: '#1F2937', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8 }}>
-                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>Follow</Text>
+              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#1A56DB', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>
+                  {auction.seller.displayName.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+                  {auction.seller.displayName}
+                </Text>
+                <Text style={{ color: '#6B7280', fontSize: 13 }}>
+                  {auction.seller.sellerTier} Seller · {auction.seller.totalSales} sales
+                </Text>
+              </View>
+            </TouchableOpacity>
+            {!isOwnAuction && (
+              <TouchableOpacity
+                onPress={() => void handleToggleFollow()}
+                disabled={followLoading}
+                style={{
+                  backgroundColor: following ? 'rgba(255,255,255,0.08)' : '#1A56DB',
+                  borderRadius: 999, paddingHorizontal: 14, paddingVertical: 8,
+                  borderWidth: 1,
+                  borderColor: following ? '#374151' : '#1A56DB',
+                  opacity: followLoading ? 0.6 : 1,
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+                  {following ? 'Following ✓' : '+ Follow'}
+                </Text>
               </TouchableOpacity>
             )}
-          </TouchableOpacity>
+          </View>
 
           {/* Auction Info */}
           <View style={{ marginBottom: 24 }}>

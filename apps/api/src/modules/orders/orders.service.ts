@@ -14,6 +14,7 @@ import {
   SellerTier,
   PaymentMethod,
 } from '@prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class OrdersService {
@@ -22,6 +23,7 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ── Get Buyer Orders ───────────────────────────────────────────────────────
@@ -121,6 +123,13 @@ export class OrdersService {
         shippedAt,
         autoConfirmAt,
       },
+    });
+
+    // ── Notify buyer ─────────────────────────────────────────────────
+    void this.notifications.sendToUser(order.buyerId, {
+      title: '📦 Your order has been shipped!',
+      body: `${order.item.title} is on its way via ${dto.courier.replace(/_/g, ' ')}`,
+      data: { orderId, screen: 'order' },
     });
 
     // ── Create AfterShip tracking (non-fatal if fails) ──────────────
@@ -229,6 +238,7 @@ export class OrdersService {
         seller: {
           select: { id: true, sellerTier: true, totalSales: true },
         },
+        item: { select: { title: true } },
       },
     });
 
@@ -244,7 +254,7 @@ export class OrdersService {
       order.seller.sellerTier,
     );
 
-    return this.prisma.order.update({
+    await this.prisma.order.update({
       where: { id: orderId },
       data: {
         status: OrderStatus.DELIVERED,
@@ -252,6 +262,16 @@ export class OrdersService {
         payoutReleaseAt,
       },
     });
+
+    // ── Notify seller ─────────────────────────────────────────────────
+    void this.notifications.sendToUser(order.sellerId, {
+      title: '✅ Buyer confirmed receipt!',
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      body: `Payment for ${order.item.title ?? 'your item'} will be released soon.`,
+      data: { screen: 'seller-orders' },
+    });
+
+    return { success: true };
   }
 
   // ── Cancel Order (Seller) ──────────────────────────────────────────────────

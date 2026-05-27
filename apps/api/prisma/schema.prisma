@@ -135,7 +135,10 @@ model User {
   buyerOrders       Order[]            @relation("BuyerOrders")
   sellerOrders      Order[]            @relation("SellerOrders")
   itemNotifications ItemNotification[]
-  maxBids   MaxBid[]
+  maxBids           MaxBid[]
+  following         SellerFollower[]   @relation("UserFollowing")
+  followers         SellerFollower[]   @relation("UserFollowers")
+  auctionFollows    AuctionFollower[]
   addresses UserAddress[]
 
   // ── Payment Methods ─────────────────────────
@@ -144,6 +147,7 @@ model User {
   bankName          String?   // e.g. "BPI", "BDO", "Metrobank"
   bankAccountNumber String?
   bankAccountName   String?   // Account holder name
+  pushToken         String?
 
   @@map("users")
 }
@@ -184,8 +188,9 @@ model Auction {
   seller    User       @relation(fields: [sellerId], references: [id])
   shopItems ShopItem[]
   bids      Bid[]
-  chatMessages AuctionChatMessage[]
-  maxBids   MaxBid[]
+  chatMessages    AuctionChatMessage[]
+  maxBids         MaxBid[]
+  followers       AuctionFollower[]
 
   @@map("auctions")
 }
@@ -394,4 +399,32 @@ model UserAddress {
   user User @relation(fields: [userId], references: [id])
 
   @@map("user_addresses")
+}
+
+model SellerFollower {
+  id        String   @id @default(cuid())
+  userId    String
+  sellerId  String
+  createdAt DateTime @default(now())
+
+  user   User @relation("UserFollowing", fields: [userId], references: [id])
+  seller User @relation("UserFollowers", fields: [sellerId], references: [id])
+
+  @@unique([userId, sellerId])
+  @@index([sellerId])
+  @@map("seller_followers")
+}
+
+model AuctionFollower {
+  id        String   @id @default(cuid())
+  userId    String
+  auctionId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id])
+  auction Auction @relation(fields: [auctionId], references: [id])
+
+  @@unique([userId, auctionId])
+  @@index([auctionId])
+  @@map("auction_followers")
 }
