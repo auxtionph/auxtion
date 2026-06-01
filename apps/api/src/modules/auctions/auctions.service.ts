@@ -189,6 +189,16 @@ export class AuctionsService {
         'You already have a live auction. End it before starting a new one.',
       );
     }
+
+    // Block if currently co-hosting someone else's live
+    const activeCoHost = await this.prisma.auction.findFirst({
+      where: { coHostId: sellerId, status: AuctionStatus.LIVE },
+    });
+    if (activeCoHost) {
+      throw new BadRequestException(
+        "You're currently co-hosting another live. Leave it before going live.",
+      );
+    }
     if (auction.status !== AuctionStatus.SCHEDULED) {
       throw new BadRequestException('Auction is not in scheduled status');
     }
@@ -242,6 +252,7 @@ export class AuctionsService {
       data: {
         status: AuctionStatus.LIVE,
         streamUrl: roomId,
+        hmsRoomId: roomId,
         actualStartTime: now,
       },
       include: {
@@ -253,10 +264,12 @@ export class AuctionsService {
     void Promise.all([
       this.notifications.sendToAuctionFollowers(auctionId, {
         title: '🔴 Live now!',
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         body: `${liveAuction.seller.displayName} just went live — tap to join!`,
         data: { auctionId, screen: 'live' },
       }),
       this.notifications.sendToSellerFollowers(sellerId, {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         title: `🔴 ${liveAuction.seller.displayName} is live!`,
         body: `${liveAuction.title} — join now before it ends!`,
         data: { auctionId, screen: 'live' },
@@ -438,5 +451,20 @@ export class AuctionsService {
     });
 
     return auction ?? null;
+  }
+
+  async setHmsRoomId(userId: string, auctionId: string, hmsRoomId: string) {
+    const auction = await this.prisma.auction.findUnique({
+      where: { id: auctionId },
+      select: { sellerId: true },
+    });
+    if (!auction) throw new NotFoundException('Auction not found');
+    if (auction.sellerId !== userId) {
+      throw new ForbiddenException('Not your auction');
+    }
+    return this.prisma.auction.update({
+      where: { id: auctionId },
+      data: { hmsRoomId },
+    });
   }
 }

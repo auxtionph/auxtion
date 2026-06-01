@@ -5,9 +5,16 @@ import { MaxBidsModule } from '../max-bids/max-bids.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { OrdersModule } from '../orders/orders.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { StreamingModule } from '../streaming/streaming.module';
 
 @Module({
-  imports: [MaxBidsModule, PaymentsModule, OrdersModule, NotificationsModule],
+  imports: [
+    MaxBidsModule,
+    PaymentsModule,
+    OrdersModule,
+    NotificationsModule,
+    StreamingModule,
+  ],
   providers: [BiddingGateway, BiddingService],
   exports: [BiddingGateway],
 })

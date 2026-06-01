@@ -83,6 +83,16 @@ export class AuctionsController {
     return this.auctionsService.goLive(user.id, id);
   }
 
+  @Patch(':id/hms-room')
+  @HttpCode(HttpStatus.OK)
+  setHmsRoomId(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: { hmsRoomId: string },
+  ) {
+    return this.auctionsService.setHmsRoomId(user.id, id, body.hmsRoomId);
+  }
+
   // Seller ends stream
   @Patch(':id/end')
   @HttpCode(HttpStatus.OK)

@@ -140,6 +140,8 @@ model User {
   followers         SellerFollower[]   @relation("UserFollowers")
   auctionFollows    AuctionFollower[]
   addresses UserAddress[]
+  coHostedAuctions  Auction[]   @relation("CoHostedAuctions")
+  consignedItems    ShopItem[]  @relation("ConsignedItems")
 
   // ── Payment Methods ─────────────────────────
   gcashNumber       String?
@@ -192,6 +194,9 @@ model Auction {
   maxBids         MaxBid[]
   followers       AuctionFollower[]
   orders          Order[]
+  hmsRoomId         String?
+  coHostId          String?
+  coHost            User?       @relation("CoHostedAuctions", fields: [coHostId], references: [id])
 
   @@map("auctions")
 }
@@ -220,6 +225,8 @@ model ShopItem {
   orders            Order[]
   itemNotifications ItemNotification[]
   maxBids   MaxBid[]
+  consignedToUserId String?
+  consignedTo       User?       @relation("ConsignedItems", fields: [consignedToUserId], references: [id])
 
   @@map("shop_items")
 }

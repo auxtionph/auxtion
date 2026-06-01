@@ -16,6 +16,7 @@ import { MaxBidsService } from '../max-bids/max-bids.service';
 import { PaymentsService } from '../payments/payments.service';
 import { OrdersService } from '../orders/orders.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { StreamingService } from '../streaming/streaming.service';
 
 interface PlaceBidPayload {
   auctionId: string;
@@ -91,6 +92,34 @@ interface PullBuyNowPayload {
   sellerId: string;
 }
 
+interface InviteCoHostPayload {
+  auctionId: string;
+  hostUserId: string;
+  targetUserId: string;
+}
+
+interface AcceptCoHostInvitePayload {
+  auctionId: string;
+  userId: string;
+  displayName: string;
+  hmsPeerId: string;
+}
+
+interface DeclineCoHostInvitePayload {
+  auctionId: string;
+  userId: string;
+}
+
+interface KickCoHostPayload {
+  auctionId: string;
+  hostUserId: string;
+}
+
+interface LeaveCoHostPayload {
+  auctionId: string;
+  userId: string;
+}
+
 @WebSocketGateway({
   cors: { origin: '*' },
   namespace: 'auctions',
@@ -113,6 +142,12 @@ export class BiddingGateway
     string,
     { auctionId: string; viewerId: string }
   >();
+  // Co-host state
+  private pendingCoHostInvites = new Map<
+    string,
+    { targetUserId: string; expiresAt: number }
+  >();
+  private coHostPeerIds = new Map<string, { userId: string; peerId: string }>();
 
   constructor(
     private readonly biddingService: BiddingService,
@@ -121,6 +156,7 @@ export class BiddingGateway
     private readonly paymentsService: PaymentsService,
     private readonly ordersService: OrdersService,
     private readonly notifications: NotificationsService,
+    private readonly streaming: StreamingService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -365,6 +401,24 @@ export class BiddingGateway
       if (timerState?.paused) {
         client.emit('bid-error', {
           message: 'Bidding is paused — seller is reconnecting.',
+        });
+        return;
+      }
+
+      // Block host and co-host from bidding on their own live
+      const auctionForBid = await this.prisma.auction.findUnique({
+        where: { id: payload.auctionId },
+        select: { coHostId: true, sellerId: true },
+      });
+      if (auctionForBid?.coHostId === payload.bidderId) {
+        client.emit('bid-error', {
+          message: "Co-hosts can't bid on the live they're hosting.",
+        });
+        return;
+      }
+      if (auctionForBid?.sellerId === payload.bidderId) {
+        client.emit('bid-error', {
+          message: "You can't bid on your own live.",
         });
         return;
       }
@@ -808,6 +862,39 @@ export class BiddingGateway
 
   @SubscribeMessage('end-auction')
   handleEndAuction(@MessageBody() payload: { auctionId: string }) {
+    // Demote co-host if present
+    void (async () => {
+      const a = await this.prisma.auction.findUnique({
+        where: { id: payload.auctionId },
+        select: { coHostId: true, hmsRoomId: true },
+      });
+      if (a?.coHostId && a.hmsRoomId) {
+        const info = this.coHostPeerIds.get(payload.auctionId);
+        if (info) {
+          try {
+            await this.streaming.changePeerRole(
+              a.hmsRoomId,
+              info.peerId,
+              'viewer-realtime',
+              true,
+            );
+          } catch (e) {
+            this.logger.error('Auto-demote on end-auction failed:', e);
+          }
+        }
+        await this.prisma.auction.update({
+          where: { id: payload.auctionId },
+          data: { coHostId: null },
+        });
+        this.coHostPeerIds.delete(payload.auctionId);
+        this.server.to(`auction:${payload.auctionId}`).emit('co-host:left', {
+          auctionId: payload.auctionId,
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          userId: a.coHostId,
+          reason: 'auction-ended',
+        });
+      }
+    })();
     this.timerState.forEach((state, itemId) => {
       if (state.auctionId === payload.auctionId) {
         this.clearTimer(itemId);
@@ -1212,5 +1299,237 @@ export class BiddingGateway
       const message = err instanceof Error ? err.message : 'Max bid failed';
       client.emit('bid-error', { message });
     }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  //  CO-HOST FLOW
+  // ────────────────────────────────────────────────────────────────────────────
+
+  @SubscribeMessage('host:invite-co-host')
+  async handleInviteCoHost(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: InviteCoHostPayload,
+  ) {
+    const { auctionId, hostUserId, targetUserId } = payload;
+
+    const auction = await this.prisma.auction.findUnique({
+      where: { id: auctionId },
+      select: {
+        sellerId: true,
+        coHostId: true,
+        seller: { select: { displayName: true } },
+      },
+    });
+    if (!auction || auction.sellerId !== hostUserId) {
+      client.emit('error', { message: 'Only the host can invite a co-host.' });
+      return;
+    }
+    if (auction.coHostId) {
+      client.emit('error', {
+        message: 'A co-host is already active. Remove them first.',
+      });
+      return;
+    }
+    if (targetUserId === hostUserId) {
+      client.emit('error', { message: "You can't invite yourself." });
+      return;
+    }
+
+    const targetSocketId = this.userSocketMap.get(targetUserId);
+    if (!targetSocketId) {
+      client.emit('error', { message: 'That user is no longer in the live.' });
+      return;
+    }
+
+    const existingCoHost = await this.prisma.auction.findFirst({
+      where: { coHostId: targetUserId, status: 'LIVE' },
+    });
+    if (existingCoHost) {
+      client.emit('error', {
+        message: 'That user is already co-hosting another live.',
+      });
+      return;
+    }
+
+    this.pendingCoHostInvites.set(auctionId, {
+      targetUserId,
+      expiresAt: Date.now() + 60_000,
+    });
+
+    this.server.to(targetSocketId).emit('co-host:invited', {
+      auctionId,
+      hostUserId,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+      hostDisplayName: auction.seller.displayName,
+    });
+
+    this.logger.log(
+      `Co-host invite: ${hostUserId} → ${targetUserId} (auction ${auctionId})`,
+    );
+  }
+
+  @SubscribeMessage('co-host:accept-invite')
+  async handleAcceptCoHostInvite(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: AcceptCoHostInvitePayload,
+  ) {
+    const { auctionId, userId, displayName, hmsPeerId } = payload;
+
+    const pending = this.pendingCoHostInvites.get(auctionId);
+    if (!pending || pending.targetUserId !== userId) {
+      client.emit('error', { message: 'No active invite for you.' });
+      return;
+    }
+    if (Date.now() > pending.expiresAt) {
+      this.pendingCoHostInvites.delete(auctionId);
+      client.emit('error', { message: 'Invite expired.' });
+      return;
+    }
+
+    const auction = await this.prisma.auction.findUnique({
+      where: { id: auctionId },
+      select: { hmsRoomId: true },
+    });
+    if (!auction?.hmsRoomId) {
+      client.emit('error', { message: 'HMS room not initialized.' });
+      return;
+    }
+
+    try {
+      await this.streaming.changePeerRole(
+        auction.hmsRoomId,
+        hmsPeerId,
+        'co-broadcaster',
+        true,
+      );
+    } catch (e) {
+      this.logger.error(`HMS promote failed for ${userId}:`, e);
+      client.emit('error', {
+        message: 'Failed to switch you to broadcaster. Try again.',
+      });
+      return;
+    }
+
+    await this.prisma.auction.update({
+      where: { id: auctionId },
+      data: { coHostId: userId },
+    });
+    this.coHostPeerIds.set(auctionId, { userId, peerId: hmsPeerId });
+    this.pendingCoHostInvites.delete(auctionId);
+
+    this.server.to(`auction:${auctionId}`).emit('co-host:joined', {
+      auctionId,
+      userId,
+      displayName,
+    });
+
+    this.logger.log(
+      `Co-host joined: ${displayName} (${userId}) in auction ${auctionId}`,
+    );
+  }
+
+  @SubscribeMessage('co-host:decline-invite')
+  handleDeclineCoHostInvite(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: DeclineCoHostInvitePayload,
+  ) {
+    const pending = this.pendingCoHostInvites.get(payload.auctionId);
+    if (pending?.targetUserId === payload.userId) {
+      this.pendingCoHostInvites.delete(payload.auctionId);
+    }
+    this.server
+      .to(`auction:${payload.auctionId}`)
+      .emit('co-host:invite-declined', {
+        auctionId: payload.auctionId,
+        declinedByUserId: payload.userId,
+      });
+  }
+
+  @SubscribeMessage('host:kick-co-host')
+  async handleKickCoHost(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: KickCoHostPayload,
+  ) {
+    const auction = await this.prisma.auction.findUnique({
+      where: { id: payload.auctionId },
+      select: { sellerId: true, coHostId: true, hmsRoomId: true },
+    });
+    if (!auction || auction.sellerId !== payload.hostUserId) {
+      client.emit('error', { message: 'Only the host can kick the co-host.' });
+      return;
+    }
+    if (!auction.coHostId) return;
+
+    const coHostInfo = this.coHostPeerIds.get(payload.auctionId);
+    if (coHostInfo && auction.hmsRoomId) {
+      try {
+        await this.streaming.changePeerRole(
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          auction.hmsRoomId,
+          coHostInfo.peerId,
+          'viewer-realtime',
+          true,
+        );
+      } catch (e) {
+        this.logger.error(`HMS demote (kick) failed:`, e);
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const kickedUserId = auction.coHostId;
+    await this.prisma.auction.update({
+      where: { id: payload.auctionId },
+      data: { coHostId: null },
+    });
+    this.coHostPeerIds.delete(payload.auctionId);
+
+    this.server.to(`auction:${payload.auctionId}`).emit('co-host:left', {
+      auctionId: payload.auctionId,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      userId: kickedUserId,
+      reason: 'kicked',
+    });
+
+    this.logger.log(
+      `Co-host kicked: ${kickedUserId} from auction ${payload.auctionId}`,
+    );
+  }
+
+  @SubscribeMessage('co-host:self-leave')
+  async handleCoHostSelfLeave(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: LeaveCoHostPayload,
+  ) {
+    const auction = await this.prisma.auction.findUnique({
+      where: { id: payload.auctionId },
+      select: { coHostId: true, hmsRoomId: true },
+    });
+    if (!auction || auction.coHostId !== payload.userId) return;
+
+    const coHostInfo = this.coHostPeerIds.get(payload.auctionId);
+    if (coHostInfo && auction.hmsRoomId) {
+      try {
+        await this.streaming.changePeerRole(
+          auction.hmsRoomId,
+          coHostInfo.peerId,
+          'viewer-realtime',
+          true,
+        );
+      } catch (e) {
+        this.logger.error(`HMS demote (self-leave) failed:`, e);
+      }
+    }
+
+    await this.prisma.auction.update({
+      where: { id: payload.auctionId },
+      data: { coHostId: null },
+    });
+    this.coHostPeerIds.delete(payload.auctionId);
+
+    this.server.to(`auction:${payload.auctionId}`).emit('co-host:left', {
+      auctionId: payload.auctionId,
+      userId: payload.userId,
+      reason: 'self-left',
+    });
   }
 }
