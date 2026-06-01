@@ -10,6 +10,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 import { useState, useCallback } from 'react';
 import { useRouter } from 'expo-router';
@@ -89,6 +90,25 @@ const STATUS_CONFIG: Record<OrderStatus, { label: string; color: string; bg: str
   COMPLETED:       { label: 'Completed',         color: '#059669', bg: 'rgba(5,150,105,0.12)' },
   CANCELLED:       { label: 'Cancelled',         color: '#6B7280', bg: 'rgba(107,114,128,0.12)' },
   DISPUTED:        { label: 'Disputed',          color: '#DC2626', bg: 'rgba(220,38,38,0.12)' },
+};
+
+const AVATAR_COLORS = [
+  '#1A56DB', // blue
+  '#10B981', // green
+  '#F59E0B', // amber
+  '#7C3AED', // violet
+  '#EF4444', // red
+  '#06B6D4', // cyan
+  '#EC4899', // pink
+  '#8B5CF6', // purple
+  '#F97316', // orange
+  '#14B8A6', // teal
+];
+
+const colorForId = (id: string): string => {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash + id.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
 };
 
 const COURIERS: { key: CourierKey; label: string }[] = [
@@ -269,6 +289,17 @@ export default function SellerOrdersScreen() {
         <View style={{ padding: 14 }}>
           {/* Header row */}
           <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
+            <View style={{
+              width: 48, height: 48, borderRadius: 10,
+              backgroundColor: '#1F2937', marginRight: 10,
+              overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
+            }}>
+              {order.item.photos?.[0]?.url ? (
+                <Image source={{ uri: order.item.photos[0].url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+              ) : (
+                <Text style={{ fontSize: 22 }}>📦</Text>
+              )}
+            </View>
             <View style={{ flex: 1, marginRight: 10 }}>
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
                 {order.item.title}
@@ -276,6 +307,8 @@ export default function SellerOrdersScreen() {
               <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>
                 {order.buyer.displayName} · {new Date(order.createdAt).toLocaleDateString('en-PH', {
                   month: 'short', day: 'numeric',
+                })} · {new Date(order.createdAt).toLocaleTimeString('en-PH', {
+                  hour: 'numeric', minute: '2-digit',
                 })}
               </Text>
             </View>
@@ -346,9 +379,18 @@ export default function SellerOrdersScreen() {
           )}
 
           {/* Order ID */}
-          <Text style={{ color: '#374151', fontSize: 10, fontFamily: 'monospace', marginBottom: 12 }}>
-            {order.id}
-          </Text>
+          <TouchableOpacity
+            onLongPress={() => {
+              // Optional: copy full ID to clipboard for support tickets
+              // import * as Clipboard from 'expo-clipboard';
+              // void Clipboard.setStringAsync(order.id);
+            }}
+            style={{ marginBottom: 12 }}
+          >
+            <Text style={{ color: '#4B5563', fontSize: 10, fontFamily: 'monospace' }}>
+              #{order.id.slice(-6).toUpperCase()}
+            </Text>
+          </TouchableOpacity>
 
           {/* CTA */}
           {order.status === 'PENDING_MANUAL_PAYMENT' && (
@@ -526,9 +568,30 @@ export default function SellerOrdersScreen() {
                   }}
                   activeOpacity={0.8}
                 >
+                  {/* Auction badge — deterministic color per auction, first letter of title */}
+                  <View style={{
+                    width: 44, height: 44, borderRadius: 12,
+                    backgroundColor: colorForId(group.auctionId),
+                    alignItems: 'center', justifyContent: 'center',
+                    shadowColor: colorForId(group.auctionId),
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.35,
+                    shadowRadius: 6,
+                    elevation: 3,
+                  }}>
+                    <Text style={{
+                      color: '#fff',
+                      fontWeight: '800',
+                      fontSize: 20,
+                      letterSpacing: -0.5,
+                    }}>
+                      {group.auctionTitle.trim().charAt(0).toUpperCase() || '·'}
+                    </Text>
+                  </View>
+
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
-                      📺 {group.auctionTitle}
+                      {group.auctionTitle}
                     </Text>
                     <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>
                       {group.date} · {group.orders.length} order{group.orders.length !== 1 ? 's' : ''}

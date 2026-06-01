@@ -97,6 +97,7 @@ export interface AuctionFeedItem {
     minimumOffer: number;
     mode: 'auction' | 'chat';
     updatedAt?: string;
+    createdAt?: string;
   }[];
 }
 

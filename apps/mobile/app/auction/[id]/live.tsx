@@ -68,10 +68,12 @@ interface ChatMsg {
   displayName: string;
   message: string;
   timestamp: number;
-  type?: 'message' | 'item-divider' | 'system_winner' | 'system_offer';
+  type?: 'message' | 'item-divider' | 'system_winner' | 'system_offer' | 'system_item_queued';
   itemTitle?: string;
   winnerAmount?: number;
   buyerName?: string;
+  itemPrice?: number;
+  itemMode?: string;
 }
 
 interface CurrentItem {
@@ -372,6 +374,7 @@ export default function LiveAuctionRoom() {
   const pendingBidStateRef = useRef<BidUpdateData | null>(null);
   const [skipping, setSkipping] = useState(false);
   const [claimingBuyNow, setClaimingBuyNow] = useState(false);
+  const [preparingItemId, setPreparingItemId] = useState<string | null>(null);
 
   // ── Profile Gate ─────────────────────────────────────────────────
   const [profileComplete, setProfileComplete] = useState<boolean | null>(null);
@@ -399,6 +402,7 @@ export default function LiveAuctionRoom() {
   const soldItemWinnersRef = useRef<Record<string, { userId: string; displayName: string; amount: number; mode: string }>>({});
   const pendingChatHistoryRef = useRef<Array<{ userId: string; displayName: string; message: string; timestamp: number }> | null>(null);
   const processChatHistoryRef = useRef<((messages: Array<{ userId: string; displayName: string; message: string; timestamp: number }>) => void) | null>(null);
+  const lastAddedQueueItemRef = useRef<{ title: string; price: number } | null>(null);
 
   useEffect(() => {
     currentItemRef.current = currentItem;
@@ -541,13 +545,19 @@ export default function LiveAuctionRoom() {
 
   useEffect(() => {
     processChatHistoryRef.current = (messages) => {
-      const mapped: ChatMsg[] = messages.map(m => ({
-        id: `hist-${m.timestamp}-${m.userId}`,
-        userId: m.userId,
-        displayName: m.displayName,
-        message: m.message,
-        timestamp: m.timestamp,
-      }));
+      const mapped: ChatMsg[] = messages
+        .filter(m =>
+          !m.message.startsWith('__item_queued__:') &&
+          !m.message.startsWith('__item_preparing__:') &&
+          m.message !== '__item_preparing_cancelled__'
+        )
+        .map(m => ({
+          id: `hist-${m.timestamp}-${m.userId}`,
+          userId: m.userId,
+          displayName: m.displayName,
+          message: m.message,
+          timestamp: m.timestamp,
+        }));
 
       const liveItem = liveItemFromApiRef.current;
       if (liveItem) {
@@ -669,6 +679,55 @@ export default function LiveAuctionRoom() {
       Alert.alert('Bid Failed', error.message);
     }, []),
     onChatMessage: useCallback((data: ChatData) => {
+      // Item being prepared — show in item bar for everyone (ID-based)
+      if (data.message.startsWith('__item_preparing__:')) {
+        const itemId = data.message.split(':')[1] ?? '';
+        if (itemId) setPreparingItemId(itemId);
+        return;
+      }
+      // Seller cancelled preparing — clear for everyone
+      if (data.message === '__item_preparing_cancelled__') {
+        setPreparingItemId(null);
+        return;
+      }
+      // Parse item-queued announcements (ID-based)
+      // Format: __item_queued__:<itemId>:<title>:<price>:<mode>
+      if (data.message.startsWith('__item_queued__:')) {
+        const parts = data.message.split(':');
+        const itemId = parts[1] ?? '';
+        const itemTitle = parts[2] ?? '';
+        const itemPrice = parseInt(parts[3] ?? '0');
+        const itemModeStr = parts[4] ?? 'auction';
+        if (!itemId) return;
+        // Clear any pinned failed item — new addition takes focus on all clients
+        setPreparingItemId(null);
+        const isCurrentUserSeller = auctionRef.current?.seller.id === user?.id || routeRole === 'broadcaster';
+        if (isCurrentUserSeller) return; // Seller uses optimistic update
+        if (!isCurrentUserSeller) {
+          lastAddedQueueItemRef.current = { title: itemTitle, price: itemPrice };
+        }
+        setAuction(prev => {
+          if (!prev) return prev;
+          // Dedup by ID — onShopUpdated will reconcile if real fetch differs
+          if (prev.shopItems.some(i => i.id === itemId)) return prev;
+          return {
+            ...prev,
+            shopItems: [...prev.shopItems, {
+              id: itemId,
+              title: itemTitle,
+              price: itemPrice,
+              photos: [],
+              type: itemModeStr === 'buynow' ? 'BUY_NOW' as const : 'AUCTION' as const,
+              status: itemModeStr === 'buynow' ? 'AVAILABLE' as const : 'QUEUED' as const,
+              queueOrder: Date.now(),
+              minimumOffer: 0,
+              mode: 'auction' as const,
+              createdAt: new Date(data.timestamp).toISOString(),
+            }],
+          };
+        });
+        return;
+      }
       setChatMessages(prev => [...prev, {
         id: `chat-${data.timestamp}-${data.userId}`,
         userId: data.userId,
@@ -682,7 +741,7 @@ export default function LiveAuctionRoom() {
       pendingBidStateRef.current = null;
       setMyMaxBid(undefined);
       setMaxBidEnabled(false);
-      currentItemStartedAtRef.current = Date.now();
+      setPreparingItemId(null);
       // Inject a visual divider so seller knows new item started
       setChatMessages(prev => [...prev, {
         id: `divider-${data.itemId}-${Date.now()}`,
@@ -737,6 +796,11 @@ export default function LiveAuctionRoom() {
       setCurrentItem(null);
       setWinnerBanner(null);
 
+      // No winner — keep this item pinned in the item bar so seller can re-run it
+      if (!winner) {
+        setPreparingItemId(data.itemId);
+      }
+
       setAuction(prev => {
         if (!prev) return prev;
         return {
@@ -788,9 +852,24 @@ export default function LiveAuctionRoom() {
     }, []),
 
     onShopUpdated: useCallback((_data: { auctionId: string; timestamp: number }) => {
-      // Refresh auction state for everyone
-      void auctionsApi.getById(id).then(setAuction);
-    }, [id]),
+      // Sellers use optimistic updates — skip re-fetch
+      const isCurrentUserSeller = auctionRef.current?.seller.id === user?.id || routeRole === 'broadcaster';
+      if (isCurrentUserSeller) return;
+      setTimeout(() => {
+        void auctionsApi.getById(id).then(fresh => {
+          setAuction(prev => {
+            if (!prev) return fresh;
+            // Preserve any items not yet in fresh data (broadcast-added but not yet returned by API)
+            const freshIds = new Set(fresh.shopItems.map(i => i.id));
+            const extras = prev.shopItems.filter(i => !freshIds.has(i.id));
+            return {
+              ...fresh,
+              shopItems: [...fresh.shopItems, ...extras],
+            };
+          });
+        });
+      }, 800);
+    }, [id, user?.id, routeRole]),
 
     onOfferReceived: useCallback((data: { offerId: string; itemTitle: string; buyerName: string; amount: number }) => {
       // Visible to everyone in the room
@@ -954,10 +1033,31 @@ export default function LiveAuctionRoom() {
   const handleAddItemLive = async (mode: 'queue' | 'now' | 'buynow') => {
     const price = parseInt(newItemPrice.replace(/[^0-9]/g, ''), 10);
     if (!newItemTitle.trim() || !price) return;
-    setAddingItem(true);
 
     const title = newItemTitle.trim();
     const itemPrice = price * 100;
+
+    // Soft duplicate check — warn but allow
+    const hasDup = auction?.shopItems.some(i =>
+      i.title.trim().toLowerCase() === title.toLowerCase() &&
+      (i.status === 'QUEUED' || i.status === 'AVAILABLE' || i.status === 'LIVE')
+    );
+    if (hasDup) {
+      const proceed = await new Promise<boolean>(resolve => {
+        Alert.alert(
+          'Duplicate title',
+          `You already have an item called "${title}" in this live. Add it anyway?`,
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Add Anyway', style: 'destructive', onPress: () => resolve(true) },
+          ],
+          { cancelable: true, onDismiss: () => resolve(false) },
+        );
+      });
+      if (!proceed) return;
+    }
+
+    setAddingItem(true);
     setNewItemTitle('');
     setNewItemPrice('');
     setShowAddItem(false);
@@ -996,11 +1096,23 @@ export default function LiveAuctionRoom() {
           queueOrder: newItem.queueOrder ?? 0,
           minimumOffer: newItem.minimumOffer ?? 0,
           mode: 'auction' as const,
+          createdAt: newItem.createdAt ?? new Date().toISOString(),
         };
         return { ...prev, shopItems: [...prev.shopItems, optimisticItem] };
       });
 
       notifyShopUpdated();
+
+      // Clear any pinned failed item — new addition takes focus
+      setPreparingItemId(null);
+
+      // ── Announce new item to all viewers via chat (ID-based) ──────────────
+      const modeLabel = mode === 'buynow' ? 'buynow' : 'auction';
+      sendChat(
+        `__item_queued__:${newItem.id}:${newItem.title}:${newItem.price}:${modeLabel}`,
+        user?.id ?? '',
+        user?.displayName ?? '',
+      );
 
       if (mode === 'now') {
         // Update with real ID now that API resolved
@@ -1170,6 +1282,32 @@ export default function LiveAuctionRoom() {
       if (b.status === 'LIVE') return 1;
       return (a.queueOrder ?? 0) - (b.queueOrder ?? 0);
     }) ?? [];
+
+  const queuedItems = (auction?.shopItems ?? [])
+    .filter(i => i.status === 'QUEUED' && i.type !== 'BUY_NOW')
+    .slice()
+    .sort((a, b) => {
+      const getTime = (item: typeof a) => {
+        if (item.id.startsWith('synthetic-')) {
+          return parseInt(item.id.replace('synthetic-', ''), 10) || 0;
+        }
+        // Prefer updatedAt — an item that just ran and got reset to QUEUED
+        // will have a newer updatedAt than freshly added items
+        const updated = item.updatedAt ? new Date(item.updatedAt).getTime() : 0;
+        const created = new Date(item.createdAt ?? 0).getTime();
+        return Math.max(updated, created);
+      };
+      return getTime(b) - getTime(a);
+    });
+
+  const nextQueuedItem = !currentItem ? (() => {
+    if (preparingItemId) {
+      const prep = queuedItems.find(i => i.id === preparingItemId);
+      if (prep) return prep;
+    }
+    return queuedItems[0] ?? null;
+  })() : null;
+  const stableNextItem = nextQueuedItem;
   const buyNowItems = auction?.shopItems.filter(i => i.type === 'BUY_NOW' && i.status === 'AVAILABLE') ?? [];
   const soldItems = auction?.shopItems.filter(i => i.status === 'SOLD') ?? [];
   
@@ -1236,13 +1374,13 @@ export default function LiveAuctionRoom() {
   })();
   const BUYER_BUTTON_HEIGHT = (() => {
     if (isSeller) return 0;
-    if (!currentItem) return 52;
+    if (!currentItem) return 56;
     if (currentItem.mode === 'chat') return 64;
     return 56;
   })();
   const ACTION_HEIGHT = isSeller ? SELLER_BUTTON_HEIGHT : BUYER_BUTTON_HEIGHT;
   const BOTTOM_BAR_HEIGHT = BOTTOM_PADDING + 12 + CHAT_ROW_HEIGHT + 8 + ACTION_HEIGHT;
-  const ITEM_BAR_HEIGHT = currentItem ? 78 : 0;
+  const ITEM_BAR_HEIGHT = (currentItem || stableNextItem) ? 78 : 0;
   const ITEM_BAR_BOTTOM = BOTTOM_BAR_HEIGHT + 8;
   const CONTROLS_BOTTOM = ITEM_BAR_BOTTOM + ITEM_BAR_HEIGHT + 8;
 
@@ -1573,11 +1711,11 @@ export default function LiveAuctionRoom() {
           ref={chatRef}
           data={(() => {
             const real = chatMessages
-              .filter(m => m.type !== 'item-divider' && m.type !== 'system_winner' && m.type !== 'system_offer')
+              .filter(m => m.type !== 'item-divider' && m.type !== 'system_winner' && m.type !== 'system_offer' && m.type !== 'system_item_queued')
               .slice(-20);
             const realIds = new Set(real.map(m => m.id));
             return chatMessages.filter(
-              m => m.type === 'item-divider' || m.type === 'system_winner' || m.type === 'system_offer' || realIds.has(m.id)
+              m => m.type === 'item-divider' || m.type === 'system_winner' || m.type === 'system_offer' || m.type === 'system_item_queued' || realIds.has(m.id)
             );
           })()}
           keyExtractor={item => item.id}
@@ -1586,6 +1724,9 @@ export default function LiveAuctionRoom() {
           onContentSizeChange={() => chatRef.current?.scrollToEnd({ animated: true })}
           
           renderItem={({ item }) => {
+            if (item.type === 'system_item_queued') {
+              return null;
+            }
             if (item.type === 'item-divider') {
               return (
                 <View style={{
@@ -1786,7 +1927,7 @@ export default function LiveAuctionRoom() {
 
 
       {/* ── Current Item Bar — Premium frosted card ── */}
-      {currentItem && (
+      {(currentItem || stableNextItem) && (
         <View style={{
           position: 'absolute',
           left: 12, right: 12,
@@ -1806,16 +1947,20 @@ export default function LiveAuctionRoom() {
               paddingVertical: 12,
               flexDirection: 'row',
               alignItems: 'center',
-              backgroundColor: 'rgba(17,24,39,0.55)',
+              backgroundColor: stableNextItem && !currentItem
+                ? 'rgba(17,24,39,0.35)'
+                : 'rgba(17,24,39,0.55)',
               borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.08)',
+              borderColor: stableNextItem && !currentItem
+                ? 'rgba(255,255,255,0.05)'
+                : 'rgba(255,255,255,0.08)',
               borderRadius: 16,
             }}
           >
             {/* Thumbnail */}
-            {currentItem.photos[0]?.url ? (
+            {(currentItem ?? stableNextItem)?.photos[0]?.url ? (
               <Image
-                source={{ uri: currentItem.photos[0].url }}
+                source={{ uri: (currentItem ?? stableNextItem)!.photos[0].url }}
                 style={{
                   width: 48, height: 48, borderRadius: 10,
                   marginRight: 12,
@@ -1838,13 +1983,17 @@ export default function LiveAuctionRoom() {
             {/* Title + status */}
             <View style={{ flex: 1, marginRight: 10 }}>
               <Text
-                style={{ color: '#fff', fontSize: 13, fontWeight: '700', letterSpacing: 0.1 }}
+                style={{ color: stableNextItem && !currentItem ? 'rgba(255,255,255,0.5)' : '#fff', fontSize: 13, fontWeight: '700', letterSpacing: 0.1 }}
                 numberOfLines={1}
               >
-                {currentItem.title}
+                {currentItem?.title ?? stableNextItem?.title}
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3, gap: 5 }}>
-                {winnerBanner ? (
+                {stableNextItem && !currentItem ? (
+                  <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10, fontWeight: '500' }}>
+                    ⏳ Up next — not started yet
+                  </Text>
+                ) : winnerBanner ? (
                   <>
                     <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#10B981' }} />
                     <Text style={{ color: '#10B981', fontSize: 10, fontWeight: '600' }} numberOfLines={1}>
@@ -1853,8 +2002,8 @@ export default function LiveAuctionRoom() {
                   </>
                 ) : (
                   <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, fontWeight: '500' }} numberOfLines={1}>
-                    {currentItem.totalBids} bid{currentItem.totalBids !== 1 ? 's' : ''}
-                    {currentItem.highestBidderName ? ` · ${currentItem.highestBidderName}` : ''}
+                    {currentItem?.totalBids ?? 0} bid{(currentItem?.totalBids ?? 0) !== 1 ? 's' : ''}
+                    {currentItem?.highestBidderName ? ` · ${currentItem.highestBidderName}` : ''}
                   </Text>
                 )}
               </View>
@@ -1863,14 +2012,14 @@ export default function LiveAuctionRoom() {
             {/* Price + timer column */}
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={{
-                color: '#fff',
+                color: stableNextItem && !currentItem ? 'rgba(255,255,255,0.4)' : '#fff',
                 fontSize: 22,
                 fontWeight: '800',
                 letterSpacing: -0.6,
                 fontVariant: ['tabular-nums'],
                 lineHeight: 24,
               }}>
-                {formatPHP(currentItem.currentPrice)}
+                {formatPHP(currentItem?.currentPrice ?? stableNextItem?.price ?? 0)}
               </Text>
               {timerRemaining !== null && (
                 <View style={{
@@ -2056,10 +2205,14 @@ export default function LiveAuctionRoom() {
               <View style={{
                 backgroundColor: 'rgba(255,255,255,0.04)',
                 borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
-                borderRadius: 10, paddingVertical: 14, alignItems: 'center',
+                borderRadius: 10, height: 56,
+                flexDirection: 'row', alignItems: 'center',
+                justifyContent: 'center', gap: 8,
               }}>
                 <Text style={{ color: 'rgba(255,255,255,0.2)', fontWeight: '500', fontSize: 13 }}>
-                  Waiting for next item
+                  {stableNextItem
+                    ? `⏳ ${stableNextItem.title} — not started yet`
+                    : 'Waiting for next item'}
                 </Text>
               </View>
             )}
@@ -2711,8 +2864,20 @@ export default function LiveAuctionRoom() {
       </Modal>
 
       {/* ── Start Item Modal (seller only) ── */}
-      <Modal visible={showStartItem} transparent animationType="slide" onRequestClose={() => setShowStartItem(false)}>
-        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowStartItem(false)} />
+      <Modal visible={showStartItem} transparent animationType="slide" onRequestClose={() => {
+        setShowStartItem(false);
+        if (preparingItemId && user?.id) {
+          sendChat('__item_preparing_cancelled__', user.id, user.displayName ?? '');
+        }
+        setPreparingItemId(null);
+      }}>
+        <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => {
+          setShowStartItem(false);
+          if (preparingItemId && user?.id) {
+            sendChat('__item_preparing_cancelled__', user.id, user.displayName ?? '');
+          }
+          setPreparingItemId(null);
+        }} />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={{
             backgroundColor: '#111827',
@@ -3847,17 +4012,19 @@ export default function LiveAuctionRoom() {
                 }}
                 disabled={!editingPrice || savingPrice}
                 onPress={async () => {
-                  if (!editingQueueItem || !editingPrice) return;
+                  if (!editingQueueItem || !editingPrice || !user?.id) return;
+                  if (currentItem) {
+                    Alert.alert('Item Already Running', 'End or skip the current item first.');
+                    return;
+                  }
                   const newPrice = parseInt(editingPrice) * 100;
                   setSavingPrice(true);
                   try {
                     const { apiClient } = await import('../../../src/services/api/client');
-                    // Only patch if price changed
                     if (newPrice !== editingQueueItem.price) {
                       await apiClient.patch(`/shop-items/${editingQueueItem.id}`, {
                         price: newPrice,
                       });
-                      // Update local auction state
                       setAuction(prev => {
                         if (!prev) return prev;
                         return {
@@ -3869,6 +4036,14 @@ export default function LiveAuctionRoom() {
                       });
                       notifyShopUpdated();
                     }
+                    // Show this specific item in the item bar for seller + viewers
+                    setPreparingItemId(editingQueueItem.id);
+                    sendChat(
+                      `__item_preparing__:${editingQueueItem.id}`,
+                      user.id,
+                      user.displayName ?? '',
+                    );
+                    // Now open Start Item Modal for timer/mode selection
                     setSelectedItem({
                       id: editingQueueItem.id,
                       title: editingQueueItem.title,
