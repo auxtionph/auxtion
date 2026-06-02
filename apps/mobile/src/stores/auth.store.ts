@@ -7,6 +7,7 @@ export interface AuthUser {
   displayName: string;
   role: 'BUYER' | 'SELLER' | 'ADMIN';
   isVerified: boolean;
+  isEmailVerified: boolean;
   avatarUrl?: string;
 }
 

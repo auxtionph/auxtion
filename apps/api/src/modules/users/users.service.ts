@@ -25,6 +25,7 @@ export class UsersService {
         sellerTier: true,
         totalSales: true,
         isVerified: true,
+        isEmailVerified: true,
         createdAt: true,
         sellerApplication: {
           select: { status: true, createdAt: true },
@@ -173,6 +174,8 @@ export class UsersService {
         avatarUrl: true,
         phone: true,
         role: true,
+        isVerified: true,
+        isEmailVerified: true,
         updatedAt: true,
       },
     });

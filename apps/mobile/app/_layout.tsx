@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SecureStore from 'expo-secure-store';
 import * as Notifications from 'expo-notifications';
+import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
 import { Platform } from 'react-native';
 import { useAuthStore } from '../src/stores/auth.store';
@@ -31,6 +32,20 @@ export default function RootLayout() {
   useEffect(() => {
     void restoreSession();
   }, []);
+
+  useEffect(() => {
+    const handleUrl = (url: string | null) => {
+      if (!url) return;
+      if (url.startsWith('auxtion://') && url.includes('verified')) {
+        router.replace('/verified' as never);
+      }
+    };
+
+    void Linking.getInitialURL().then(handleUrl);
+    const sub = Linking.addEventListener('url', event => handleUrl(event.url));
+
+    return () => sub.remove();
+  }, [router]);
 
   // ── Register push token after login ────────────────────────────────
   useEffect(() => {

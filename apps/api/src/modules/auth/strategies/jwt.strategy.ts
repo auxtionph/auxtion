@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
@@ -32,10 +36,16 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         displayName: true,
         role: true,
         isVerified: true,
+        isEmailVerified: true,
       },
     });
 
     if (!user) throw new UnauthorizedException('User not found');
+    if (!user.isEmailVerified) {
+      throw new ForbiddenException(
+        'Please verify your email before continuing.',
+      );
+    }
 
     return user;
   }

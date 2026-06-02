@@ -21,6 +21,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [loginMessage, setLoginMessage] = useState('');
 
   const validate = () => {
     const e: { email?: string; password?: string } = {};
@@ -35,6 +36,7 @@ export default function LoginScreen() {
   const handleLogin = async () => {
     if (!validate()) return;
     setLoading(true);
+    setLoginMessage('');
     try {
       const response = await apiClient.post('/auth/login', { email, password });
       const { user, accessToken, refreshToken } = response.data.data as {
@@ -45,8 +47,22 @@ export default function LoginScreen() {
       await setAuth(user, accessToken, refreshToken);
       router.replace('/(main)');
     } catch (error: unknown) {
-      const err = error as { response?: { data?: { message?: string } } };
-      Alert.alert('Login Failed', err.response?.data?.message ?? 'Invalid credentials');
+      const err = error as {
+        response?: { status?: number; data?: { message?: string } };
+      };
+      const message = err.response?.data?.message ?? 'Invalid credentials';
+
+      if (
+        err.response?.status === 403 &&
+        message === 'Please verify your email before logging in.'
+      ) {
+        setLoginMessage(
+          'Please verify your email before logging in. Check your inbox.',
+        );
+        return;
+      }
+
+      Alert.alert('Login Failed', message);
     } finally {
       setLoading(false);
     }
@@ -100,6 +116,12 @@ export default function LoginScreen() {
         ) : (
           <View className="mb-2" />
         )}
+
+        {loginMessage ? (
+          <Text className="text-red-400 text-sm mb-4 leading-5">
+            {loginMessage}
+          </Text>
+        ) : null}
 
         {/* Forgot Password */}
         <TouchableOpacity

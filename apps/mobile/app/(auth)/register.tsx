@@ -11,12 +11,23 @@ import {
 } from 'react-native';
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
-import { useAuthStore } from '../../src/stores/auth.store';
 import { apiClient } from '../../src/services/api/client';
+
+const getRegistrationErrorMessage = (error: unknown) => {
+  const fallback = 'Something went wrong';
+  const err = error as {
+    response?: { data?: { message?: string | string[] } };
+    message?: string;
+  };
+  const message = err.response?.data?.message;
+
+  if (Array.isArray(message)) return message.join('\n');
+  if (message) return message;
+  return err.message ?? fallback;
+};
 
 export default function RegisterScreen() {
   const router = useRouter();
-  const { setAuth } = useAuthStore();
 
   const [form, setForm] = useState({
     displayName: '',
@@ -51,18 +62,17 @@ export default function RegisterScreen() {
         email: form.email,
         password: form.password,
       });
-      const { user, accessToken, refreshToken } = response.data.data as {
-        user: Parameters<typeof setAuth>[0];
-        accessToken: string;
-        refreshToken: string;
+      const { user } = response.data.data as {
+        user: { id: string; email: string };
       };
-      await setAuth(user, accessToken, refreshToken);
-      router.replace('/(main)');
+      router.replace({
+        pathname: '/(auth)/check-email',
+        params: { email: user.email, userId: user.id },
+      });
     } catch (error: unknown) {
-      const err = error as { response?: { data?: { message?: string } } };
       Alert.alert(
         'Registration Failed',
-        err.response?.data?.message ?? 'Something went wrong',
+        getRegistrationErrorMessage(error),
       );
     } finally {
       setLoading(false);

@@ -17,6 +17,7 @@ export interface User {
   sellerTier: SellerTier;
   totalSales: number;
   isVerified: boolean;
+  isEmailVerified: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

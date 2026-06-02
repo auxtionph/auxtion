@@ -9,6 +9,7 @@ export function validateConfig(config: Record<string, unknown>) {
     'HMS_APP_ACCESS_KEY',
     'HMS_APP_SECRET',
     'HMS_TEMPLATE_ID',
+    'RESEND_API_KEY',
   ];
 
   for (const key of required) {
@@ -40,5 +41,9 @@ export function validateConfig(config: Record<string, unknown>) {
     HMS_APP_ACCESS_KEY: config['HMS_APP_ACCESS_KEY'] as string,
     HMS_APP_SECRET: config['HMS_APP_SECRET'] as string,
     HMS_TEMPLATE_ID: config['HMS_TEMPLATE_ID'] as string,
+    RESEND_API_KEY: config['RESEND_API_KEY'] as string,
+    EMAIL_VERIFICATION_BASE_URL:
+      (config['EMAIL_VERIFICATION_BASE_URL'] as string) ??
+      'https://auxtion-production.up.railway.app/api/v1',
   };
 }
