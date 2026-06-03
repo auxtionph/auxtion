@@ -71,7 +71,6 @@ export class StreamingService {
     roomId: string,
     peerId: string,
     role: HmsRole,
-    force = true,
   ): Promise<void> {
     if (!roomId || !peerId) {
       throw new InternalServerErrorException('HMS roomId or peerId missing');
@@ -84,7 +83,7 @@ export class StreamingService {
           Authorization: `Bearer ${this.getManagementToken()}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ role, force }),
+        body: JSON.stringify({ role }),
       },
     );
     if (!res.ok) {

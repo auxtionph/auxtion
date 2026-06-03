@@ -102,6 +102,12 @@ export interface AuctionFeedItem {
 }
 
 export interface AuctionDetail extends AuctionFeedItem {
+  coHostId?: string | null;
+  coHost?: {
+    id: string;
+    displayName: string;
+    avatarUrl?: string | null;
+  } | null;
   bids: {
     id: string;
     amount: number;

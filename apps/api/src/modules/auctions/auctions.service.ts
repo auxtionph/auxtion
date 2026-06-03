@@ -96,6 +96,13 @@ export class AuctionsService {
             totalSales: true,
           },
         },
+        coHost: {
+          select: {
+            id: true,
+            displayName: true,
+            avatarUrl: true,
+          },
+        },
         shopItems: {
           orderBy: { queueOrder: 'asc' },
         },

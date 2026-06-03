@@ -28,6 +28,7 @@ interface JoinAuctionPayload {
   auctionId: string;
   sellerId?: string;
   userId?: string;
+  displayName?: string;
 }
 
 interface StartItemPayload {
@@ -123,6 +124,8 @@ interface LeaveCoHostPayload {
 @WebSocketGateway({
   cors: { origin: '*' },
   namespace: 'auctions',
+  pingTimeout: 10000,
+  pingInterval: 5000,
 })
 export class BiddingGateway
   implements OnGatewayConnection, OnGatewayDisconnect
@@ -137,6 +140,10 @@ export class BiddingGateway
   private sellerSockets = new Map<string, Set<string>>();
   private socketToAuction = new Map<string, string>();
   private userSocketMap = new Map<string, string>();
+  private auctionRosters = new Map<
+    string,
+    Map<string, { displayName: string; joinedAt: number }>
+  >();
   private auctionViewers = new Map<string, Set<string>>();
   private socketToViewer = new Map<
     string,
@@ -169,14 +176,23 @@ export class BiddingGateway
     const auctionId = this.socketToAuction.get(client.id);
     if (auctionId) {
       this.socketToAuction.delete(client.id);
+      let disconnectedUserId: string | undefined;
       for (const [uid, sid] of this.userSocketMap.entries()) {
         if (sid === client.id) {
+          disconnectedUserId = uid;
           this.userSocketMap.delete(uid);
           break;
         }
       }
+      if (disconnectedUserId) {
+        const roster = this.auctionRosters.get(auctionId);
+        if (roster?.has(disconnectedUserId)) {
+          roster.delete(disconnectedUserId);
+          this.server.to(`auction:${auctionId}`).emit('room:roster-updated');
+        }
+      }
       const sellerSet = this.sellerSockets.get(auctionId);
-      if (sellerSet) {
+      if (sellerSet?.has(client.id)) {
         sellerSet.delete(client.id);
         this.logger.log(
           `Seller socket removed: ${client.id}, remaining: ${sellerSet.size}`,
@@ -222,6 +238,19 @@ export class BiddingGateway
     }
   }
 
+  private logRoster(label: string) {
+    const snapshot = Array.from(this.auctionRosters.entries()).map(
+      ([aid, roster]) => ({
+        auctionId: aid,
+        viewers: Array.from(roster.entries()).map(([uid, d]) => ({
+          uid,
+          displayName: d.displayName,
+        })),
+      }),
+    );
+    this.logger.log(`[ROSTER:${label}] ${JSON.stringify(snapshot)}`);
+  }
+
   @SubscribeMessage('join-auction')
   async handleJoinAuction(
     @ConnectedSocket() client: Socket,
@@ -245,11 +274,41 @@ export class BiddingGateway
         }
         this.sellerSockets.get(payload.auctionId)!.add(client.id);
         this.socketToAuction.set(client.id, payload.auctionId);
-        if (payload.userId) this.userSocketMap.set(payload.userId, client.id);
         this.logger.log(
           `Seller socket tracked: ${client.id} for auction ${payload.auctionId} (total: ${this.sellerSockets.get(payload.auctionId)!.size})`,
         );
       }
+    }
+
+    // Track every joiner (seller, co-host, viewer) by userId for targeted emits.
+    // Client passes the userId in the `sellerId` field of the join payload (legacy).
+    const joinerUserId = payload.userId ?? payload.sellerId;
+    if (joinerUserId) {
+      this.userSocketMap.set(joinerUserId, client.id);
+      this.socketToAuction.set(client.id, payload.auctionId);
+      this.logger.log(
+        `[userSocketMap] ${joinerUserId} → ${client.id} (auction ${payload.auctionId})`,
+      );
+
+      // Roster tracking — resolve displayName from payload or DB
+      let displayName = payload.displayName;
+      if (!displayName) {
+        const u = await this.prisma.user.findUnique({
+          where: { id: joinerUserId },
+          select: { displayName: true },
+        });
+        displayName = u?.displayName ?? 'Viewer';
+      }
+      if (!this.auctionRosters.has(payload.auctionId)) {
+        this.auctionRosters.set(payload.auctionId, new Map());
+      }
+      this.auctionRosters.get(payload.auctionId)!.set(joinerUserId, {
+        displayName,
+        joinedAt: Date.now(),
+      });
+      this.server
+        .to(`auction:${payload.auctionId}`)
+        .emit('room:roster-updated');
     }
 
     // ── Viewer dedup ──────────────────────────────────────────
@@ -327,6 +386,17 @@ export class BiddingGateway
         .get(viewerInfo.auctionId)
         ?.delete(viewerInfo.viewerId);
       this.socketToViewer.delete(client.id);
+    }
+    // Roster cleanup on explicit leave
+    const leaverUserId = payload.userId ?? payload.sellerId;
+    if (leaverUserId) {
+      const roster = this.auctionRosters.get(payload.auctionId);
+      if (roster?.has(leaverUserId)) {
+        roster.delete(leaverUserId);
+        this.server
+          .to(`auction:${payload.auctionId}`)
+          .emit('room:roster-updated');
+      }
     }
     this.broadcastViewerCount(payload.auctionId);
     return { event: 'left', room };
@@ -876,7 +946,6 @@ export class BiddingGateway
               a.hmsRoomId,
               info.peerId,
               'viewer-realtime',
-              true,
             );
           } catch (e) {
             this.logger.error('Auto-demote on end-auction failed:', e);
@@ -908,6 +977,8 @@ export class BiddingGateway
     });
 
     this.auctionViewers.delete(payload.auctionId);
+
+    this.auctionRosters.delete(payload.auctionId);
 
     this.server.to(`auction:${payload.auctionId}`).emit('auction-ended', {
       auctionId: payload.auctionId,
@@ -1400,7 +1471,6 @@ export class BiddingGateway
         auction.hmsRoomId,
         hmsPeerId,
         'co-broadcaster',
-        true,
       );
     } catch (e) {
       this.logger.error(`HMS promote failed for ${userId}:`, e);
@@ -1422,6 +1492,8 @@ export class BiddingGateway
       userId,
       displayName,
     });
+
+    this.server.to(`auction:${auctionId}`).emit('room:roster-updated');
 
     this.logger.log(
       `Co-host joined: ${displayName} (${userId}) in auction ${auctionId}`,
@@ -1464,11 +1536,9 @@ export class BiddingGateway
     if (coHostInfo && auction.hmsRoomId) {
       try {
         await this.streaming.changePeerRole(
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
           auction.hmsRoomId,
           coHostInfo.peerId,
           'viewer-realtime',
-          true,
         );
       } catch (e) {
         this.logger.error(`HMS demote (kick) failed:`, e);
@@ -1489,6 +1559,8 @@ export class BiddingGateway
       userId: kickedUserId,
       reason: 'kicked',
     });
+
+    this.server.to(`auction:${payload.auctionId}`).emit('room:roster-updated');
 
     this.logger.log(
       `Co-host kicked: ${kickedUserId} from auction ${payload.auctionId}`,
@@ -1513,7 +1585,6 @@ export class BiddingGateway
           auction.hmsRoomId,
           coHostInfo.peerId,
           'viewer-realtime',
-          true,
         );
       } catch (e) {
         this.logger.error(`HMS demote (self-leave) failed:`, e);
@@ -1531,5 +1602,24 @@ export class BiddingGateway
       userId: payload.userId,
       reason: 'self-left',
     });
+
+    this.server.to(`auction:${payload.auctionId}`).emit('room:roster-updated');
+  }
+  @SubscribeMessage('host:request-roster')
+  handleRequestRoster(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    payload: { auctionId: string; sellerId: string; coHostId?: string },
+  ): void {
+    const roster = this.auctionRosters.get(payload.auctionId);
+    if (!roster) {
+      client.emit('room:roster', []);
+      return;
+    }
+    const list = Array.from(roster.entries())
+      .filter(([uid]) => uid !== payload.sellerId && uid !== payload.coHostId)
+      .map(([userId, data]) => ({ userId, ...data }))
+      .sort((a, b) => a.joinedAt - b.joinedAt);
+    client.emit('room:roster', list);
   }
 }

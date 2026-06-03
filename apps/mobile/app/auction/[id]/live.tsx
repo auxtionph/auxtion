@@ -33,6 +33,7 @@ import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { SymbolView, SFSymbol } from 'expo-symbols';
+import { SellerPublicProfileView } from '../../../src/components/SellerPublicProfileView';
 
 // ─── Cross-platform icon: SF Symbol on iOS, emoji on Android ──────
 function Icon({
@@ -366,6 +367,11 @@ export default function LiveAuctionRoom() {
   const isSellerImmediate = routeRole === 'broadcaster';
   const isSeller = auction ? auction.seller.id === user?.id : isSellerImmediate;
 
+  const isHost = isSeller;
+  const isCoHost = !!(auction?.coHostId && auction.coHostId === user?.id);
+  const isBroadcaster = isHost || isCoHost;
+  const hasCoHost = !!auction?.coHostId;
+
   const chatRef = useRef<FlatList>(null);
   const currentItemRef = useRef<CurrentItem | null>(null); 
   const bidStateReceivedRef = useRef(false);
@@ -375,6 +381,33 @@ export default function LiveAuctionRoom() {
   const [skipping, setSkipping] = useState(false);
   const [claimingBuyNow, setClaimingBuyNow] = useState(false);
   const [preparingItemId, setPreparingItemId] = useState<string | null>(null);
+
+  // ── Co-host state ──────────────────────────────────────────────
+  const [coHostInvite, setCoHostInvite] = useState<{
+    auctionId: string;
+    hostUserId: string;
+    hostDisplayName: string;
+  } | null>(null);
+  const [chatActionSheet, setChatActionSheet] = useState<{
+    userId: string;
+    displayName: string;
+  } | null>(null);
+
+  const [hostSheetOpen, setHostSheetOpen] = useState(false);
+
+  // Viewer roster + co-host invite search
+  const [viewerRoster, setViewerRoster] = useState<{ userId: string; displayName: string; joinedAt: number }[]>([]);
+
+  const [rosterSearch, setRosterSearch] = useState('');
+  const [invitedUserIds, setInvitedUserIds] = useState<Set<string>>(new Set());
+  const requestRosterRef = useRef<((sellerId: string, coHostId?: string) => void) | null>(null);
+
+  // ── Video layout mode (only meaningful when hasCoHost) ─────────
+  type VideoLayout = 'pip-host' | 'pip-cohost' | 'split-host-top' | 'split-cohost-top';
+  const [videoLayout, setVideoLayout] = useState<VideoLayout>('pip-host');
+
+  type HostSheetView = { type: 'list' } | { type: 'profile'; userId: string };
+  const [hostSheetView, setHostSheetView] = useState<HostSheetView>({ type: 'list' });
 
   // ── Profile Gate ─────────────────────────────────────────────────
   const [profileComplete, setProfileComplete] = useState<boolean | null>(null);
@@ -655,9 +688,16 @@ export default function LiveAuctionRoom() {
     displayName: string;
     message: string;
   } | null>(null);
-  const { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner, skipChatItem, startLiveBuyNow, claimBuyNow, pullBuyNow, sendReaction } = useAuctionSocket({
+  const {
+    placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated,
+    pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner,
+    skipChatItem, startLiveBuyNow, claimBuyNow, pullBuyNow, sendReaction,
+    inviteCoHost, acceptCoHostInvite, declineCoHostInvite, kickCoHost, leaveCoHost,
+    requestRoster,
+  } = useAuctionSocket({
     auctionId: id,
     userId: user?.id,
+    displayName: user?.displayName,
     onBidUpdate: useCallback((data: BidUpdateData) => {
       bidStateReceivedRef.current = true;
       pendingBidStateRef.current = data; // always store latest
@@ -1027,7 +1067,51 @@ export default function LiveAuctionRoom() {
       }]);
     }, []),
 
+    // ── Co-host: target receives invite ─────────────────────────
+    onCoHostInvited: useCallback((data: { auctionId: string; hostUserId: string; hostDisplayName: string }) => {
+      setCoHostInvite(data);
+    }, []),
+
+    // ── Co-host: announced to entire room ───────────────────────
+    onCoHostJoined: useCallback((data: { auctionId: string; userId: string; displayName: string }) => {
+      setAuction(prev => prev ? {
+        ...prev,
+        coHostId: data.userId,
+        coHost: { id: data.userId, displayName: data.displayName, avatarUrl: null },
+      } : prev);
+    }, []),
+
+    // ── Co-host: left/kicked/auction-ended ──────────────────────
+    onCoHostLeft: useCallback((data: { auctionId: string; userId: string; reason: string }) => {
+      setAuction(prev => prev ? { ...prev, coHostId: null, coHost: null } : prev);
+      if (data.userId === user?.id && data.reason === 'kicked') {
+        Alert.alert('Removed', "You've been removed as co-host.");
+      }
+    }, [user?.id]),
+
+    // ── Co-host: invite declined (notify host) ──────────────────
+    onCoHostInviteDeclined: useCallback((data: { auctionId: string; declinedByUserId: string }) => {
+      if (isHost) {
+        Alert.alert('Invite declined', 'They declined the co-host invite.');
+      }
+    }, [isHost]),
+
+    onRoster: useCallback((list: Array<{ userId: string; displayName: string; joinedAt: number }>) => {
+      setViewerRoster(list);
+    }, []),
+    onRosterUpdated: useCallback(() => {
+      if (!isHost) return;
+      requestRosterRef.current?.(
+        auctionRef.current?.seller.id ?? '',
+        auctionRef.current?.coHostId ?? undefined,
+      );
+    }, [isHost]),
+
   });
+
+  useEffect(() => {
+    requestRosterRef.current = requestRoster;
+  }, [requestRoster]);
     
 
   const handleAddItemLive = async (mode: 'queue' | 'now' | 'buynow') => {
@@ -1160,6 +1244,10 @@ export default function LiveAuctionRoom() {
     roomId,
     userName: user?.displayName ?? 'User',
     role: isSeller ? 'broadcaster' : 'viewer-realtime',
+    onRoleChanged: useCallback((newRole: string) => {
+      // When server promotes us to co-broadcaster, log it; UI updates via auction.coHostId
+      console.log('[Co-host] HMS role changed to:', newRole);
+    }, []),
   });
 
   const handleLeave = async () => {
@@ -1283,6 +1371,10 @@ export default function LiveAuctionRoom() {
       return (a.queueOrder ?? 0) - (b.queueOrder ?? 0);
     }) ?? [];
 
+  const filteredRoster = viewerRoster.filter(v =>
+    v.displayName.toLowerCase().includes(rosterSearch.toLowerCase()),
+  );
+
   const queuedItems = (auction?.shopItems ?? [])
     .filter(i => i.status === 'QUEUED' && i.type !== 'BUY_NOW')
     .slice()
@@ -1314,27 +1406,81 @@ export default function LiveAuctionRoom() {
 
   const sellerTrackId = hms.localPeer?.videoTrackId ?? null;
 
-  const renderVideoBackground = () => {
-    if (isSeller) {
-      if (!hms.isJoined || !hms.hmsInstance) {
-        return (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <ActivityIndicator size="large" color="#1A56DB" />
-            <Text style={{ color: '#9CA3AF', fontSize: 14, marginTop: 12 }}>Starting camera...</Text>
-          </View>
-        );
-      }
+  // ── Resolve host + co-host tracks by identity, independent of layout ──
+  const getRoleTracks = () => {
+    const hostName = auction?.seller.displayName;
+    const coHostName = auction?.coHost?.displayName;
+
+    const hostTrack = isHost
+      ? hms.localPeer?.videoTrackId ?? null
+      : (() => {
+          const p = hms.peers.find((peer) => !peer.isLocal && hostName && peer.name === hostName);
+          return p ? hms.trackMap[p.id] ?? null : null;
+        })();
+
+    const coHostTrack = isCoHost
+      ? hms.localPeer?.videoTrackId ?? null
+      : (() => {
+          const p = hms.peers.find((peer) => !peer.isLocal && coHostName && peer.name === coHostName);
+          return p ? hms.trackMap[p.id] ?? null : null;
+        })();
+
+    return {
+      hostTrack,
+      coHostTrack,
+      hostMirror: isHost,
+      coHostMirror: isCoHost,
+      hostLabel: isHost ? 'You' : (hostName ?? 'Host'),
+      coHostLabel: isCoHost ? 'You' : (coHostName ?? 'Co-host'),
+    };
+  };
+
+  const VideoTile = ({
+    trackId, mirror, label, style,
+  }: { trackId: string | null; mirror: boolean; label?: string; style?: any }) => {
+    if (!trackId) {
       return (
-        <HMSVideoView
-          hmsInstance={hms.hmsInstance}
-          trackId={sellerTrackId}
-          mirror={true}
-          style={{ flex: 1 }}
-        />
+        <View style={[{ alignItems: 'center', justifyContent: 'center', backgroundColor: '#111827' }, style]}>
+          <ActivityIndicator size="small" color="#6B7280" />
+          {label && (
+            <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 6 }}>{label}</Text>
+          )}
+        </View>
       );
     }
+    return (
+      <View style={[{ overflow: 'hidden' }, style]}>
+        <HMSVideoView
+          hmsInstance={hms.hmsInstance}
+          trackId={trackId}
+          mirror={mirror}
+          style={{ flex: 1 }}
+        />
+        {label && (
+          <View style={{
+            position: 'absolute', bottom: 0, left: 0, right: 0,
+            backgroundColor: 'rgba(0,0,0,0.55)',
+            paddingHorizontal: 8, paddingVertical: 4,
+          }}>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }} numberOfLines={1}>
+              {label}
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+  };
 
-    if (!hms.isJoined) {
+  const renderVideoBackground = () => {
+    if (isHost && (!hms.isJoined || !hms.hmsInstance)) {
+      return (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color="#1A56DB" />
+          <Text style={{ color: '#9CA3AF', fontSize: 14, marginTop: 12 }}>Starting camera...</Text>
+        </View>
+      );
+    }
+    if (!isHost && !hms.isJoined) {
       return (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color="#1A56DB" />
@@ -1343,21 +1489,95 @@ export default function LiveAuctionRoom() {
       );
     }
 
-    if (viewerTrackId) {
+    const { hostTrack, coHostTrack, hostMirror, coHostMirror, hostLabel, coHostLabel } = getRoleTracks();
+
+    // No co-host → single fullscreen of the host
+    if (!hasCoHost) {
+      if (!hostTrack) {
+        return (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 64 }}>📺</Text>
+            <Text style={{ color: '#4B5563', fontSize: 14, marginTop: 8 }}>Watching live</Text>
+          </View>
+        );
+      }
       return (
         <HMSVideoView
           hmsInstance={hms.hmsInstance}
-          trackId={viewerTrackId}
-          mirror={false}
+          trackId={hostTrack}
+          mirror={hostMirror}
           style={{ flex: 1 }}
         />
       );
     }
 
+    // ── With co-host: render per layout ──
+    if (videoLayout === 'split-host-top' || videoLayout === 'split-cohost-top') {
+      const topIsHost = videoLayout === 'split-host-top';
+      return (
+        <View style={{ flex: 1, flexDirection: 'column' }}>
+          <VideoTile
+            trackId={topIsHost ? hostTrack : coHostTrack}
+            mirror={topIsHost ? hostMirror : coHostMirror}
+            label={topIsHost ? hostLabel : coHostLabel}
+            style={{ flex: 1, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}
+          />
+          <VideoTile
+            trackId={topIsHost ? coHostTrack : hostTrack}
+            mirror={topIsHost ? coHostMirror : hostMirror}
+            label={topIsHost ? coHostLabel : hostLabel}
+            style={{ flex: 1 }}
+          />
+        </View>
+      );
+    }
+
+    // PiP modes
+    const primaryIsHost = videoLayout === 'pip-host';
+    const primaryTrack = primaryIsHost ? hostTrack : coHostTrack;
+    const primaryMirror = primaryIsHost ? hostMirror : coHostMirror;
+    const pipTrack = primaryIsHost ? coHostTrack : hostTrack;
+    const pipMirror = primaryIsHost ? coHostMirror : hostMirror;
+    const pipLabel = primaryIsHost ? coHostLabel : hostLabel;
+
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ fontSize: 64 }}>📺</Text>
-        <Text style={{ color: '#4B5563', fontSize: 14, marginTop: 8 }}>Watching live</Text>
+      <View style={{ flex: 1 }}>
+        {primaryTrack ? (
+          <HMSVideoView
+            hmsInstance={hms.hmsInstance}
+            trackId={primaryTrack}
+            mirror={primaryMirror}
+            style={{ flex: 1 }}
+          />
+        ) : (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 64 }}>📺</Text>
+          </View>
+        )}
+        {/* PiP — tap to swap who's primary */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => setVideoLayout(primaryIsHost ? 'pip-cohost' : 'pip-host')}
+          style={{
+            position: 'absolute',
+            top: insets.top + 70,
+            right: 14,
+            width: 100, height: 140,
+            borderRadius: 14,
+            overflow: 'hidden',
+            borderWidth: 2,
+            borderColor: 'rgba(255,255,255,0.4)',
+            backgroundColor: '#000',
+            shadowColor: '#000', shadowOpacity: 0.4, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8,
+          }}
+        >
+          <VideoTile
+            trackId={pipTrack}
+            mirror={pipMirror}
+            label={pipLabel}
+            style={{ flex: 1 }}
+          />
+        </TouchableOpacity>
       </View>
     );
   };
@@ -1408,62 +1628,93 @@ export default function LiveAuctionRoom() {
       <View style={{
         position: 'absolute', top: 0, left: 0, right: 0,
         paddingTop: insets.top + 12, paddingHorizontal: 16,
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        flexDirection: 'row', alignItems: 'center', gap: 8,
       }}>
         {/* Left: avatar + LIVE + viewers */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1 }}>
-          <View style={{
-            flexDirection: 'row', alignItems: 'center', gap: 8,
-            backgroundColor: 'rgba(255,255,255,0.12)',
-            borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
-            borderRadius: 999,
-            paddingHorizontal: 10, paddingVertical: 6,
-          }}>
-            <View style={{
-              width: 24, height: 24, borderRadius: 12,
-              backgroundColor: '#1A56DB', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
-                {auction?.seller.displayName.charAt(0).toUpperCase()}
-              </Text>
-            </View>
-            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }} numberOfLines={1}>
-              {auction?.seller.displayName}
-            </Text>
-          </View>
-          {/* Follow seller button — viewers only */}
-          {!isSeller && auction && (
-            <FollowSellerButton
-              sellerId={auction.seller.id}
-              userId={user?.id}
-            />
-          )}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, flexWrap: 'nowrap', flex: 1 }}>
+          {/* Combined seller + co-host pill */}
+          {/* Left: host card + LIVE */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 1, flexWrap: 'nowrap', flex: 1 }}>
+            {/* Host card — avatar + stacked name/viewers, tap → host sheet */}
+            <TouchableOpacity
+              activeOpacity={0.75}
+              onPress={() => {
+                setHostSheetOpen(true);
+                if (isHost && auction?.seller.id) {
+                  requestRoster(auction.seller.id, auction?.coHostId ?? undefined);
+                }
+              }}
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: 10,
+                backgroundColor: 'rgba(0,0,0,0.45)',
+                borderRadius: 999,
+                paddingLeft: 4, paddingRight: 12, paddingVertical: 4,
+                maxWidth: SCREEN_WIDTH * 0.5,
+              }}
+            >
+              {/* Avatar (stacked if co-host) */}
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{
+                  width: 36, height: 36, borderRadius: 18,
+                  backgroundColor: '#1A56DB',
+                  alignItems: 'center', justifyContent: 'center',
+                  borderWidth: 2, borderColor: '#000',
+                  zIndex: 2,
+                }}>
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
+                    {auction?.seller.displayName.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+                {hasCoHost && auction?.coHost && (
+                  <View style={{
+                    width: 28, height: 28, borderRadius: 14,
+                    backgroundColor: '#7C3AED',
+                    alignItems: 'center', justifyContent: 'center',
+                    borderWidth: 2, borderColor: '#000',
+                    marginLeft: -12,
+                    zIndex: 1,
+                  }}>
+                    <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+                      {auction.coHost.displayName.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                )}
+              </View>
 
-          <View style={{
-            flexDirection: 'row', alignItems: 'center', gap: 4,
-            backgroundColor: '#DC2626', borderRadius: 999,
-            paddingHorizontal: 10, paddingVertical: 6,
-          }}>
-            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' }} />
-            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>LIVE</Text>
-          </View>
+              {/* Stacked name + viewers */}
+              <View style={{ flexShrink: 1 }}>
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }} numberOfLines={1}>
+                  {hasCoHost && auction?.coHost
+                    ? `${auction.seller.displayName} & ${auction.coHost.displayName}`
+                    : auction?.seller.displayName}
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 10, marginTop: 1 }} numberOfLines={1}>
+                  {viewerCount > 0 ? `${viewerCount.toLocaleString()} ${viewerCount === 1 ? 'viewer' : 'viewers'}` : 'Live now'}
+                </Text>
+              </View>
+            </TouchableOpacity>
 
-          {viewerCount > 0 && (
+            {/* Follow — viewers only */}
+            {!isSeller && auction && (
+              <FollowSellerButton
+                sellerId={auction.seller.id}
+                userId={user?.id}
+              />
+            )}
+
+            {/* LIVE badge */}
             <View style={{
-              backgroundColor: 'rgba(255,255,255,0.12)',
-              borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
-              borderRadius: 999,
+              flexDirection: 'row', alignItems: 'center', gap: 4,
+              backgroundColor: '#DC2626', borderRadius: 999,
               paddingHorizontal: 10, paddingVertical: 6,
             }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <Icon symbol="eye.fill" fallback="👁" size={11} tint="rgba(255,255,255,0.85)" />
-                <Text style={{ color: '#fff', fontSize: 11 }}>{viewerCount}</Text>
-              </View>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' }} />
+              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>LIVE</Text>
             </View>
-          )}
+          </View>
         </View>
 
-        {/* Right: close only — seller controls moved to right side panel */}
+        {/* Right: close only — controls moved to right side panel */}
         <TouchableOpacity
           style={{
             backgroundColor: 'rgba(255,255,255,0.15)',
@@ -1582,6 +1833,32 @@ export default function LiveAuctionRoom() {
             <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>React</Text>
           </TouchableOpacity>
 
+          {/* Layout — only when co-host present */}
+          {hasCoHost && (
+            <TouchableOpacity
+              style={{ alignItems: 'center', gap: 4 }}
+              activeOpacity={0.7}
+              onPress={() => {
+                setVideoLayout((curr) => {
+                  if (curr === 'pip-host') return 'pip-cohost';
+                  if (curr === 'pip-cohost') return 'split-host-top';
+                  if (curr === 'split-host-top') return 'split-cohost-top';
+                  return 'pip-host';
+                });
+              }}
+            >
+              <View style={{
+                width: 42, height: 42, borderRadius: 21,
+                backgroundColor: 'rgba(255,255,255,0.18)',
+                borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Icon symbol="rectangle.on.rectangle" fallback="▣" size={18} />
+              </View>
+              <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>Layout</Text>
+            </TouchableOpacity>
+          )}
+
           {/* Shop */}
           <TouchableOpacity
             style={{ alignItems: 'center', gap: 4 }}
@@ -1667,6 +1944,32 @@ export default function LiveAuctionRoom() {
             <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>Share</Text>
           </TouchableOpacity>
 
+          {/* Layout — only when co-host present */}
+          {hasCoHost && (
+            <TouchableOpacity
+              style={{ alignItems: 'center', gap: 4 }}
+              activeOpacity={0.7}
+              onPress={() => {
+                setVideoLayout((curr) => {
+                  if (curr === 'pip-host') return 'pip-cohost';
+                  if (curr === 'pip-cohost') return 'split-host-top';
+                  if (curr === 'split-host-top') return 'split-cohost-top';
+                  return 'pip-host';
+                });
+              }}
+            >
+              <View style={{
+                width: 42, height: 42, borderRadius: 21,
+                backgroundColor: 'rgba(255,255,255,0.18)',
+                borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Icon symbol="rectangle.on.rectangle" fallback="▣" size={18} tint="#fff" />
+              </View>
+              <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>Layout</Text>
+            </TouchableOpacity>
+          )}
+
           {/* Shop */}
           <TouchableOpacity
             style={{ alignItems: 'center', gap: 4 }}
@@ -1696,6 +1999,38 @@ export default function LiveAuctionRoom() {
             </View>
             <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '600' }}>Shop</Text>
           </TouchableOpacity>
+
+          {/* Leave Co-host — only when local user is the co-host */}
+          {isCoHost && (
+            <TouchableOpacity
+              style={{ alignItems: 'center', gap: 4 }}
+              activeOpacity={0.7}
+              onPress={() => {
+                Alert.alert(
+                  'Leave co-host?',
+                  'You will be returned to viewer mode.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Leave',
+                      style: 'destructive',
+                      onPress: () => user?.id && leaveCoHost(user.id),
+                    },
+                  ],
+                );
+              }}
+            >
+              <View style={{
+                width: 42, height: 42, borderRadius: 21,
+                backgroundColor: 'rgba(220,38,38,0.85)',
+                borderWidth: 1, borderColor: 'rgba(220,38,38,1)',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                <Icon symbol="xmark.circle.fill" fallback="✕" size={18} tint="#fff" />
+              </View>
+              <Text style={{ color: '#FCA5A5', fontSize: 10, fontWeight: '700' }}>Leave</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -1858,15 +2193,24 @@ export default function LiveAuctionRoom() {
 
                 {/* Name + message */}
                 <View style={{ flexShrink: 1, maxWidth: isSeller ? '72%' : '82%' }}>
-                  <Text style={{
-                    color: isOwnMessage ? '#60A5FA' : 'rgba(255,255,255,0.55)',
-                    fontSize: 10,
-                    fontWeight: '700',
-                    marginBottom: 2,
-                    letterSpacing: 0.1,
-                  }}>
-                    {item.displayName}
-                  </Text>
+                  <TouchableOpacity
+                    disabled={!isHost || !item.userId || item.userId === '__system__' || item.userId === user?.id || hasCoHost}
+                    onPress={() => setChatActionSheet({ userId: item.userId, displayName: item.displayName })}
+                    activeOpacity={isHost && !hasCoHost && item.userId !== user?.id && item.userId !== '__system__' ? 0.6 : 1}
+                  >
+                    <Text style={{
+                      color: isOwnMessage ? '#60A5FA' : 'rgba(255,255,255,0.55)',
+                      fontSize: 10,
+                      fontWeight: '700',
+                      marginBottom: 2,
+                      letterSpacing: 0.1,
+                    }}>
+                      {item.displayName}
+                      {isHost && !hasCoHost && item.userId !== user?.id && item.userId !== '__system__' && (
+                        <Text style={{ color: 'rgba(124,58,237,0.7)', fontSize: 9 }}> • tap</Text>
+                      )}
+                    </Text>
+                  </TouchableOpacity>
                   <View style={{
                     ...(isBidMsg ? {
                       backgroundColor: isBidTooLow ? 'rgba(220,38,38,0.08)' : 'rgba(245,158,11,0.08)',
@@ -4481,6 +4825,393 @@ export default function LiveAuctionRoom() {
             ))}
           </View>
         )}
+
+        {/* ── Co-host: Chat Action Sheet (host → invite a viewer) ── */}
+      <Modal
+        visible={!!chatActionSheet}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setChatActionSheet(null)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}
+          activeOpacity={1}
+          onPress={() => setChatActionSheet(null)}
+        >
+          <View style={{
+            backgroundColor: '#111827',
+            borderTopLeftRadius: 24, borderTopRightRadius: 24,
+            padding: 24, paddingBottom: insets.bottom + 24,
+          }}>
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: '#374151', marginBottom: 12 }} />
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+                {chatActionSheet?.displayName}
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: 12,
+                backgroundColor: 'rgba(124,58,237,0.15)',
+                borderWidth: 1, borderColor: 'rgba(124,58,237,0.35)',
+                borderRadius: 14, padding: 16, marginBottom: 10,
+              }}
+              onPress={() => {
+                if (!chatActionSheet || !user?.id) return;
+                inviteCoHost(user.id, chatActionSheet.userId);
+                setChatActionSheet(null);
+              }}
+            >
+              <Text style={{ fontSize: 22 }}>🎥</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#A78BFA', fontWeight: '700', fontSize: 14 }}>
+                  Invite as Co-host
+                </Text>
+                <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 2 }}>
+                  They appear on camera with you. They can't add items or bid.
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ paddingVertical: 14, alignItems: 'center' }}
+              onPress={() => setChatActionSheet(null)}
+            >
+              <Text style={{ color: '#6B7280', fontSize: 14 }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── Co-host: Invite Received Modal (target sees this) ── */}
+      <Modal
+        visible={!!coHostInvite}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (coHostInvite && user?.id) declineCoHostInvite(user.id);
+          setCoHostInvite(null);
+        }}
+      >
+        <View style={{
+          flex: 1, backgroundColor: 'rgba(0,0,0,0.85)',
+          alignItems: 'center', justifyContent: 'center',
+          paddingHorizontal: 24,
+        }}>
+          <View style={{
+            backgroundColor: '#111827', borderRadius: 24,
+            padding: 28, width: '100%',
+            borderWidth: 1, borderColor: '#1F2937',
+          }}>
+            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+              <Text style={{ fontSize: 48, marginBottom: 12 }}>🎥</Text>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 8, textAlign: 'center' }}>
+                Co-host invite
+              </Text>
+              <Text style={{ color: '#9CA3AF', fontSize: 14, textAlign: 'center', lineHeight: 20 }}>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>{coHostInvite?.hostDisplayName}</Text>
+                {' '}wants you to join the live as a co-host.{'\n\n'}
+                <Text style={{ color: '#6B7280', fontSize: 12 }}>
+                  Your camera and mic will turn on. You can leave anytime.
+                </Text>
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#7C3AED', borderRadius: 14,
+                paddingVertical: 16, alignItems: 'center', marginBottom: 10,
+              }}
+              onPress={async () => {
+                if (!coHostInvite || !user?.id) return;
+                const peerId = await hms.getLocalPeerId();
+                if (!peerId) {
+                  Alert.alert('Not connected', 'Wait for the stream to load, then try again.');
+                  return;
+                }
+                acceptCoHostInvite(user.id, user.displayName ?? '', peerId);
+                setCoHostInvite(null);
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+                Accept — Join on camera
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                borderRadius: 14, paddingVertical: 14, alignItems: 'center',
+                borderWidth: 1, borderColor: '#374151',
+              }}
+              onPress={() => {
+                if (coHostInvite && user?.id) declineCoHostInvite(user.id);
+                setCoHostInvite(null);
+              }}
+            >
+              <Text style={{ color: '#6B7280', fontWeight: '600', fontSize: 14 }}>Decline</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Hosts bottom sheet ── */}
+      <Modal
+        visible={hostSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setHostSheetOpen(false);
+          setHostSheetView({ type: 'list' });
+          setRosterSearch('');
+          setInvitedUserIds(new Set());
+        }}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1, justifyContent: 'flex-end' }}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={() => {
+              setHostSheetOpen(false);
+              setHostSheetView({ type: 'list' });
+              setRosterSearch('');
+              setInvitedUserIds(new Set());
+            }}
+            style={{ flex: 1 }}
+          />
+          <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{
+              backgroundColor: '#111827',
+              borderTopLeftRadius: 20, borderTopRightRadius: 20,
+              paddingTop: 12,
+              paddingBottom: insets.bottom + 16,
+              paddingHorizontal: hostSheetView.type === 'profile' ? 0 : 16,
+              maxHeight: hostSheetView.type === 'profile' ? '88%' : '60%',
+              minHeight: hostSheetView.type === 'profile' ? '70%' : undefined,
+            }}>
+            {/* grab handle */}
+            <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.3)', marginBottom: 16, marginHorizontal: 16 }} />
+
+            {hostSheetView.type === 'profile' ? (
+              <SellerPublicProfileView
+                userId={hostSheetView.userId}
+                embedded
+                onBack={() => setHostSheetView({ type: 'list' })}
+                onAuctionPress={(auctionId) => {
+                  setHostSheetOpen(false);
+                  setHostSheetView({ type: 'list' });
+                  router.push(`/auction/${auctionId}` as any);
+                }}
+              />
+            ) : (
+              <>
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 12 }}>
+                  Live hosts
+                </Text>
+
+                {/* Seller row */}
+                {auction?.seller && (
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => setHostSheetView({ type: 'profile', userId: auction.seller.id })}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 }}
+                  >
+                    <View style={{
+                      width: 44, height: 44, borderRadius: 22,
+                      backgroundColor: '#1A56DB',
+                      alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>
+                        {auction.seller.displayName.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>
+                        {auction.seller.displayName}
+                      </Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 2 }}>
+                        Host
+                      </Text>
+                    </View>
+                    <Icon symbol="chevron.right" fallback="›" size={14} tint="rgba(255,255,255,0.5)" />
+                  </TouchableOpacity>
+                )}
+
+                {/* Co-host row */}
+                {hasCoHost && auction?.coHost && (
+                  <>
+                    <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)' }} />
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => setHostSheetView({ type: 'profile', userId: auction.coHost!.id })}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 }}
+                    >
+                      <View style={{
+                        width: 44, height: 44, borderRadius: 22,
+                        backgroundColor: '#7C3AED',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>
+                          {auction.coHost.displayName.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>
+                          {auction.coHost.displayName}
+                        </Text>
+                        <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 2 }}>
+                          Co-host
+                        </Text>
+                      </View>
+                      <Icon symbol="chevron.right" fallback="›" size={14} tint="rgba(255,255,255,0.5)" />
+                    </TouchableOpacity>
+
+                    {isHost && (
+                      <TouchableOpacity
+                        activeOpacity={0.7}
+                        onPress={() => {
+                          setHostSheetOpen(false);
+                          Alert.alert(
+                            'Remove co-host?',
+                            `${auction.coHost!.displayName} will be returned to viewer mode.`,
+                            [
+                              { text: 'Cancel', style: 'cancel' },
+                              { text: 'Remove', style: 'destructive', onPress: () => user?.id && kickCoHost(user.id) },
+                            ],
+                          );
+                        }}
+                        style={{
+                          marginTop: 12, paddingVertical: 12,
+                          backgroundColor: 'rgba(220,38,38,0.15)',
+                          borderWidth: 1, borderColor: 'rgba(220,38,38,0.4)',
+                          borderRadius: 12, alignItems: 'center',
+                        }}
+                      >
+                        <Text style={{ color: '#FCA5A5', fontSize: 14, fontWeight: '600' }}>
+                          Remove co-host
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </>
+                )}
+
+                {/* ── INVITE A CO-HOST: viewer roster ── */}
+                {isHost && !hasCoHost && (
+                  <>
+                    <View style={{
+                      height: 1,
+                      backgroundColor: 'rgba(255,255,255,0.08)',
+                      marginTop: 8,
+                    }} />
+                    <Text style={{
+                      color: 'rgba(255,255,255,0.5)',
+                      fontSize: 11, fontWeight: '700',
+                      letterSpacing: 0.5,
+                      marginTop: 16, marginBottom: 10,
+                    }}>
+                      INVITE A CO-HOST
+                    </Text>
+
+                    <TextInput
+                      style={{
+                        backgroundColor: '#1F2937',
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: rosterSearch ? '#7C3AED' : '#374151',
+                        paddingHorizontal: 12, paddingVertical: 10,
+                        color: '#fff', fontSize: 13,
+                        marginBottom: 12,
+                      }}
+                      placeholder="Search viewers..."
+                      placeholderTextColor="#4B5563"
+                      value={rosterSearch}
+                      onChangeText={setRosterSearch}
+                      autoCorrect={false}
+                      autoCapitalize="none"
+                    />
+
+                    {filteredRoster.length === 0 ? (
+                      <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+                        <Text style={{ color: '#4B5563', fontSize: 13 }}>
+                          {viewerRoster.length === 0 ? 'No viewers yet' : 'No matches'}
+                        </Text>
+                      </View>
+                    ) : (
+                      <ScrollView
+                        style={{ maxHeight: 240 }}
+                        showsVerticalScrollIndicator={false}
+                        keyboardShouldPersistTaps="handled"
+                      >
+                        {filteredRoster.map(viewer => {
+                          const isInvited = invitedUserIds.has(viewer.userId);
+                          return (
+                            <View
+                              key={viewer.userId}
+                              style={{
+                                flexDirection: 'row', alignItems: 'center',
+                                gap: 12, paddingVertical: 10,
+                              }}
+                            >
+                              <View style={{
+                                width: 36, height: 36, borderRadius: 18,
+                                backgroundColor: '#374151',
+                                alignItems: 'center', justifyContent: 'center',
+                              }}>
+                                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
+                                  {viewer.displayName.charAt(0).toUpperCase()}
+                                </Text>
+                              </View>
+                              <Text
+                                style={{ flex: 1, color: '#fff', fontSize: 14, fontWeight: '500' }}
+                                numberOfLines={1}
+                              >
+                                {viewer.displayName}
+                              </Text>
+                              <TouchableOpacity
+                                onPress={() => {
+                                  if (isInvited || !user?.id) return;
+                                  inviteCoHost(user.id, viewer.userId);
+                                  setInvitedUserIds(prev => new Set([...prev, viewer.userId]));
+                                  setTimeout(() => {
+                                    setInvitedUserIds(prev => {
+                                      const next = new Set(prev);
+                                      next.delete(viewer.userId);
+                                      return next;
+                                    });
+                                  }, 3000);
+                                }}
+                                style={{
+                                  backgroundColor: isInvited
+                                    ? 'rgba(16,185,129,0.15)'
+                                    : 'rgba(124,58,237,0.2)',
+                                  borderWidth: 1,
+                                  borderColor: isInvited
+                                    ? 'rgba(16,185,129,0.4)'
+                                    : 'rgba(124,58,237,0.5)',
+                                  borderRadius: 8,
+                                  paddingHorizontal: 12, paddingVertical: 6,
+                                }}
+                              >
+                                <Text style={{
+                                  color: isInvited ? '#10B981' : '#A78BFA',
+                                  fontSize: 12, fontWeight: '700',
+                                }}>
+                                  {isInvited ? 'Invited ✓' : 'Invite'}
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          );
+                        })}
+                      </ScrollView>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
+      </Modal>
       {/* ── Floating Reactions ── */}
       <View
         style={{ position: 'absolute', right: 0, bottom: reactButtonBottomRef.current, width: 80, height: 300 }}

@@ -70,7 +70,17 @@ interface UseSocketOptions {
   onBuyNowPulled?: (data: { itemId: string }) => void;
   onBuyNowClaimFailed?: (data: { itemId: string; reason: string }) => void;
   onReaction?: (data: { emoji: string; userId: string }) => void;
+  // Co-host events
+  onCoHostInvited?: (data: { auctionId: string; hostUserId: string; hostDisplayName: string }) => void;
+  onCoHostJoined?: (data: { auctionId: string; userId: string; displayName: string }) => void;
+  onCoHostLeft?: (data: { auctionId: string; userId: string; reason: 'kicked' | 'self-left' | 'auction-ended' | 'disconnected' }) => void;
+  onCoHostInviteDeclined?: (data: { auctionId: string; declinedByUserId: string }) => void;
+  // Roster
+  onRoster?: (list: Array<{ userId: string; displayName: string; joinedAt: number }>) => void;
+  onRosterUpdated?: () => void;
+  displayName?: string;
 }
+
 
 export const useAuctionSocket = ({
   auctionId,
@@ -97,6 +107,12 @@ export const useAuctionSocket = ({
   onBuyNowPulled,
   onBuyNowClaimFailed,
   onReaction,
+  onCoHostInvited,
+  onCoHostJoined,
+  onCoHostLeft,
+  onCoHostInviteDeclined,
+  onRoster,
+  onRosterUpdated,
 }: UseSocketOptions) => {
   const socketRef = useRef<Socket | null>(null);
 
@@ -139,6 +155,12 @@ export const useAuctionSocket = ({
     socket.off('buynow-claim-failed');
     socket.off('bid-state');
     socket.off('reaction');
+    socket.off('co-host:invited');
+    socket.off('co-host:joined');
+    socket.off('co-host:left');
+    socket.off('co-host:invite-declined');
+    socket.off('room:roster');
+    socket.off('room:roster-updated');
 
     if (onBidUpdate) socket.on(SOCKET_EVENTS.BID_UPDATE, onBidUpdate);
     if (onBidConfirmed) socket.on(SOCKET_EVENTS.BID_CONFIRMED, onBidConfirmed);
@@ -160,6 +182,12 @@ export const useAuctionSocket = ({
     if (onBuyNowPulled) socket.on('buynow-pulled', onBuyNowPulled);
     if (onBuyNowClaimFailed) socket.on('buynow-claim-failed', onBuyNowClaimFailed);
     if (onReaction) socket.on('reaction', onReaction);
+    if (onCoHostInvited) socket.on('co-host:invited', onCoHostInvited);
+    if (onCoHostJoined) socket.on('co-host:joined', onCoHostJoined);
+    if (onCoHostLeft) socket.on('co-host:left', onCoHostLeft);
+    if (onCoHostInviteDeclined) socket.on('co-host:invite-declined', onCoHostInviteDeclined);
+    if (onRoster) socket.on('room:roster', onRoster);
+    if (onRosterUpdated) socket.on('room:roster-updated', onRosterUpdated);
 
     socket.on('bid-state', (data: {
       itemId: string;
@@ -194,7 +222,7 @@ export const useAuctionSocket = ({
     });
 
     // ← Join LAST so all listeners are ready and sellerId is captured
-    socket.emit(SOCKET_EVENTS.JOIN_AUCTION, { auctionId, token, sellerId: userId });
+   socket.emit(SOCKET_EVENTS.JOIN_AUCTION, { auctionId, token, sellerId: userId, userId, displayName: undefined });
   };
 
   const placeBid = useCallback((itemId: string, amount: number, bidderId: string) => {
@@ -274,6 +302,35 @@ export const useAuctionSocket = ({
   const sendReaction = useCallback((emoji: string, userId: string) => {
     socketRef.current?.emit('reaction', { auctionId, emoji, userId });
   }, [auctionId]);
+  
+  const inviteCoHost = useCallback((hostUserId: string, targetUserId: string) => {
+    socketRef.current?.emit('host:invite-co-host', { auctionId, hostUserId, targetUserId });
+  }, [auctionId]);
 
-  return { placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated, pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner, skipChatItem, startLiveBuyNow, claimBuyNow, pullBuyNow, sendReaction };
+  const acceptCoHostInvite = useCallback((userId: string, displayName: string, hmsPeerId: string) => {
+    socketRef.current?.emit('co-host:accept-invite', { auctionId, userId, displayName, hmsPeerId });
+  }, [auctionId]);
+
+  const declineCoHostInvite = useCallback((userId: string) => {
+    socketRef.current?.emit('co-host:decline-invite', { auctionId, userId });
+  }, [auctionId]);
+
+  const kickCoHost = useCallback((hostUserId: string) => {
+    socketRef.current?.emit('host:kick-co-host', { auctionId, hostUserId });
+  }, [auctionId]);
+
+  const leaveCoHost = useCallback((userId: string) => {
+    socketRef.current?.emit('co-host:self-leave', { auctionId, userId });
+  }, [auctionId]);
+
+  const requestRoster = useCallback((sellerId: string, coHostId?: string) => {
+    socketRef.current?.emit('host:request-roster', { auctionId, sellerId, coHostId });
+  }, [auctionId]);
+
+  return {
+    placeBid, sendChat, endAuction, startItemTimer, notifyShopUpdated,
+    pauseTimer, resumeTimer, cancelItemTimer, startChatBid, declareChatWinner,
+    skipChatItem, startLiveBuyNow, claimBuyNow, pullBuyNow, sendReaction,
+    inviteCoHost, acceptCoHostInvite, declineCoHostInvite, kickCoHost, leaveCoHost, requestRoster,
+  };
 };

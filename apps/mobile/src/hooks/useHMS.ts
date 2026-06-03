@@ -6,6 +6,7 @@ import {
   HMSTrackType,
   HMSTrackUpdate,
   HMSPeerUpdate,
+  HMSRoleChangeRequest,
 } from '@100mslive/react-native-hms';
 import { apiClient } from '../services/api/client';
 
@@ -20,11 +21,12 @@ interface HMSPeerInfo {
 interface UseHMSOptions {
   roomId: string | null;
   userName: string;
-  role: 'broadcaster' | 'viewer-realtime';
+  role: 'broadcaster' | 'co-broadcaster' | 'viewer-realtime';
   onSellerLeft?: () => void;
+  onRoleChanged?: (newRole: string) => void;   // fired after server promotes/demotes us
 }
 
-export const useHMS = ({ roomId, userName, role, onSellerLeft }: UseHMSOptions) => {
+export const useHMS = ({ roomId, userName, role, onSellerLeft, onRoleChanged }: UseHMSOptions) => {
   const hmsRef = useRef<HMSSDK | null>(null);
   const initializedRef = useRef(false);
   const trackMapRef = useRef<Record<string, string>>({});
@@ -230,6 +232,48 @@ export const useHMS = ({ roomId, userName, role, onSellerLeft }: UseHMSOptions) 
         },
       );
 
+      // ─── ON_ROLE_CHANGE_REQUEST ─────────────────────────────────────
+      // Fires when server promotes/demotes us (e.g., viewer → co-broadcaster)
+      hms.addEventListener(
+        HMSUpdateListenerActions.ON_ROLE_CHANGE_REQUEST,
+        async (data: { requestedBy?: { name?: string }; suggestedRole: { name: string } }) => {
+          const newRole = data.suggestedRole?.name;
+          console.log('[HMS] ON_ROLE_CHANGE_REQUEST → auto-accepting:', newRole);
+          try {
+            await hms.acceptRoleChange();
+            console.log('[HMS] Role change accepted, now:', newRole);
+
+            // Local tracks attach asynchronously after promotion — poll a few times
+            if (newRole === 'broadcaster' || newRole === 'co-broadcaster') {
+              const tryUnmuteAndRebuild = async () => {
+                try {
+                  const lp = await hms.getLocalPeer();
+                  const videoTrack = lp.localVideoTrack();
+                  const audioTrack = lp.localAudioTrack();
+                  if (videoTrack) {
+                    videoTrack.setMute(false);
+                    console.log('[HMS] Co-broadcaster video trackId:', videoTrack.trackId);
+                  }
+                  if (audioTrack) audioTrack.setMute(false);
+                  await buildPeerList();
+                } catch (err) {
+                  console.warn('[HMS] post-promotion unmute attempt failed:', err);
+                }
+              };
+              await tryUnmuteAndRebuild();
+              setTimeout(() => { void tryUnmuteAndRebuild(); }, 400);
+              setTimeout(() => { void tryUnmuteAndRebuild(); }, 1200);
+              setTimeout(() => { void tryUnmuteAndRebuild(); }, 2500);
+            }
+
+            onRoleChanged?.(newRole);
+            await buildPeerList();
+          } catch (e) {
+            console.warn('[HMS] acceptRoleChange failed:', e);
+          }
+        },
+      );
+
       // ─── ON_ERROR ───────────────────────────────────────────────
       hms.addEventListener(
         HMSUpdateListenerActions.ON_ERROR,
@@ -321,22 +365,34 @@ export const useHMS = ({ roomId, userName, role, onSellerLeft }: UseHMSOptions) 
   };
 
   const localPeer = peers.find(p => p.isLocal) ?? null;
-  const broadcasterPeer = peers.find(p => !p.isLocal) ?? null;
+  const remoteBroadcasters = peers.filter(p => !p.isLocal);
+  const broadcasterPeer = remoteBroadcasters[0] ?? null;   // primary (host)
+  const coBroadcasterPeer = remoteBroadcasters[1] ?? null; // secondary (co-host)
+  const getLocalPeerId = useCallback(async (): Promise<string | null> => {
+    try {
+      const lp = await hmsRef.current?.getLocalPeer();
+      return lp?.peerID ? String(lp.peerID) : null;
+    } catch {
+      return null;
+    }
+  }, []);
 
   return {
     peers,
     localPeer,
     broadcasterPeer,
+    coBroadcasterPeer,
     isJoined,
     isLoading,
     error,
     isMuted,
     isCameraOff,
-    trackMap,      // ← expose state version for components
+    trackMap,
     hmsInstance: hmsRef.current,
     toggleMute,
     toggleCamera,
     switchCamera,
     leave: cleanup,
+    getLocalPeerId,
   };
 };
