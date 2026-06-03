@@ -557,24 +557,18 @@ export class BiddingGateway
     @MessageBody() payload: StartItemPayload & { sellerId: string },
   ) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const item = await this.biddingService.startItemBidding(
         payload.sellerId,
         payload.auctionId,
         payload.itemId,
       );
       this.server.to(`auction:${payload.auctionId}`).emit('item-started', {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         itemId: item.id,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         title: item.title,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         startingPrice: item.price,
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         photos: item.photos,
         timestamp: Date.now(),
       });
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       return { success: true, item };
     } catch (error) {
       const message =
@@ -903,7 +897,6 @@ export class BiddingGateway
       where: { id: itemId },
       data: {
         status: 'QUEUED',
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         price:
           item?.originalPrice && item.originalPrice > 0
             ? item.originalPrice
@@ -958,7 +951,6 @@ export class BiddingGateway
         this.coHostPeerIds.delete(payload.auctionId);
         this.server.to(`auction:${payload.auctionId}`).emit('co-host:left', {
           auctionId: payload.auctionId,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           userId: a.coHostId,
           reason: 'auction-ended',
         });
@@ -1430,7 +1422,6 @@ export class BiddingGateway
     this.server.to(targetSocketId).emit('co-host:invited', {
       auctionId,
       hostUserId,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
       hostDisplayName: auction.seller.displayName,
     });
 
@@ -1545,7 +1536,6 @@ export class BiddingGateway
       }
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const kickedUserId = auction.coHostId;
     await this.prisma.auction.update({
       where: { id: payload.auctionId },
@@ -1555,7 +1545,6 @@ export class BiddingGateway
 
     this.server.to(`auction:${payload.auctionId}`).emit('co-host:left', {
       auctionId: payload.auctionId,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       userId: kickedUserId,
       reason: 'kicked',
     });

@@ -106,7 +106,6 @@ export default function RootLayout() {
           name="seller/[id]" 
           options={{ animation: 'slide_from_bottom', presentation: 'modal' }} 
         />
-        <Stack.Screen name="user/[id]" />
         <Stack.Screen name="order/[id]" />
         <Stack.Screen name="seller/orders" />
       </Stack>
