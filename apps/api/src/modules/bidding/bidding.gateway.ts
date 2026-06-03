@@ -225,8 +225,12 @@ export class BiddingGateway
     const viewerInfo = this.socketToViewer.get(client.id);
     if (viewerInfo) {
       const { auctionId, viewerId } = viewerInfo;
-      this.auctionViewers.get(auctionId)?.delete(viewerId);
       this.socketToViewer.delete(client.id);
+      // Only remove from viewer Set if they have no other active socket in this room
+      const stillConnected = this.userSocketMap.has(viewerId);
+      if (!stillConnected) {
+        this.auctionViewers.get(auctionId)?.delete(viewerId);
+      }
       this.broadcastViewerCount(auctionId);
     } else {
       client.rooms.forEach((room) => {

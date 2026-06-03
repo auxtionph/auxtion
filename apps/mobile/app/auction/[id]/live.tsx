@@ -222,7 +222,14 @@ function SwipeBidButton({ label, sublabel, onBid, color = '#1A56DB' }: {
   );
 }
 
-const REACTION_EMOJIS = ['❤️', '🔥', '😂', '😮', '👏', '💰'];
+const REACTION_ICONS = [
+  { symbol: 'flame.fill' as SFSymbol, tint: '#F97316', label: 'flame' },
+  { symbol: 'heart.fill' as SFSymbol, tint: '#EF4444', label: 'heart' },
+  { symbol: 'crown.fill' as SFSymbol, tint: '#F59E0B', label: 'crown' },
+  { symbol: 'diamond.fill' as SFSymbol, tint: '#60A5FA', label: 'diamond' },
+  { symbol: 'bolt.fill' as SFSymbol, tint: '#FACC15', label: 'bolt' },
+  { symbol: 'banknote.fill' as SFSymbol, tint: '#10B981', label: 'banknote' },
+];
 
 interface FloatingEmojiItem {
   id: string;
@@ -235,6 +242,8 @@ function FloatingEmoji({ item, onDone }: { item: FloatingEmojiItem; onDone: (id:
   const translateX = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(1)).current;
   const scale = useRef(new Animated.Value(0.5)).current;
+
+  const iconData = REACTION_ICONS.find(r => r.label === item.emoji);
 
   useEffect(() => {
     Animated.parallel([
@@ -252,16 +261,17 @@ function FloatingEmoji({ item, onDone }: { item: FloatingEmojiItem; onDone: (id:
   }, []);
 
   return (
-    <Animated.Text style={{
+    <Animated.View style={{
       position: 'absolute',
       right: item.x,
       bottom: 0,
-      fontSize: 32,
       transform: [{ translateY }, { translateX }, { scale }],
       opacity,
     }}>
-      {item.emoji}
-    </Animated.Text>
+      {iconData && (
+        <Icon symbol={iconData.symbol} fallback={iconData.label} size={32} tint={iconData.tint} />
+      )}
+    </Animated.View>
   );
 }
 
@@ -394,6 +404,8 @@ export default function LiveAuctionRoom() {
   } | null>(null);
 
   const [hostSheetOpen, setHostSheetOpen] = useState(false);
+
+  const [selectedQueueId, setSelectedQueueId] = useState<string | null>(null);
 
   // Viewer roster + co-host invite search
   const [viewerRoster, setViewerRoster] = useState<{ userId: string; displayName: string; joinedAt: number }[]>([]);
@@ -1374,9 +1386,10 @@ export default function LiveAuctionRoom() {
     setChatInput('');
   };
 
-  const biddingItems = auction?.shopItems
+  const biddingItems = (auction?.shopItems ?? [])
     .filter(i => i.status === 'QUEUED' && i.type !== 'BUY_NOW')
-    .sort((a, b) => (a.queueOrder ?? 0) - (b.queueOrder ?? 0)) ?? [];
+    .slice()
+    .sort((a, b) => (a.queueOrder ?? 0) - (b.queueOrder ?? 0));
 
   const filteredRoster = viewerRoster.filter(v =>
     v.displayName.toLowerCase().includes(rosterSearch.toLowerCase()),
@@ -1694,9 +1707,6 @@ export default function LiveAuctionRoom() {
                   {hasCoHost && auction?.coHost
                     ? `${auction.seller.displayName} & ${auction.coHost.displayName}`
                     : auction?.seller.displayName}
-                </Text>
-                <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 10, marginTop: 1 }} numberOfLines={1}>
-                  {viewerCount > 0 ? `${viewerCount.toLocaleString()} ${viewerCount === 1 ? 'viewer' : 'viewers'}` : 'Live now'}
                 </Text>
               </View>
             </TouchableOpacity>
@@ -2429,6 +2439,7 @@ export default function LiveAuctionRoom() {
             onChangeText={setChatInput}
             onSubmitEditing={handleSendChat}
             returnKeyType="send"
+            onFocus={() => setShowReactions(false)}
           />
           <TouchableOpacity
               style={{
@@ -2734,53 +2745,219 @@ export default function LiveAuctionRoom() {
                 <View style={{ alignItems: 'center', paddingVertical: 32 }}>
                   <Text style={{ color: '#4B5563', fontSize: 13 }}>No items queued</Text>
                 </View>
-              ) : biddingItems.map(item => (
-                <TouchableOpacity
-                  key={item.id}
-                  activeOpacity={0.8}
-                  onPress={() => {
-                    if (isSeller) {
-                      if (currentItem) {
-                        Alert.alert('Item Already Running', 'End or skip the current item before starting a new one.');
-                        return;
-                      }
-                      setEditingQueueItem({ id: item.id, title: item.title, price: item.price });
-                      setEditingPrice(String(item.price / 100));
-                      setShowShop(false);
-                      return;
-                    }
-                    setShowShop(false);
-                    setTimeout(() => setShopDetailItem(item), 50);
-                  }}
-                  style={{
-                    flexDirection: 'row', alignItems: 'center', gap: 12,
-                    backgroundColor: '#1F2937', borderRadius: 12,
-                    padding: 12, marginBottom: 8,
-                    opacity: isSeller && item.status === 'QUEUED' && currentItem ? 0.4 : 1,
-                  }}
-                >
-                  <View style={{
-                    width: 56, height: 56, borderRadius: 10,
-                    backgroundColor: '#374151', overflow: 'hidden',
-                    alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    {(item.photos[0] as any)?.url ? (
-                      <Image source={{ uri: (item.photos[0] as any).url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-                    ) : (
-                      <Icon symbol="shippingbox.fill" fallback="📦" size={28} tint="rgba(255,255,255,0.4)" />
-                    )}
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
-                      {item.title}
-                    </Text>
-                    <Text style={{ color: '#F59E0B', fontSize: 12 }}>{formatPHP(item.price)}</Text>
-                  </View>
-                  {!isSeller && (
-                    <Text style={{ color: '#6B7280', fontSize: 11 }}>›</Text>
+              ) : (
+                <>
+                  {/* Selection hint */}
+                  {isSeller && selectedQueueId && (
+                    <View style={{
+                      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                      backgroundColor: 'rgba(26,86,219,0.15)',
+                      borderWidth: 1, borderColor: 'rgba(26,86,219,0.4)',
+                      borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10,
+                      marginBottom: 12,
+                    }}>
+                      <Text style={{ color: '#60A5FA', fontSize: 12, fontWeight: '600' }}>
+                        Tap another item to swap positions
+                      </Text>
+                      <TouchableOpacity onPress={() => setSelectedQueueId(null)}>
+                        <Text style={{ color: '#6B7280', fontSize: 12 }}>Cancel</Text>
+                      </TouchableOpacity>
+                    </View>
                   )}
-                </TouchableOpacity>
-              ))
+
+                  {/* Long press hint — shown when nothing selected */}
+                  {isSeller && !selectedQueueId && biddingItems.length > 1 && (
+                    <View style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 8,
+                      marginBottom: 12, paddingHorizontal: 4,
+                    }}>
+                      <Icon symbol="hand.draw.fill" fallback="👆" size={13} tint="#4B5563" />
+                      <Text style={{ color: '#4B5563', fontSize: 11 }}>
+                        Long press an item to swap its position in the queue
+                      </Text>
+                    </View>
+                  )}
+
+                  {biddingItems.map((item, index) => {
+                    const isSelected = selectedQueueId === item.id;
+                    const isSwapTarget = isSeller && selectedQueueId && selectedQueueId !== item.id;
+
+                    return (
+                      <View key={item.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                        {/* Up/Down arrows — hidden when something is selected */}
+                        {isSeller && !selectedQueueId && (
+                          <View style={{ gap: 4 }}>
+                            <TouchableOpacity
+                              disabled={index === 0}
+                              style={{ opacity: index === 0 ? 0.2 : 1, padding: 4 }}
+                              onPress={async () => {
+                                const reordered = [...biddingItems];
+                                [reordered[index - 1], reordered[index]] = [reordered[index], reordered[index - 1]];
+                                setAuction(prev => {
+                                  if (!prev) return prev;
+                                  return {
+                                    ...prev,
+                                    shopItems: prev.shopItems.map(i => {
+                                      const idx = reordered.findIndex(r => r.id === i.id);
+                                      return idx !== -1 ? { ...i, queueOrder: idx } : i;
+                                    }),
+                                  };
+                                });
+                                try {
+                                  await apiClient.patch('/shop-items/queue/reorder', { itemIds: reordered.map(i => i.id) });
+                                  notifyShopUpdated();
+                                } catch {
+                                  Alert.alert('Error', 'Failed to save order.');
+                                }
+                              }}
+                            >
+                              <Text style={{ color: '#6B7280', fontSize: 18 }}>▲</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              disabled={index === biddingItems.length - 1}
+                              style={{ opacity: index === biddingItems.length - 1 ? 0.2 : 1, padding: 4 }}
+                              onPress={async () => {
+                                const reordered = [...biddingItems];
+                                [reordered[index + 1], reordered[index]] = [reordered[index], reordered[index + 1]];
+                                setAuction(prev => {
+                                  if (!prev) return prev;
+                                  return {
+                                    ...prev,
+                                    shopItems: prev.shopItems.map(i => {
+                                      const idx = reordered.findIndex(r => r.id === i.id);
+                                      return idx !== -1 ? { ...i, queueOrder: idx } : i;
+                                    }),
+                                  };
+                                });
+                                try {
+                                  await apiClient.patch('/shop-items/queue/reorder', { itemIds: reordered.map(i => i.id) });
+                                  notifyShopUpdated();
+                                } catch {
+                                  Alert.alert('Error', 'Failed to save order.');
+                                }
+                              }}
+                            >
+                              <Text style={{ color: '#6B7280', fontSize: 18 }}>▼</Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={async () => {
+                            if (!isSeller) {
+                              setShowShop(false);
+                              setTimeout(() => setShopDetailItem(item), 50);
+                              return;
+                            }
+
+                            // Seller — swap mode
+                            if (selectedQueueId) {
+                              if (selectedQueueId === item.id) {
+                                // Deselect
+                                setSelectedQueueId(null);
+                                return;
+                              }
+                              // Swap the two items
+                              const selectedItem = biddingItems.find(i => i.id === selectedQueueId);
+                              if (!selectedItem) { setSelectedQueueId(null); return; }
+
+                              const selectedOrder = selectedItem.queueOrder ?? biddingItems.indexOf(selectedItem);
+                              const targetOrder = item.queueOrder ?? index;
+
+                              const reordered = biddingItems.map(i => {
+                                if (i.id === selectedQueueId) return { ...i, queueOrder: targetOrder };
+                                if (i.id === item.id) return { ...i, queueOrder: selectedOrder };
+                                return i;
+                              }).sort((a, b) => (a.queueOrder ?? 0) - (b.queueOrder ?? 0));
+
+                              setSelectedQueueId(null);
+                              setAuction(prev => {
+                                if (!prev) return prev;
+                                return {
+                                  ...prev,
+                                  shopItems: prev.shopItems.map(i => {
+                                    const updated = reordered.find(r => r.id === i.id);
+                                    return updated ? { ...i, queueOrder: updated.queueOrder } : i;
+                                  }),
+                                };
+                              });
+                              try {
+                                await apiClient.patch('/shop-items/queue/reorder', { itemIds: reordered.map(i => i.id) });
+                                notifyShopUpdated();
+                              } catch {
+                                Alert.alert('Error', 'Failed to save order.');
+                              }
+                              return;
+                            }
+
+                            // No item selected — first tap
+                            if (currentItem) {
+                              Alert.alert('Item Already Running', 'End or skip the current item before starting a new one.');
+                              return;
+                            }
+                            // Long-press hint: single tap opens edit, hold to enter swap mode
+                            setEditingQueueItem({ id: item.id, title: item.title, price: item.price });
+                            setEditingPrice(String(item.price / 100));
+                            setShowShop(false);
+                          }}
+                          onLongPress={() => {
+                            if (!isSeller || currentItem) return;
+                            setSelectedQueueId(item.id);
+                          }}
+                          style={{
+                            flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12,
+                            backgroundColor: isSelected ? 'rgba(26,86,219,0.2)' : '#1F2937',
+                            borderRadius: 12, padding: 12,
+                            borderWidth: 1,
+                            borderColor: isSelected
+                              ? '#1A56DB'
+                              : isSwapTarget
+                                ? 'rgba(26,86,219,0.35)'
+                                : 'transparent',
+                            opacity: isSeller && item.status === 'QUEUED' && currentItem ? 0.4 : 1,
+                          }}
+                        >
+                          <View style={{
+                            width: 56, height: 56, borderRadius: 10,
+                            backgroundColor: '#374151', overflow: 'hidden',
+                            alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            {(item.photos[0] as any)?.url ? (
+                              <Image source={{ uri: (item.photos[0] as any).url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                            ) : (
+                              <Icon symbol="shippingbox.fill" fallback="📦" size={28} tint="rgba(255,255,255,0.4)" />
+                            )}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
+                              {item.title}
+                            </Text>
+                            <Text style={{ color: '#F59E0B', fontSize: 12 }}>{formatPHP(item.price)}</Text>
+                          </View>
+                          {isSeller && !selectedQueueId && (
+                            <Icon symbol="line.3.horizontal" fallback="≡" size={18} tint="#4B5563" />
+                          )}
+                          {isSelected && (
+                            <View style={{
+                              backgroundColor: '#1A56DB', borderRadius: 6,
+                              paddingHorizontal: 8, paddingVertical: 3,
+                            }}>
+                              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>SELECTED</Text>
+                            </View>
+                          )}
+                          {isSwapTarget && (
+                            <Text style={{ color: '#60A5FA', fontSize: 11, fontWeight: '600' }}>Swap here</Text>
+                          )}
+                          {!isSeller && (
+                            <Text style={{ color: '#6B7280', fontSize: 11 }}>›</Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
+                </>
+              )
             )}
 
             {/* ── Sold Tab ── */}
@@ -4799,25 +4976,25 @@ export default function LiveAuctionRoom() {
             right: 58,
             bottom: reactButtonBottomRef.current,
             flexDirection: 'row',
-            gap: 10,
-            backgroundColor: 'rgba(17,24,39,0.95)',
+            gap: 16,
+            backgroundColor: 'rgba(255,255,255,0.15)',
             borderRadius: 999,
-            paddingHorizontal: 14,
-            paddingVertical: 8,
+            paddingHorizontal: 16,
+            paddingVertical: 10,
             borderWidth: 1,
-            borderColor: 'rgba(255,255,255,0.15)',
+            borderColor: 'rgba(255,255,255,0.25)',
             zIndex: 100,
           }}>
-            {REACTION_EMOJIS.map(emoji => (
+            {REACTION_ICONS.map(reaction => (
               <TouchableOpacity
-                key={emoji}
-                activeOpacity={0.7}
+                key={reaction.label}
+                activeOpacity={0.6}
                 onPress={() => {
-                  sendReaction(emoji, user?.id ?? '');
+                  sendReaction(reaction.label, user?.id ?? '');
                   setShowReactions(false);
                 }}
               >
-                <Text style={{ fontSize: 26 }}>{emoji}</Text>
+                <Icon symbol={reaction.symbol} fallback={reaction.label} size={18} tint="rgba(255,255,255,0.85)" />
               </TouchableOpacity>
             ))}
           </View>
