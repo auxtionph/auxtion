@@ -800,6 +800,17 @@ export default function LiveAuctionRoom() {
         totalBids: 0,
         mode: (data as any).mode ?? 'auction',
       });
+
+        // ── Sync item status to LIVE so it disappears from shop drawer ──
+      setAuction(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          shopItems: prev.shopItems.map(i =>
+            i.id === data.itemId ? { ...i, status: 'LIVE' as const } : i
+          ),
+        };
+      });
     }, []),
 
     onItemEnded: useCallback((data: ItemEndedData) => {
@@ -1364,12 +1375,8 @@ export default function LiveAuctionRoom() {
   };
 
   const biddingItems = auction?.shopItems
-    .filter(i => (i.status === 'QUEUED' || i.status === 'LIVE') && i.type !== 'BUY_NOW')
-    .sort((a, b) => {
-      if (a.status === 'LIVE') return -1;
-      if (b.status === 'LIVE') return 1;
-      return (a.queueOrder ?? 0) - (b.queueOrder ?? 0);
-    }) ?? [];
+    .filter(i => i.status === 'QUEUED' && i.type !== 'BUY_NOW')
+    .sort((a, b) => (a.queueOrder ?? 0) - (b.queueOrder ?? 0)) ?? [];
 
   const filteredRoster = viewerRoster.filter(v =>
     v.displayName.toLowerCase().includes(rosterSearch.toLowerCase()),
@@ -2733,11 +2740,6 @@ export default function LiveAuctionRoom() {
                   activeOpacity={0.8}
                   onPress={() => {
                     if (isSeller) {
-                      if (item.status === 'LIVE') {
-                        setShowShop(false);
-                        setTimeout(() => setShopDetailItem(item), 50);
-                        return;
-                      }
                       if (currentItem) {
                         Alert.alert('Item Already Running', 'End or skip the current item before starting a new one.');
                         return;
@@ -2774,11 +2776,6 @@ export default function LiveAuctionRoom() {
                     </Text>
                     <Text style={{ color: '#F59E0B', fontSize: 12 }}>{formatPHP(item.price)}</Text>
                   </View>
-                  {item.status === 'LIVE' && (
-                    <View style={{ backgroundColor: '#DC2626', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
-                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>NOW</Text>
-                    </View>
-                  )}
                   {!isSeller && (
                     <Text style={{ color: '#6B7280', fontSize: 11 }}>›</Text>
                   )}
