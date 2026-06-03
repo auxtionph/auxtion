@@ -2438,7 +2438,7 @@ export default function LiveAuctionRoom() {
         </View>
 
         {/* Buyer bid actions */}
-        {!isSeller && (
+        {!isSeller && !isCoHost && (
           <View style={{ paddingHorizontal: 16 }}>
             {currentItem ? (
               currentItem.mode === 'buynow' ? (
