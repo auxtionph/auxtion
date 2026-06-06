@@ -5,13 +5,17 @@ import {
   FlatList,
   ActivityIndicator,
   RefreshControl,
+  ScrollView,
+  Image,
+  Alert,
 } from 'react-native';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiClient } from '../../src/services/api/client';
 import { formatPHP } from '@auxtion/utils';
 
-type Tab = 'orders' | 'bids' | 'offers';
+type Tab = 'orders' | 'offers';
 
 interface Order {
   id: string;
@@ -20,6 +24,7 @@ interface Order {
   createdAt: string;
   courier?: string;
   trackingNumber?: string;
+  mode?: string;
   item: {
     id: string;
     title: string;
@@ -28,23 +33,6 @@ interface Order {
   seller: {
     id: string;
     displayName: string;
-  };
-}
-
-interface Bid {
-  id: string;
-  amount: number;
-  isWinning: boolean;
-  placedAt: string;
-  item: {
-    id: string;
-    title: string;
-    photos: { url: string; publicId: string; width?: number; height?: number }[];
-  };
-  auction: {
-    id: string;
-    title: string;
-    status: string;
   };
 }
 
@@ -94,25 +82,29 @@ const STATUS_LABELS: Record<string, string> = {
   EXPIRED: 'Expired',
 };
 
+const MODE_BADGES: Record<string, { emoji: string; label: string; color: string }> = {
+  auction: { emoji: '🔨', label: 'Swipe',   color: '#60A5FA' },
+  chat:    { emoji: '💬', label: 'Chat',    color: '#A78BFA' },
+  buynow:  { emoji: '🏷️', label: 'Buy Now', color: '#10B981' },
+};
+
 export default function ActivityScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<Tab>('orders');
   const [orders, setOrders] = useState<Order[]>([]);
-  const [bids, setBids] = useState<Bid[]>([]);
   const [offers, setOffers] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-
+  const [winsFilter, setWinsFilter] = useState<'all' | 'topay' | 'pending' | 'transit' | 'delivered' | 'completed'>('all');
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [ordersRes, bidsRes, offersRes] = await Promise.all([
+      const [ordersRes, offersRes] = await Promise.all([
         apiClient.get('/orders/buying'),
-        apiClient.get('/bids/my-bids').catch(() => ({ data: { data: [] } })),
         apiClient.get('/offers/my-offers'),
       ]);
       setOrders(ordersRes.data.data as Order[]);
-      setBids(bidsRes.data.data as Bid[]);
       setOffers(offersRes.data.data as Offer[]);
     } catch {
       // fail silently — empty states handle it
@@ -131,175 +123,292 @@ export default function ActivityScreen() {
     setRefreshing(false);
   }, [fetchData]);
 
+  const confirmReceipt = useCallback(async (orderId: string) => {
+    Alert.alert(
+      'Confirm Receipt',
+      'Confirm that you have received this item? This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: async () => {
+            try {
+              await apiClient.patch(`/orders/${orderId}/confirm-receipt`);
+              void fetchData();
+            } catch {
+              Alert.alert('Already Confirmed', 'This order has already been confirmed.');
+              void fetchData();
+            }
+          },
+        },
+      ],
+    );
+  }, [fetchData]);
+
+  const filteredOrders = orders.filter(o => {
+    if (winsFilter === 'all') return true;
+    if (winsFilter === 'topay') return o.status === 'PENDING_PAYMENT' || o.status === 'PENDING_MANUAL_PAYMENT';
+    if (winsFilter === 'pending') return o.status === 'PAID';
+    if (winsFilter === 'transit') return o.status === 'SHIPPED';
+    if (winsFilter === 'delivered') return o.status === 'DELIVERED';
+    if (winsFilter === 'completed') return o.status === 'COMPLETED' || o.status === 'CANCELLED';
+    return true;
+  });
+
   const tabs: { key: Tab; label: string; count: number }[] = [
-    { key: 'orders', label: 'Orders', count: orders.length },
-    { key: 'bids', label: 'Bids', count: bids.length },
+    { key: 'orders', label: 'Wins', count: orders.length },
     { key: 'offers', label: 'Offers', count: offers.length },
   ];
 
   const StatusBadge = ({ status }: { status: string }) => (
-    <View
-      style={{ backgroundColor: (STATUS_COLORS[status] ?? '#6B7280') + '22' }}
-      className="rounded-full px-2 py-0.5"
-    >
-      <Text
-        style={{ color: STATUS_COLORS[status] ?? '#6B7280' }}
-        className="text-xs font-semibold"
-      >
+    <View style={{
+      backgroundColor: (STATUS_COLORS[status] ?? '#6B7280') + '22',
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+    }}>
+      <Text style={{
+        color: STATUS_COLORS[status] ?? '#6B7280',
+        fontSize: 11,
+        fontWeight: '600',
+      }}>
         {STATUS_LABELS[status] ?? status}
       </Text>
     </View>
   );
 
   const EmptyState = ({ tab }: { tab: Tab }) => (
-    <View className="flex-1 items-center justify-center py-20">
-      <Text className="text-4xl mb-4">
-        {tab === 'orders' ? '📦' : tab === 'bids' ? '🔨' : '💬'}
+    <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 80 }}>
+      <Text style={{ fontSize: 40, marginBottom: 16 }}>
+        {tab === 'orders' ? '📦' : '💬'}
       </Text>
-      <Text className="text-white font-bold text-lg mb-2">
-        No {tab === 'orders' ? 'Orders' : tab === 'bids' ? 'Bids' : 'Offers'} Yet
+      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16, marginBottom: 6 }}>
+        No {tab === 'orders' ? 'Wins' : 'Offers'} Yet
       </Text>
-      <Text className="text-gray-500 text-sm text-center px-8">
+      <Text style={{ color: '#6B7280', fontSize: 13, textAlign: 'center', paddingHorizontal: 32 }}>
         {tab === 'orders'
           ? 'Items you win at auction will appear here'
-          : tab === 'bids'
-          ? 'Your bids on live auctions will appear here'
           : 'Offers you make on Buy Now items will appear here'}
       </Text>
     </View>
   );
 
   return (
-    <View className="flex-1 bg-[#1E2A3A]">
+    <View style={{ flex: 1, backgroundColor: '#0D1117' }}>
       {/* Header */}
-      <View className="pt-14 pb-4 px-6">
-        <Text className="text-white text-2xl font-bold">Activity</Text>
+      <View style={{ paddingTop: insets.top + 12, paddingHorizontal: 20, paddingBottom: 16 }}>
+        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 24, letterSpacing: -0.5 }}>
+          Activity
+        </Text>
       </View>
 
-      {/* Tabs */}
-      <View className="flex-row px-6 mb-4 gap-2">
-        {tabs.map(({ key, label, count }) => (
-          <TouchableOpacity
-            key={key}
-            className={`px-4 py-2 rounded-full flex-row items-center gap-1.5 ${
-              activeTab === key ? 'bg-[#1A56DB]' : 'bg-gray-800'
-            }`}
-            onPress={() => setActiveTab(key)}
-          >
-            <Text className={`text-sm font-semibold ${
-              activeTab === key ? 'text-white' : 'text-gray-400'
-            }`}>
-              {label}
-            </Text>
-            {count > 0 && (
-              <View className={`rounded-full w-4 h-4 items-center justify-center ${
-                activeTab === key ? 'bg-white/30' : 'bg-gray-700'
-              }`}>
-                <Text className="text-white text-xs">{count}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        ))}
+      {/* Segmented control */}
+      <View style={{
+        flexDirection: 'row',
+        marginHorizontal: 20, marginBottom: 14,
+        backgroundColor: '#111827',
+        borderRadius: 12, padding: 3,
+        borderWidth: 1, borderColor: '#1F2937',
+      }}>
+        {tabs.map(({ key, label, count }) => {
+          const active = activeTab === key;
+          return (
+            <TouchableOpacity
+              key={key}
+              onPress={() => setActiveTab(key)}
+              style={{
+                flex: 1,
+                flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
+                paddingVertical: 9, borderRadius: 9,
+                backgroundColor: active ? '#1A56DB' : 'transparent',
+              }}
+            >
+              <Text style={{
+                color: active ? '#fff' : '#9CA3AF',
+                fontSize: 13, fontWeight: '700',
+              }}>{label}</Text>
+              {count > 0 && (
+                <View style={{
+                  minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5,
+                  backgroundColor: active ? 'rgba(255,255,255,0.25)' : '#374151',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>{count}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {loading ? (
-        <View className="flex-1 items-center justify-center">
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color="#1A56DB" />
         </View>
       ) : (
         <>
           {/* ── Orders Tab ── */}
           {activeTab === 'orders' && (
-            <FlatList
-              data={orders}
-              keyExtractor={item => item.id}
-              contentContainerStyle={{ padding: 16, gap: 12, flexGrow: 1 }}
-              refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor="#1A56DB" />
-              }
-              ListEmptyComponent={<EmptyState tab="orders" />}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  className="bg-gray-900 border border-gray-800 rounded-2xl p-4"
-                  onPress={() => router.push(`/order/${item.id}`)}
-                >
-                  <View className="flex-row items-start justify-between mb-3">
-                    <View className="flex-1">
-                      <Text className="text-white font-semibold text-sm mb-1" numberOfLines={1}>
-                        {item.item.title}
-                      </Text>
-                      <Text className="text-gray-500 text-xs">
-                        From {item.seller.displayName}
-                      </Text>
-                    </View>
-                    <StatusBadge status={item.status} />
-                  </View>
-
-                  <View className="flex-row items-center justify-between">
-                    <Text className="text-[#F59E0B] font-bold">
-                      {formatPHP(item.amount)}
+            <View style={{ flex: 1 }}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ maxHeight: 44 }}
+                contentContainerStyle={{
+                  flexDirection: 'row',
+                  paddingLeft: 20, paddingRight: 20,
+                }}
+              >
+                {([
+                    { key: 'all',       label: 'All' },
+                    { key: 'topay',     label: 'Pending' },
+                    { key: 'pending',   label: 'Paid' },
+                    { key: 'transit',   label: 'In Transit' },
+                    { key: 'delivered', label: 'Delivered' },
+                    { key: 'completed', label: 'Completed' },
+                  ] as const).map(opt => (
+                  <TouchableOpacity
+                    key={opt.key}
+                    onPress={() => setWinsFilter(opt.key)}
+                    style={{
+                      height: 34,
+                      paddingHorizontal: 14,
+                      borderRadius: 999, marginRight: 8,
+                      backgroundColor: winsFilter === opt.key ? '#1A56DB' : '#374151',
+                      borderWidth: 1,
+                      borderColor: winsFilter === opt.key ? '#1A56DB' : '#4B5563',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+                      {opt.label}
                     </Text>
-                    <Text className="text-gray-600 text-xs">
-                      {new Date(item.createdAt).toLocaleDateString('en-PH', {
-                        month: 'short', day: 'numeric', year: 'numeric',
-                      })}
-                    </Text>
-                  </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <FlatList
+                style={{ flex: 1, marginTop: 12 }}
+                data={filteredOrders}
+                keyExtractor={item => item.id}
+                contentContainerStyle={{ paddingHorizontal: 16, gap: 12, paddingBottom: insets.bottom + 100 }}
+                refreshControl={
+                  <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor="#1A56DB" />
+                }
+                ListEmptyComponent={<EmptyState tab="orders" />}
+                renderItem={({ item }) => {
+                  const isActionable = item.status === 'PENDING_PAYMENT' || item.status === 'PENDING_MANUAL_PAYMENT' || item.status === 'DELIVERED';
+                  const accentColor = STATUS_COLORS[item.status] ?? '#1F2937';
+                  const mode = MODE_BADGES[item.mode ?? 'auction'] ?? MODE_BADGES.auction;
+                  return (
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        backgroundColor: '#111827',
+                        borderWidth: 1,
+                        borderColor: isActionable ? accentColor : '#1F2937',
+                        borderRadius: 16,
+                        overflow: 'hidden',
+                        opacity: item.status === 'COMPLETED' || item.status === 'CANCELLED' ? 0.7 : 1,
+                      }}
+                      onPress={() => router.push(`/order/${item.id}`)}
+                    >
+                      {/* Accent strip */}
+                      {isActionable && (
+                        <View style={{ width: 4, backgroundColor: accentColor }} />
+                      )}
 
-                  {item.trackingNumber && (
-                    <View className="mt-3 pt-3 border-t border-gray-800 flex-row items-center gap-2">
-                      <Text className="text-gray-500 text-xs">📦 {item.courier}</Text>
-                      <Text className="text-[#1A56DB] text-xs font-semibold">
-                        {item.trackingNumber}
-                      </Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              )}
-            />
-          )}
-
-          {/* ── Bids Tab ── */}
-          {activeTab === 'bids' && (
-            <FlatList
-              data={bids}
-              keyExtractor={item => item.id}
-              contentContainerStyle={{ padding: 16, gap: 12, flexGrow: 1 }}
-              refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor="#1A56DB" />
-              }
-              ListEmptyComponent={<EmptyState tab="bids" />}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  className="bg-gray-900 border border-gray-800 rounded-2xl p-4"
-                  onPress={() => router.push(`/auction/${item.auction.id}`)}
-                >
-                  <View className="flex-row items-start justify-between mb-2">
-                    <Text className="text-white font-semibold text-sm flex-1 mr-2" numberOfLines={1}>
-                      {item.item.title}
-                    </Text>
-                    {item.isWinning ? (
-                      <View className="bg-green-900/50 rounded-full px-2 py-0.5">
-                        <Text className="text-green-400 text-xs font-bold">🏆 Winning</Text>
+                      {/* Photo */}
+                      <View style={{ width: 96, backgroundColor: '#1F2937' }}>
+                        {item.item.photos[0]?.url ? (
+                          <Image source={{ uri: item.item.photos[0].url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                        ) : (
+                          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                            <Text style={{ fontSize: 28 }}>📦</Text>
+                          </View>
+                        )}
                       </View>
-                    ) : (
-                      <View className="bg-gray-800 rounded-full px-2 py-0.5">
-                        <Text className="text-gray-500 text-xs">Outbid</Text>
+
+                      {/* Info */}
+                      <View style={{ flex: 1, padding: 14 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <View style={{ flex: 1, marginRight: 8 }}>
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14, marginBottom: 2 }} numberOfLines={1}>
+                              {item.item.title}
+                            </Text>
+                            <Text style={{ color: '#6B7280', fontSize: 11 }}>
+                              From {item.seller.displayName}
+                            </Text>
+                          </View>
+                          <StatusBadge status={item.status} />
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Text style={{ color: '#F59E0B', fontWeight: '800', fontSize: 15 }}>
+                              {formatPHP(item.amount)}
+                            </Text>
+                            <View style={{
+                              flexDirection: 'row', alignItems: 'center', gap: 3,
+                              backgroundColor: 'rgba(255,255,255,0.05)',
+                              borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
+                            }}>
+                              <Text style={{ fontSize: 9 }}>{mode.emoji}</Text>
+                              <Text style={{ color: mode.color, fontSize: 10, fontWeight: '700' }}>{mode.label}</Text>
+                            </View>
+                          </View>
+                          <Text style={{ color: '#4B5563', fontSize: 11 }}>
+                            {new Date(item.createdAt).toLocaleDateString('en-PH', {
+                              month: 'short', day: 'numeric',
+                            })}
+                          </Text>
+                        </View>
+                        {item.trackingNumber && (
+                          <View style={{
+                            marginTop: 8, paddingTop: 8,
+                            borderTopWidth: 1, borderTopColor: '#1F2937',
+                            flexDirection: 'row', alignItems: 'center', gap: 6,
+                          }}>
+                            <Text style={{ color: '#6B7280', fontSize: 11 }}>📦 {item.courier}</Text>
+                            <Text style={{ color: '#60A5FA', fontSize: 11, fontWeight: '700' }}>
+                              {item.trackingNumber}
+                            </Text>
+                          </View>
+                        )}
+                        {item.status === 'DELIVERED' && (
+                          <TouchableOpacity
+                            style={{
+                              marginTop: 10,
+                              backgroundColor: '#10B981',
+                              borderRadius: 10, paddingVertical: 8,
+                              alignItems: 'center',
+                            }}
+                            onPress={() => confirmReceipt(item.id)}
+                          >
+                            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                              ✓ Confirm Receipt
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                        {(item.status === 'PENDING_PAYMENT' || item.status === 'PENDING_MANUAL_PAYMENT') && (
+                          <TouchableOpacity
+                            style={{
+                              marginTop: 10,
+                              backgroundColor: '#F59E0B',
+                              borderRadius: 10, paddingVertical: 8,
+                              alignItems: 'center',
+                            }}
+                            onPress={() => router.push(`/order/${item.id}`)}
+                          >
+                            <Text style={{ color: '#000', fontSize: 12, fontWeight: '700' }}>
+                              Pay Now →
+                            </Text>
+                          </TouchableOpacity>
+                        )}
                       </View>
-                    )}
-                  </View>
-                  <Text className="text-gray-500 text-xs mb-2">{item.auction.title}</Text>
-                  <View className="flex-row items-center justify-between">
-                    <Text className="text-[#F59E0B] font-bold">{formatPHP(item.amount)}</Text>
-                    <Text className="text-gray-600 text-xs">
-                      {new Date(item.placedAt).toLocaleDateString('en-PH', {
-                        month: 'short', day: 'numeric',
-                      })}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              )}
-            />
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            </View>
           )}
 
           {/* ── Offers Tab ── */}
@@ -307,39 +416,68 @@ export default function ActivityScreen() {
             <FlatList
               data={offers}
               keyExtractor={item => item.id}
-              contentContainerStyle={{ padding: 16, gap: 12, flexGrow: 1 }}
+              contentContainerStyle={{ padding: 16, gap: 12, flexGrow: 1, paddingBottom: insets.bottom + 100 }}
               refreshControl={
                 <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor="#1A56DB" />
               }
               ListEmptyComponent={<EmptyState tab="offers" />}
               renderItem={({ item }) => (
-                <View className="bg-gray-900 border border-gray-800 rounded-2xl p-4">
-                  <View className="flex-row items-start justify-between mb-2">
-                    <Text className="text-white font-semibold text-sm flex-1 mr-2" numberOfLines={1}>
+                <View style={{
+                  backgroundColor: '#111827',
+                  borderWidth: 1, borderColor: '#1F2937',
+                  borderRadius: 16, padding: 14,
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14, flex: 1, marginRight: 8 }} numberOfLines={1}>
                       {item.item.title}
                     </Text>
                     <StatusBadge status={item.status} />
                   </View>
-                  <Text className="text-gray-500 text-xs mb-3">
+                  <Text style={{ color: '#6B7280', fontSize: 11, marginBottom: 12 }}>
                     From {item.seller.displayName}
                   </Text>
-                  <View className="flex-row items-center justify-between">
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                     <View>
-                      <Text className="text-gray-500 text-xs">Your offer</Text>
-                      <Text className="text-[#F59E0B] font-bold">{formatPHP(item.amount)}</Text>
+                      <Text style={{ color: '#6B7280', fontSize: 10 }}>Your offer</Text>
+                      <Text style={{ color: '#F59E0B', fontWeight: '800', fontSize: 15 }}>{formatPHP(item.amount)}</Text>
                     </View>
-                    <View className="items-end">
-                      <Text className="text-gray-500 text-xs">Listed price</Text>
-                      <Text className="text-gray-400 text-sm">{formatPHP(item.item.price)}</Text>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={{ color: '#6B7280', fontSize: 10 }}>Listed price</Text>
+                      <Text style={{ color: '#9CA3AF', fontSize: 13 }}>{formatPHP(item.item.price)}</Text>
                     </View>
                   </View>
                   {item.status === 'PENDING' && (
-                    <View className="mt-3 pt-3 border-t border-gray-800">
-                      <Text className="text-gray-600 text-xs">
+                    <View style={{
+                      marginTop: 10, paddingTop: 10,
+                      borderTopWidth: 1, borderTopColor: '#1F2937',
+                    }}>
+                      <Text style={{ color: '#4B5563', fontSize: 11 }}>
                         Expires {new Date(item.expiresAt).toLocaleDateString('en-PH', {
                           month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
                         })}
                       </Text>
+                    </View>
+                  )}
+
+                  {item.status === 'ACCEPTED' && (
+                    <View style={{
+                      marginTop: 10, paddingTop: 10,
+                      borderTopWidth: 1, borderTopColor: '#1F2937',
+                      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                    }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#10B981' }} />
+                        <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '700' }}>Accepted by seller</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#10B981',
+                          borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6,
+                        }}
+                        onPress={() => router.push(`/order/${item.id}`)}
+                      >
+                        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Pay Now →</Text>
+                      </TouchableOpacity>
                     </View>
                   )}
                 </View>

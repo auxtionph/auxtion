@@ -254,8 +254,8 @@ export class OrdersService {
     if (order.buyerId !== buyerId) {
       throw new ForbiddenException('You are not the buyer of this order');
     }
-    if (order.status !== OrderStatus.SHIPPED) {
-      throw new BadRequestException('Order has not been shipped yet');
+    if (order.status !== OrderStatus.DELIVERED) {
+      throw new BadRequestException('Order has not been delivered yet');
     }
 
     const payoutReleaseAt = this.calculatePayoutReleaseDate(
@@ -265,7 +265,7 @@ export class OrdersService {
     await this.prisma.order.update({
       where: { id: orderId },
       data: {
-        status: OrderStatus.DELIVERED,
+        status: OrderStatus.COMPLETED,
         deliveredAt: new Date(),
         payoutReleaseAt,
       },
@@ -332,27 +332,35 @@ export class OrdersService {
   async autoConfirmDeliveries() {
     const orders = await this.prisma.order.findMany({
       where: {
-        status: OrderStatus.SHIPPED,
+        status: OrderStatus.DELIVERED,
         autoConfirmAt: { lte: new Date() },
       },
       include: {
         seller: { select: { sellerTier: true } },
+        item: { select: { title: true } },
       },
     });
 
     for (const order of orders) {
-      const payoutReleaseAt = this.calculatePayoutReleaseDate(
-        order.seller.sellerTier,
-      );
-
       await this.prisma.order.update({
         where: { id: order.id },
         data: {
-          status: OrderStatus.DELIVERED,
-          deliveredAt: new Date(),
-          payoutReleaseAt,
+          status: OrderStatus.COMPLETED,
+          payoutStatus: PayoutStatus.RELEASED,
+          payoutReleasedAt: new Date(),
         },
       });
+
+      await this.prisma.user.update({
+        where: { id: order.sellerId },
+        data: { totalSales: { increment: 1 } },
+      });
+
+      await this.checkAndUpgradeSellerTier(order.sellerId);
+
+      this.logger.log(
+        `Order ${order.id} auto-completed after delivery timeout`,
+      );
     }
 
     return { confirmed: orders.length };
