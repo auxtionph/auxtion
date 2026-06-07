@@ -3055,15 +3055,32 @@ export default function LiveAuctionRoom() {
                     const winner = soldItemWinners[item.id];
                     const isBuyNow = item.type === 'BUY_NOW';
                     const itemMode = isBuyNow ? 'buynow' : (winner?.mode ?? item.mode ?? 'auction');
+                    const isMyWin = !!winner && winner.userId === user?.id;
                     return (
                       <View
                         key={item.id}
                         style={{
                           flexDirection: 'row', alignItems: 'center', gap: 12,
-                          backgroundColor: '#1F2937', borderRadius: 12,
+                          backgroundColor: isMyWin ? 'rgba(16,185,129,0.12)' : '#1F2937',
+                          borderWidth: 1,
+                          borderColor: isMyWin ? '#10B981' : 'transparent',
+                          borderRadius: 12,
                           padding: 12, marginBottom: 8,
+                          position: 'relative',
                         }}
                       >
+                        {isMyWin && (
+                          <View style={{
+                            position: 'absolute', top: -8, right: 10,
+                            backgroundColor: '#10B981',
+                            borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3,
+                            zIndex: 10,
+                          }}>
+                            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.3 }}>
+                              🏆 YOU WON
+                            </Text>
+                          </View>
+                        )}
                         <View style={{
                           width: 56, height: 56, borderRadius: 10,
                           backgroundColor: '#374151', overflow: 'hidden',

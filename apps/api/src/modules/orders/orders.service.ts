@@ -366,6 +366,115 @@ export class OrdersService {
     return { confirmed: orders.length };
   }
 
+  // ── Expire Pending Payments (Background Job) ───────────────────────────────
+
+  async expirePendingPayments() {
+    const expiredOrders = await this.prisma.order.findMany({
+      where: {
+        status: {
+          in: [OrderStatus.PENDING_PAYMENT, OrderStatus.PENDING_MANUAL_PAYMENT],
+        },
+        paymentDeadline: { lte: new Date() },
+      },
+      include: {
+        item: { select: { id: true, title: true } },
+        buyer: { select: { id: true, displayName: true } },
+      },
+    });
+
+    for (const order of expiredOrders) {
+      await this.prisma.$transaction([
+        this.prisma.order.update({
+          where: { id: order.id },
+          data: {
+            status: OrderStatus.CANCELLED,
+            cancelReason: 'PAYMENT_TIMEOUT',
+          },
+        }),
+        this.prisma.shopItem.update({
+          where: { id: order.itemId },
+          data: { status: 'AVAILABLE' },
+        }),
+      ]);
+
+      // Notify buyer
+      void this.notifications.sendToUser(order.buyerId, {
+        title: '⏱ Order cancelled',
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        body: `Payment timeout for ${order.item.title}. The item has been relisted.`,
+        data: { orderId: order.id, screen: 'activity' },
+      });
+
+      // Notify seller
+      void this.notifications.sendToUser(order.sellerId, {
+        title: "⏱ Buyer didn't pay",
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        body: `${order.buyer.displayName} didn't pay for ${order.item.title}. Item relisted.`,
+        data: { itemId: order.itemId, screen: 'seller-orders' },
+      });
+
+      this.logger.log(`Order ${order.id} expired due to payment timeout`);
+    }
+
+    return { expired: expiredOrders.length };
+  }
+
+  // ── Send Payment Reminders (Background Job) ────────────────────────────────
+
+  async sendPaymentReminders() {
+    const now = new Date();
+    const fifteenMin = new Date(now.getTime() + 15 * 60 * 1000);
+    const fiveMin = new Date(now.getTime() + 5 * 60 * 1000);
+
+    // 15-minute warning (window: 14:30 to 15:30 remaining)
+    const fifteenWarn = await this.prisma.order.findMany({
+      where: {
+        status: {
+          in: [OrderStatus.PENDING_PAYMENT, OrderStatus.PENDING_MANUAL_PAYMENT],
+        },
+        paymentDeadline: {
+          gte: new Date(fifteenMin.getTime() - 30 * 1000),
+          lte: new Date(fifteenMin.getTime() + 30 * 1000),
+        },
+      },
+      include: { item: { select: { title: true } } },
+    });
+
+    for (const order of fifteenWarn) {
+      void this.notifications.sendToUser(order.buyerId, {
+        title: '⏱ 15 minutes to pay',
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        body: `Pay for ${order.item.title} or your order will be cancelled.`,
+        data: { orderId: order.id, screen: 'order' },
+      });
+    }
+
+    // 5-minute warning
+    const fiveWarn = await this.prisma.order.findMany({
+      where: {
+        status: {
+          in: [OrderStatus.PENDING_PAYMENT, OrderStatus.PENDING_MANUAL_PAYMENT],
+        },
+        paymentDeadline: {
+          gte: new Date(fiveMin.getTime() - 30 * 1000),
+          lte: new Date(fiveMin.getTime() + 30 * 1000),
+        },
+      },
+      include: { item: { select: { title: true } } },
+    });
+
+    for (const order of fiveWarn) {
+      void this.notifications.sendToUser(order.buyerId, {
+        title: '⚠️ 5 minutes to pay',
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        body: `Pay now for ${order.item.title} or order auto-cancels.`,
+        data: { orderId: order.id, screen: 'order' },
+      });
+    }
+
+    return { fifteenMin: fifteenWarn.length, fiveMin: fiveWarn.length };
+  }
+
   // ── Auto-Release Payouts (Background Job) ──────────────────────────────────
 
   async autoReleasePayouts() {
@@ -454,6 +563,7 @@ export class OrdersService {
         paymentMethod: PaymentMethod.MANUAL,
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         status: OrderStatus.PENDING_MANUAL_PAYMENT,
+        paymentDeadline: new Date(Date.now() + 30 * 60 * 1000),
         mode: params.mode,
       },
       include: {

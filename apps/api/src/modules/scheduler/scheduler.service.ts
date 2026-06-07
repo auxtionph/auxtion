@@ -36,6 +36,28 @@ export class SchedulerService {
     this.logger.log(`Expired ${result.expired} offers`);
   }
 
+  // ── Expire Pending Payments (every minute) ─────────────────────────────────
+
+  @Cron('* * * * *')
+  async expirePendingPayments() {
+    const result = await this.ordersService.expirePendingPayments();
+    if (result.expired > 0) {
+      this.logger.log(`Expired ${result.expired} pending payments`);
+    }
+  }
+
+  // ── Payment Reminders (every minute) ───────────────────────────────────────
+
+  @Cron('* * * * *')
+  async sendPaymentReminders() {
+    const result = await this.ordersService.sendPaymentReminders();
+    if (result.fifteenMin > 0 || result.fiveMin > 0) {
+      this.logger.log(
+        `Payment reminders: ${result.fifteenMin}@15min, ${result.fiveMin}@5min`,
+      );
+    }
+  }
+
   // ── Auto-Shift Overdue Auctions ────────────────────────────────────────────
   // Runs every minute
   // If a SCHEDULED auction is past its startTime → shift to next 15-min slot
@@ -88,9 +110,8 @@ export class SchedulerService {
       if (newStartTime.getTime() === scheduledTime.getTime()) continue;
 
       const shiftMs =
-        Math.round(
-          (newStartTime.getTime() - scheduledTime.getTime()) / 60000,
-        ) * 60000;
+        Math.round((newStartTime.getTime() - scheduledTime.getTime()) / 60000) *
+        60000;
 
       this.logger.log(
         `Shifting auction "${auction.title}" by ${Math.round(shiftMs / 60000)}min → ${newStartTime.toISOString()}`,

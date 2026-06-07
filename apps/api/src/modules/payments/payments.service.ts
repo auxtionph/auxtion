@@ -64,7 +64,7 @@ export class PaymentsService {
           auctionId: params.auctionId,
           amount: params.amount,
           status: OrderStatus.PENDING_PAYMENT,
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+          paymentDeadline: new Date(Date.now() + 30 * 60 * 1000),
           paymentMethod: PaymentMethod.GCASH,
           commissionAmount: buyerServiceFee,
           processingFee: 0,
