@@ -74,6 +74,110 @@ export class OrdersService {
     });
   }
 
+  // ── Get Unpaid Orders for an Auction (End Live preview) ────────────────────
+
+  async getUnpaidSummary(sellerId: string, auctionId: string) {
+    const orders = await this.prisma.order.findMany({
+      where: {
+        sellerId,
+        auctionId,
+        status: {
+          in: [OrderStatus.PENDING_PAYMENT, OrderStatus.PENDING_MANUAL_PAYMENT],
+        },
+      },
+      include: {
+        item: { select: { title: true } },
+        buyer: { select: { id: true, displayName: true } },
+      },
+      orderBy: { paymentDeadline: 'asc' },
+    });
+
+    return {
+      totalUnpaid: orders.length,
+      totalAmount: orders.reduce((sum, o) => sum + o.amount, 0),
+      orders: orders.map((o) => ({
+        id: o.id,
+        amount: o.amount,
+        status: o.status,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        paymentDeadline: o.paymentDeadline,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
+        itemTitle: o.item.title,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+        buyerName: o.buyer.displayName,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+        buyerId: o.buyer.id,
+      })),
+    };
+  }
+
+  // ── Bulk Cancel Unpaid Orders for an Auction (End Live action) ────────────
+
+  async bulkCancelAuctionOrders(sellerId: string, auctionId: string) {
+    const unpaid = await this.prisma.order.findMany({
+      where: {
+        sellerId,
+        auctionId,
+        status: {
+          in: [OrderStatus.PENDING_PAYMENT, OrderStatus.PENDING_MANUAL_PAYMENT],
+        },
+      },
+      include: {
+        item: { select: { id: true, title: true } },
+        buyer: { select: { id: true, displayName: true } },
+      },
+    });
+
+    if (unpaid.length === 0) {
+      return { cancelled: 0 };
+    }
+
+    // Cancel all + return items to AVAILABLE in one transaction
+    await this.prisma.$transaction([
+      this.prisma.order.updateMany({
+        where: { id: { in: unpaid.map((o) => o.id) } },
+        data: {
+          status: OrderStatus.CANCELLED,
+          cancelReason: 'STREAM_ENDED',
+        },
+      }),
+      this.prisma.shopItem.updateMany({
+        where: { id: { in: unpaid.map((o) => o.itemId) } },
+        data: { status: 'AVAILABLE' },
+      }),
+    ]);
+
+    // Batch notifications by buyer (1 notification per buyer, not per order)
+    const byBuyer = new Map<string, typeof unpaid>();
+    for (const o of unpaid) {
+      const list = byBuyer.get(o.buyerId) ?? [];
+      list.push(o);
+      byBuyer.set(o.buyerId, list);
+    }
+
+    for (const [buyerId, orders] of byBuyer.entries()) {
+      const first = orders[0];
+      const count = orders.length;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const body =
+        count === 1
+          ? `Live ended before you paid for ${first.item.title}. Order cancelled.`
+          : `Live ended before you paid for ${count} items. Orders cancelled.`;
+
+      void this.notifications.sendToUser(buyerId, {
+        title: '⏱ Live ended',
+        body,
+        data: { auctionId, screen: 'activity' },
+      });
+    }
+
+    this.logger.log(
+      `Bulk cancelled ${unpaid.length} unpaid orders for auction ${auctionId}`,
+    );
+
+    return { cancelled: unpaid.length };
+  }
+
   // ── Get Single Order ───────────────────────────────────────────────────────
 
   async getOrderById(userId: string, orderId: string) {
@@ -379,10 +483,14 @@ export class OrdersService {
       include: {
         item: { select: { id: true, title: true } },
         buyer: { select: { id: true, displayName: true } },
+        auction: { select: { status: true } },
       },
     });
 
     for (const order of expiredOrders) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const auctionEnded = order.auction?.status === 'ENDED';
+
       await this.prisma.$transaction([
         this.prisma.order.update({
           where: { id: order.id },
@@ -397,23 +505,33 @@ export class OrdersService {
         }),
       ]);
 
-      // Notify buyer
+      // Notify buyer — different copy based on whether live is still going
+      const item = order.item as { id: string; title: string };
+      const buyer = order.buyer as { id: string; displayName: string };
+
+      const buyerBody = auctionEnded
+        ? `Payment window for ${item.title} closed. Order cancelled.`
+        : `Payment timeout for ${item.title}. The item has been relisted.`;
+
+      const sellerBody = auctionEnded
+        ? `${buyer.displayName} didn't pay for ${item.title}.`
+        : `${buyer.displayName} didn't pay for ${item.title}. Item relisted.`;
+
       void this.notifications.sendToUser(order.buyerId, {
         title: '⏱ Order cancelled',
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        body: `Payment timeout for ${order.item.title}. The item has been relisted.`,
+        body: buyerBody,
         data: { orderId: order.id, screen: 'activity' },
       });
 
-      // Notify seller
       void this.notifications.sendToUser(order.sellerId, {
         title: "⏱ Buyer didn't pay",
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        body: `${order.buyer.displayName} didn't pay for ${order.item.title}. Item relisted.`,
+        body: sellerBody,
         data: { itemId: order.itemId, screen: 'seller-orders' },
       });
 
-      this.logger.log(`Order ${order.id} expired due to payment timeout`);
+      this.logger.log(
+        `Order ${order.id} expired (auction ${auctionEnded ? 'ENDED' : 'LIVE'})`,
+      );
     }
 
     return { expired: expiredOrders.length };

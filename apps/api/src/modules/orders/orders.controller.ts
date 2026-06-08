@@ -41,6 +41,23 @@ export class OrdersController {
     return this.ordersService.getDefaultAddress(user.id);
   }
 
+  @Get('auction/:auctionId/unpaid-summary')
+  getUnpaidSummary(
+    @CurrentUser() user: AuthUser,
+    @Param('auctionId') auctionId: string,
+  ) {
+    return this.ordersService.getUnpaidSummary(user.id, auctionId);
+  }
+
+  @Patch('auction/:auctionId/bulk-cancel-unpaid')
+  @HttpCode(HttpStatus.OK)
+  bulkCancelAuctionOrders(
+    @CurrentUser() user: AuthUser,
+    @Param('auctionId') auctionId: string,
+  ) {
+    return this.ordersService.bulkCancelAuctionOrders(user.id, auctionId);
+  }
+
   @Get(':id')
   getOrderById(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ordersService.getOrderById(user.id, id);
