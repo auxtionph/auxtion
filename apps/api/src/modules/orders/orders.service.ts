@@ -419,60 +419,36 @@ export class OrdersService {
     return { expired: expiredOrders.length };
   }
 
-  // ── Send Payment Reminders (Background Job) ────────────────────────────────
+  // ── Send Payment Reminder (Background Job) ─────────────────────────────────
 
   async sendPaymentReminders() {
     const now = new Date();
-    const fifteenMin = new Date(now.getTime() + 15 * 60 * 1000);
-    const fiveMin = new Date(now.getTime() + 5 * 60 * 1000);
+    const twoMin = new Date(now.getTime() + 2 * 60 * 1000);
 
-    // 15-minute warning (window: 14:30 to 15:30 remaining)
-    const fifteenWarn = await this.prisma.order.findMany({
+    // 2-minute warning (window: 1:30 to 2:30 remaining)
+    const twoWarn = await this.prisma.order.findMany({
       where: {
         status: {
           in: [OrderStatus.PENDING_PAYMENT, OrderStatus.PENDING_MANUAL_PAYMENT],
         },
         paymentDeadline: {
-          gte: new Date(fifteenMin.getTime() - 30 * 1000),
-          lte: new Date(fifteenMin.getTime() + 30 * 1000),
+          gte: new Date(twoMin.getTime() - 30 * 1000),
+          lte: new Date(twoMin.getTime() + 30 * 1000),
         },
       },
       include: { item: { select: { title: true } } },
     });
 
-    for (const order of fifteenWarn) {
+    for (const order of twoWarn) {
       void this.notifications.sendToUser(order.buyerId, {
-        title: '⏱ 15 minutes to pay',
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        body: `Pay for ${order.item.title} or your order will be cancelled.`,
-        data: { orderId: order.id, screen: 'order' },
-      });
-    }
-
-    // 5-minute warning
-    const fiveWarn = await this.prisma.order.findMany({
-      where: {
-        status: {
-          in: [OrderStatus.PENDING_PAYMENT, OrderStatus.PENDING_MANUAL_PAYMENT],
-        },
-        paymentDeadline: {
-          gte: new Date(fiveMin.getTime() - 30 * 1000),
-          lte: new Date(fiveMin.getTime() + 30 * 1000),
-        },
-      },
-      include: { item: { select: { title: true } } },
-    });
-
-    for (const order of fiveWarn) {
-      void this.notifications.sendToUser(order.buyerId, {
-        title: '⚠️ 5 minutes to pay',
+        title: '⚠️ 2 minutes to pay',
         // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
         body: `Pay now for ${order.item.title} or order auto-cancels.`,
         data: { orderId: order.id, screen: 'order' },
       });
     }
 
-    return { fifteenMin: fifteenWarn.length, fiveMin: fiveWarn.length };
+    return { twoMin: twoWarn.length };
   }
 
   // ── Auto-Release Payouts (Background Job) ──────────────────────────────────
@@ -563,7 +539,7 @@ export class OrdersService {
         paymentMethod: PaymentMethod.MANUAL,
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         status: OrderStatus.PENDING_MANUAL_PAYMENT,
-        paymentDeadline: new Date(Date.now() + 30 * 60 * 1000),
+        paymentDeadline: new Date(Date.now() + 10 * 60 * 1000),
         mode: params.mode,
       },
       include: {

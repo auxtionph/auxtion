@@ -51,10 +51,8 @@ export class SchedulerService {
   @Cron('* * * * *')
   async sendPaymentReminders() {
     const result = await this.ordersService.sendPaymentReminders();
-    if (result.fifteenMin > 0 || result.fiveMin > 0) {
-      this.logger.log(
-        `Payment reminders: ${result.fifteenMin}@15min, ${result.fiveMin}@5min`,
-      );
+    if (result.twoMin > 0) {
+      this.logger.log(`Payment reminders: ${result.twoMin}@2min`);
     }
   }
 

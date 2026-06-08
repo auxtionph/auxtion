@@ -64,7 +64,7 @@ export class PaymentsService {
           auctionId: params.auctionId,
           amount: params.amount,
           status: OrderStatus.PENDING_PAYMENT,
-          paymentDeadline: new Date(Date.now() + 30 * 60 * 1000),
+          paymentDeadline: new Date(Date.now() + 10 * 60 * 1000),
           paymentMethod: PaymentMethod.GCASH,
           commissionAmount: buyerServiceFee,
           processingFee: 0,
