@@ -25,6 +25,7 @@ interface Order {
   courier?: string;
   trackingNumber?: string;
   mode?: string;
+  paymentDeadline?: string;
   item: {
     id: string;
     title: string;
@@ -97,6 +98,24 @@ export default function ActivityScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [winsFilter, setWinsFilter] = useState<'all' | 'topay' | 'pending' | 'transit' | 'delivered' | 'completed'>('all');
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
+
+  const formatCountdown = (deadline?: string): { label: string; urgent: boolean } | null => {
+    if (!deadline) return null;
+    const diffMs = new Date(deadline).getTime() - now;
+    if (diffMs <= 0) return { label: 'EXPIRED', urgent: true };
+    const totalSec = Math.floor(diffMs / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    return {
+      label: `${min}:${sec.toString().padStart(2, '0')}`,
+      urgent: totalSec <= 300, // last 5 min
+    };
+  };
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
@@ -388,21 +407,30 @@ export default function ActivityScreen() {
                             </Text>
                           </TouchableOpacity>
                         )}
-                        {(item.status === 'PENDING_PAYMENT' || item.status === 'PENDING_MANUAL_PAYMENT') && (
-                          <TouchableOpacity
-                            style={{
-                              marginTop: 10,
-                              backgroundColor: '#F59E0B',
-                              borderRadius: 10, paddingVertical: 8,
-                              alignItems: 'center',
-                            }}
-                            onPress={() => router.push(`/order/${item.id}`)}
-                          >
-                            <Text style={{ color: '#000', fontSize: 12, fontWeight: '700' }}>
-                              Pay Now →
-                            </Text>
-                          </TouchableOpacity>
-                        )}
+                        {(item.status === 'PENDING_PAYMENT' || item.status === 'PENDING_MANUAL_PAYMENT') && (() => {
+                          const countdown = formatCountdown(item.paymentDeadline);
+                          const expired = countdown?.label === 'EXPIRED';
+                          const urgent = countdown?.urgent ?? false;
+                          return (
+                            <TouchableOpacity
+                              style={{
+                                marginTop: 10,
+                                backgroundColor: expired ? '#6B7280' : urgent ? '#DC2626' : '#F59E0B',
+                                borderRadius: 10, paddingVertical: 8,
+                                alignItems: 'center',
+                              }}
+                              onPress={() => router.push(`/order/${item.id}`)}
+                              disabled={expired}
+                            >
+                              <Text style={{
+                                color: urgent || expired ? '#fff' : '#000',
+                                fontSize: 12, fontWeight: '700',
+                              }}>
+                                {expired ? 'Order expired' : countdown ? `Pay Now · ${countdown.label}` : 'Pay Now →'}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })()}
                       </View>
                     </TouchableOpacity>
                   );
