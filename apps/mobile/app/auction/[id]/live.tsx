@@ -509,21 +509,37 @@ export default function LiveAuctionRoom() {
   }, [isSeller]);
 
   useEffect(() => {
-    void auctionsApi.getById(id).then(data => {
+    void auctionsApi.getById(id).then(async data => {
       auctionRef.current = data;
       setAuction(data);
+
       // Seed sold items from DB — captures mode for items sold before joining
       const soldFromDb = data.shopItems.filter(i => i.status === 'SOLD');
       if (soldFromDb.length > 0) {
+        // Try to fetch current user's orders to mark wins as theirs
+        let myItemIds: Record<string, { amount: number; userId: string; paymentDeadline?: string; orderId: string }> = {};
+          try {
+            const ordersRes = await apiClient.get('/orders/buying');
+            const myOrders = ordersRes.data.data as Array<{ id: string; itemId: string; amount: number; buyerId: string; paymentDeadline?: string }>;
+            myOrders.forEach(o => {
+              myItemIds[o.itemId] = { amount: o.amount, userId: o.buyerId, paymentDeadline: o.paymentDeadline, orderId: o.id };
+            });
+          } catch {
+            // ignore
+          }
+
         setSoldItemWinners(prev => {
           const seeded = { ...prev };
           soldFromDb.forEach(item => {
             if (!seeded[item.id]) {
+              const myOrder = myItemIds[item.id];
               seeded[item.id] = {
-                userId: '',
-                displayName: 'Unknown',
-                amount: item.price,
+                userId: myOrder?.userId ?? '',
+                displayName: myOrder ? (user?.displayName ?? 'You') : 'Unknown',
+                amount: myOrder?.amount ?? item.price,
                 mode: item.mode ?? 'auction',
+                paymentDeadline: myOrder?.paymentDeadline,
+                orderId: myOrder?.orderId,
               };
             }
           });
@@ -582,11 +598,33 @@ export default function LiveAuctionRoom() {
     displayName: string;
     amount: number;
     mode: 'auction' | 'chat' | 'buynow';
+    paymentDeadline?: string;
+    orderId?: string;
   }>>({});
 
   useEffect(() => {
     soldItemWinnersRef.current = soldItemWinners;
   }, [soldItemWinners]);
+
+  const [shopNow, setShopNow] = useState(Date.now());
+    useEffect(() => {
+      const tick = setInterval(() => setShopNow(Date.now()), 1000);
+      return () => clearInterval(tick);
+    }, []);
+
+    const formatShopCountdown = (deadline?: string): { label: string; urgent: boolean; expired: boolean } | null => {
+      if (!deadline) return null;
+      const diffMs = new Date(deadline).getTime() - shopNow;
+      if (diffMs <= 0) return { label: 'EXPIRED', urgent: true, expired: true };
+      const totalSec = Math.floor(diffMs / 1000);
+      const min = Math.floor(totalSec / 60);
+      const sec = totalSec % 60;
+      return {
+        label: `${min}:${sec.toString().padStart(2, '0')}`,
+        urgent: totalSec <= 120,
+        expired: false,
+      };
+    };
 
   useEffect(() => {
     processChatHistoryRef.current = (messages) => {
@@ -3057,8 +3095,28 @@ export default function LiveAuctionRoom() {
                     const itemMode = isBuyNow ? 'buynow' : (winner?.mode ?? item.mode ?? 'auction');
                     const isMyWin = !!winner && winner.userId === user?.id;
                     return (
-                      <View
+                      <TouchableOpacity
                         key={item.id}
+                        activeOpacity={isMyWin ? 0.7 : 1}
+                        disabled={!isMyWin}
+                        onPress={async () => {
+                          if (!isMyWin) return;
+                          try {
+                            const res = await apiClient.get('/orders/buying');
+                            const orders = res.data.data as Array<{ id: string; itemId: string; status: string }>;
+                            const order = orders.find(o => o.itemId === item.id);
+                            if (!order) {
+                              Alert.alert('Order not ready', 'Your order is still being created. Try again in a moment.');
+                              return;
+                            }
+                            setShowShop(false);
+                            setSoldSubTab('all');
+                            setSoldSort('recent');
+                            setTimeout(() => router.push(`/order/${order.id}` as any), 100);
+                          } catch {
+                            Alert.alert('Error', 'Could not load order. Try again.');
+                          }
+                        }}
                         style={{
                           flexDirection: 'row', alignItems: 'center', gap: 12,
                           backgroundColor: isMyWin ? 'rgba(16,185,129,0.12)' : '#1F2937',
@@ -3069,18 +3127,31 @@ export default function LiveAuctionRoom() {
                           position: 'relative',
                         }}
                       >
-                        {isMyWin && (
-                          <View style={{
-                            position: 'absolute', top: -8, right: 10,
-                            backgroundColor: '#10B981',
-                            borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3,
-                            zIndex: 10,
-                          }}>
-                            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.3 }}>
-                              🏆 YOU WON
-                            </Text>
-                          </View>
-                        )}
+                        {isMyWin && (() => {
+                          const cd = formatShopCountdown(winner?.paymentDeadline);
+                          return (
+                            <View style={{
+                              position: 'absolute', top: -8, right: 10,
+                              backgroundColor: cd?.expired ? '#6B7280' : cd?.urgent ? '#DC2626' : '#10B981',
+                              borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3,
+                              flexDirection: 'row', alignItems: 'center', gap: 5,
+                              zIndex: 10,
+                            }}>
+                              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.3 }}>
+                                {cd?.expired ? 'EXPIRED' : '🏆 TAP TO PAY'}
+                              </Text>
+                              {cd && !cd.expired && (
+                                <Text style={{
+                                  color: '#fff', fontSize: 10, fontWeight: '800',
+                                  fontVariant: ['tabular-nums'],
+                                  opacity: 0.95,
+                                }}>
+                                  · {cd.label}
+                                </Text>
+                              )}
+                            </View>
+                          );
+                        })()}
                         <View style={{
                           width: 56, height: 56, borderRadius: 10,
                           backgroundColor: '#374151', overflow: 'hidden',
@@ -3147,7 +3218,7 @@ export default function LiveAuctionRoom() {
                             />
                           </Text>
                         </View>
-                      </View>
+                      </TouchableOpacity>
                     );
                   })}
                 </>
