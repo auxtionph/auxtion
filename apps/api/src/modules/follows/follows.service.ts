@@ -76,4 +76,36 @@ export class FollowsService {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     return { following: !!existing, followerCount: count };
   }
+
+  // ── Get Seller Payment Info (for chat bid buyers) ──────────────────────────
+  async getSellerPaymentInfo(sellerId: string) {
+    const seller = await this.prisma.user.findUnique({
+      where: { id: sellerId },
+      select: {
+        id: true,
+        displayName: true,
+        gcashNumber: true,
+        gcashName: true,
+        bankName: true,
+        bankAccountNumber: true,
+        bankAccountName: true,
+      },
+    });
+    if (!seller) return null;
+    return {
+      displayName: seller.displayName,
+      gcash:
+        seller.gcashNumber && seller.gcashName
+          ? { number: seller.gcashNumber, name: seller.gcashName }
+          : null,
+      bank:
+        seller.bankName && seller.bankAccountNumber && seller.bankAccountName
+          ? {
+              name: seller.bankName,
+              accountNumber: seller.bankAccountNumber,
+              accountName: seller.bankAccountName,
+            }
+          : null,
+    };
+  }
 }

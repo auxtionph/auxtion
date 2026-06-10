@@ -173,6 +173,8 @@ model Order {
   payoutReleaseAt    DateTime?
   payoutReleasedAt   DateTime?
   cancelReason       CancelReason?
+  paymentReference   String?
+  paymentProofUrl    String?
   paymentDeadline    DateTime?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt

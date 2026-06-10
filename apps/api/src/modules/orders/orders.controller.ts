@@ -91,6 +91,21 @@ export class OrdersController {
     return this.ordersService.markPaid(user.id, id);
   }
 
+  @Patch(':id/payment-reference')
+  @HttpCode(HttpStatus.OK)
+  submitPaymentReference(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: { reference?: string; proofUrl?: string },
+  ) {
+    return this.ordersService.submitPaymentReference(
+      user.id,
+      id,
+      body.reference ?? '',
+      body.proofUrl,
+    );
+  }
+
   @Patch(':id/shipping-address')
   @HttpCode(HttpStatus.OK)
   updateShippingAddress(

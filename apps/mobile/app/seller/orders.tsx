@@ -65,6 +65,8 @@ interface SellerOrder {
     status: string;
     paymongoRef?: string;
   };
+  paymentReference?: string;
+  paymentProofUrl?: string;
   auction?: {
     id: string;
     title: string;
@@ -120,7 +122,7 @@ const COURIERS: { key: CourierKey; label: string }[] = [
   { key: 'OTHER',         label: 'Other' },
 ];
 
-type FilterTab = 'all' | 'PAID' | 'SHIPPED' | 'COMPLETED';
+type FilterTab = 'all' | 'PENDING_MANUAL_PAYMENT' | 'PAID' | 'SHIPPED' | 'COMPLETED';
 
 export default function SellerOrdersScreen() {
   const router = useRouter();
@@ -193,6 +195,7 @@ export default function SellerOrdersScreen() {
   };
 
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
 
   const filtered = orders.filter(o => {
     if (filterTab === 'all') return true;
@@ -241,54 +244,28 @@ export default function SellerOrdersScreen() {
 
   // Auto-expand groups with PAID orders
   const paidCount = orders.filter(o => o.status === 'PAID').length;
+  const awaitingPaymentCount = orders.filter(o => o.status === 'PENDING_MANUAL_PAYMENT').length;
 
   const tabs: { key: FilterTab; label: string; count?: number }[] = [
-    { key: 'all',       label: 'All',       count: orders.length },
-    { key: 'PAID',      label: 'To Ship',   count: paidCount },
-    { key: 'SHIPPED',   label: 'Shipped' },
-    { key: 'COMPLETED', label: 'Completed' },
+    { key: 'all',                  label: 'All',         count: orders.length },
+    { key: 'PENDING_MANUAL_PAYMENT', label: 'Chat Bids', count: awaitingPaymentCount },
+    { key: 'PAID',                 label: 'To Ship',     count: paidCount },
+    { key: 'SHIPPED',              label: 'Shipped' },
+    { key: 'COMPLETED',            label: 'Completed' },
   ];
 
   const renderOrder = ({ item: order }: { item: SellerOrder }) => {
     const cfg = STATUS_CONFIG[order.status] ?? STATUS_CONFIG.CANCELLED;
     const isPaid = order.status === 'PAID';
+    const isChatBid = order.status === 'PENDING_MANUAL_PAYMENT';
+    const hasProof = !!(order.paymentReference || order.paymentProofUrl);
 
     return (
-      <View style={{
-        backgroundColor: '#111827',
-        borderRadius: 0,
-        borderWidth: 0,
-        overflow: 'hidden',
-      }}>
-        {/* Paid urgency banner */}
-        {isPaid && (
-          <View style={{
-            backgroundColor: 'rgba(16,185,129,0.12)',
-            paddingHorizontal: 14, paddingVertical: 6,
-            flexDirection: 'row', alignItems: 'center', gap: 6,
-          }}>
-            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#10B981' }} />
-            <Text style={{ color: '#10B981', fontSize: 11, fontWeight: '700' }}>
-              Payment received — ready to ship
-            </Text>
-          </View>
-        )}
-        {order.status === 'PENDING_MANUAL_PAYMENT' && (
-          <View style={{
-            backgroundColor: 'rgba(245,158,11,0.12)',
-            paddingHorizontal: 14, paddingVertical: 6,
-            flexDirection: 'row', alignItems: 'center', gap: 6,
-          }}>
-            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#F59E0B' }} />
-            <Text style={{ color: '#F59E0B', fontSize: 11, fontWeight: '700' }}>
-              Awaiting GCash / bank payment
-            </Text>
-          </View>
-        )}
+      <View style={{ backgroundColor: '#111827', overflow: 'hidden' }}>
 
+        {/* ── Item header — always first ── */}
         <View style={{ padding: 14 }}>
-          {/* Header row */}
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
             <View style={{
               width: 48, height: 48, borderRadius: 10,
               backgroundColor: '#1F2937', marginRight: 10,
@@ -305,147 +282,205 @@ export default function SellerOrdersScreen() {
                 {order.item.title}
               </Text>
               <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>
-                {order.buyer.displayName} · {new Date(order.createdAt).toLocaleDateString('en-PH', {
-                  month: 'short', day: 'numeric',
-                })} · {new Date(order.createdAt).toLocaleTimeString('en-PH', {
-                  hour: 'numeric', minute: '2-digit',
-                })}
+                {order.buyer.displayName} · {new Date(order.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} · {new Date(order.createdAt).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}
               </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                <Text style={{ color: '#374151', fontSize: 10, fontFamily: 'monospace' }}>
+                  #{order.id.slice(-6).toUpperCase()}
+                </Text>
+                <View style={{
+                  backgroundColor: order.mode === 'chat'
+                    ? 'rgba(124,58,237,0.15)'
+                    : order.mode === 'buynow'
+                      ? 'rgba(16,185,129,0.15)'
+                      : 'rgba(26,86,219,0.15)',
+                  borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
+                }}>
+                  <Text style={{
+                    fontSize: 9, fontWeight: '700',
+                    color: order.mode === 'chat' ? '#A78BFA'
+                      : order.mode === 'buynow' ? '#10B981'
+                      : '#60A5FA',
+                  }}>
+                    {order.mode === 'chat' ? '💬 Chat Bid'
+                      : order.mode === 'buynow' ? '🏷️ Buy Now'
+                      : '🔨 Swipe'}
+                  </Text>
+                </View>
+              </View>
             </View>
             <View style={{ alignItems: 'flex-end', gap: 4 }}>
               <Text style={{ color: '#F59E0B', fontWeight: '800', fontSize: 15 }}>
                 {formatPHP(order.amount)}
               </Text>
               <View style={{ backgroundColor: cfg.bg, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
-                <Text style={{ color: cfg.color, fontSize: 10, fontWeight: '700' }}>
-                  {cfg.label}
-                </Text>
+                <Text style={{ color: cfg.color, fontSize: 10, fontWeight: '700' }}>{cfg.label}</Text>
               </View>
             </View>
           </View>
+        </View>
 
-          {/* Shipping address — show when paid or shipped */}
-          {(isPaid || order.status === 'SHIPPED') && order.shippingName && (
+        {/* ── Status content — always below header ── */}
+
+        {/* Paid */}
+        {isPaid && (
+          <>
             <View style={{
-              backgroundColor: '#1F2937', borderRadius: 10,
-              padding: 10, marginBottom: 12,
+              backgroundColor: 'rgba(16,185,129,0.08)',
+              borderTopWidth: 1, borderColor: 'rgba(16,185,129,0.2)',
+              paddingHorizontal: 14, paddingVertical: 8,
+              flexDirection: 'row', alignItems: 'center', gap: 6,
             }}>
-              <Text style={{ color: '#6B7280', fontSize: 10, fontWeight: '700', marginBottom: 4 }}>
-                SHIP TO
-              </Text>
-              <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
-                {order.shippingName}
-              </Text>
-              <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>
-                {order.shippingPhone}
-              </Text>
-              <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 1 }}>
-                {order.shippingLine1}, {order.shippingCity}, {order.shippingProvince} {order.shippingPostalCode}
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#10B981' }} />
+              <Text style={{ color: '#10B981', fontSize: 11, fontWeight: '700' }}>
+                Payment received — ready to ship
               </Text>
             </View>
-          )}
-
-          {/* No shipping address warning */}
-          {isPaid && !order.shippingName && (
-            <View style={{
-              backgroundColor: 'rgba(245,158,11,0.08)',
-              borderWidth: 1, borderColor: 'rgba(245,158,11,0.25)',
-              borderRadius: 10, padding: 10, marginBottom: 12,
-              flexDirection: 'row', alignItems: 'center', gap: 8,
-            }}>
-              <Text style={{ fontSize: 16 }}>⚠️</Text>
-              <Text style={{ color: '#F59E0B', fontSize: 12, flex: 1 }}>
-                Buyer hasn't added shipping address yet. Contact them before shipping.
-              </Text>
+            <View style={{ paddingHorizontal: 14, paddingBottom: 14, paddingTop: 10 }}>
+              {order.shippingName ? (
+                <View style={{ backgroundColor: '#1F2937', borderRadius: 10, padding: 10, marginBottom: 12 }}>
+                  <Text style={{ color: '#6B7280', fontSize: 10, fontWeight: '700', marginBottom: 4 }}>SHIP TO</Text>
+                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{order.shippingName}</Text>
+                  <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>{order.shippingPhone}</Text>
+                  <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 1 }}>
+                    {order.shippingLine1}, {order.shippingCity}, {order.shippingProvince} {order.shippingPostalCode}
+                  </Text>
+                </View>
+              ) : (
+                <View style={{
+                  backgroundColor: 'rgba(245,158,11,0.08)',
+                  borderWidth: 1, borderColor: 'rgba(245,158,11,0.25)',
+                  borderRadius: 10, padding: 10, marginBottom: 12,
+                  flexDirection: 'row', alignItems: 'center', gap: 8,
+                }}>
+                  <Text style={{ fontSize: 16 }}>⚠️</Text>
+                  <Text style={{ color: '#F59E0B', fontSize: 12, flex: 1 }}>
+                    Buyer hasn't added shipping address yet.
+                  </Text>
+                </View>
+              )}
+              <TouchableOpacity
+                style={{ backgroundColor: '#10B981', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
+                onPress={() => { setSelectedOrder(order); setSelectedCourier(null); setTrackingNumber(''); setShowShipModal(true); }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>📦 Mark as Shipped</Text>
+              </TouchableOpacity>
             </View>
-          )}
+          </>
+        )}
 
-          {/* Tracking info — show when shipped */}
-          {order.status === 'SHIPPED' && order.trackingNumber && (
+        {/* Chat bid */}
+        {isChatBid && (
+          <>
             <View style={{
-              backgroundColor: 'rgba(59,130,246,0.08)',
-              borderRadius: 10, padding: 10, marginBottom: 12,
+              backgroundColor: hasProof ? 'rgba(124,58,237,0.08)' : 'rgba(245,158,11,0.06)',
+              borderTopWidth: 1,
+              borderColor: hasProof ? 'rgba(124,58,237,0.2)' : 'rgba(245,158,11,0.15)',
+              paddingHorizontal: 14, paddingVertical: 10, gap: 6,
             }}>
-              <Text style={{ color: '#6B7280', fontSize: 10, fontWeight: '700', marginBottom: 4 }}>
-                TRACKING
-              </Text>
-              <Text style={{ color: '#60A5FA', fontWeight: '700', fontSize: 13 }}>
-                {COURIERS.find(c => c.key === order.courier)?.label ?? order.courier}
-              </Text>
-              <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>
-                {order.trackingNumber}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: hasProof ? '#7C3AED' : '#F59E0B' }} />
+                <Text style={{ color: hasProof ? '#A78BFA' : '#F59E0B', fontSize: 11, fontWeight: '700' }}>
+                  {hasProof ? '💬 Payment proof received' : 'Awaiting GCash / bank payment'}
+                </Text>
+              </View>
+              {order.paymentReference && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12 }}>
+                  <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '700' }}>REF#</Text>
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{order.paymentReference}</Text>
+                </View>
+              )}
+              {order.paymentProofUrl && (
+                <TouchableOpacity
+                  style={{ marginTop: 4 }}
+                  onPress={() => setViewingImage(order.paymentProofUrl!)}
+                  activeOpacity={0.85}
+                >
+                  <Image
+                    source={{ uri: order.paymentProofUrl }}
+                    style={{ width: '100%', height: 140, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(124,58,237,0.35)' }}
+                    resizeMode="cover"
+                  />
+                  <View style={{
+                    position: 'absolute', bottom: 8, left: 8,
+                    backgroundColor: 'rgba(124,58,237,0.9)',
+                    borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3,
+                  }}>
+                    <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>📸 Tap to view full screen</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
             </View>
-          )}
-
-          {/* Order ID */}
-          <TouchableOpacity
-            onLongPress={() => {
-              // Optional: copy full ID to clipboard for support tickets
-              // import * as Clipboard from 'expo-clipboard';
-              // void Clipboard.setStringAsync(order.id);
-            }}
-            style={{ marginBottom: 12 }}
-          >
-            <Text style={{ color: '#4B5563', fontSize: 10, fontFamily: 'monospace' }}>
-              #{order.id.slice(-6).toUpperCase()}
-            </Text>
-          </TouchableOpacity>
-
-          {/* CTA */}
-          {order.status === 'PENDING_MANUAL_PAYMENT' && (
-            <TouchableOpacity
-              style={{
-                backgroundColor: '#F59E0B',
-                borderRadius: 12, paddingVertical: 12,
-                alignItems: 'center', marginBottom: 8,
-              }}
-              onPress={() => {
-                Alert.alert(
-                  'Mark as Paid?',
-                  `Confirm that ${order.buyer.displayName} has paid ${formatPHP(order.amount)} via GCash or bank transfer.`,
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: 'Confirm Payment',
-                      onPress: async () => {
+            <View style={{ paddingHorizontal: 14, paddingBottom: 14, paddingTop: 10 }}>
+              <TouchableOpacity
+                style={{ backgroundColor: '#F59E0B', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}
+                onPress={() => {
+                  Alert.alert(
+                    'Mark as Paid?',
+                    hasProof
+                      ? `Confirm that ${order.buyer.displayName} has paid ${formatPHP(order.amount)}.`
+                      : `⚠️ No proof received yet.\n\n${order.buyer.displayName} hasn't submitted a reference number or screenshot. Are you sure they've paid ${formatPHP(order.amount)}?`,
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Confirm Payment', onPress: async () => {
                         try {
                           await apiClient.patch(`/orders/${order.id}/mark-paid`);
                           void fetchOrders();
                         } catch {
                           Alert.alert('Error', 'Failed to mark as paid. Try again.');
                         }
-                      },
-                    },
-                  ],
-                );
-              }}
-            >
-              <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>
-                💰 Mark as Paid
-              </Text>
-            </TouchableOpacity>
-          )}
-          {isPaid && (
-            <TouchableOpacity
-              style={{
-                backgroundColor: '#10B981',
-                borderRadius: 12, paddingVertical: 12,
-                alignItems: 'center',
-              }}
-              onPress={() => {
-                setSelectedOrder(order);
-                setSelectedCourier(null);
-                setTrackingNumber('');
-                setShowShipModal(true);
-              }}
-            >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
-                📦 Mark as Shipped
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
+                      }},
+                    ],
+                  );
+                }}
+              >
+                <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>💰 Mark as Paid</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  borderRadius: 12, paddingVertical: 10, alignItems: 'center',
+                  marginTop: 8,
+                  borderWidth: 1, borderColor: '#374151',
+                }}
+                onPress={() => {
+                  Alert.alert(
+                    'Cancel Order?',
+                    `Cancel ${order.buyer.displayName}'s order for ${order.item.title}? This cannot be undone.`,
+                    [
+                      { text: 'Keep Order', style: 'cancel' },
+                      { text: 'Cancel Order', style: 'destructive', onPress: async () => {
+                        try {
+                          await apiClient.patch(`/orders/${order.id}/cancel`);
+                          void fetchOrders();
+                        } catch {
+                          Alert.alert('Error', 'Failed to cancel order.');
+                        }
+                      }},
+                    ],
+                  );
+                }}
+              >
+                <Text style={{ color: '#6B7280', fontSize: 13, fontWeight: '600' }}>Cancel Order</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {/* Shipped */}
+        {order.status === 'SHIPPED' && order.trackingNumber && (
+          <View style={{
+            marginHorizontal: 14, marginBottom: 14,
+            backgroundColor: 'rgba(59,130,246,0.08)',
+            borderRadius: 10, padding: 10,
+          }}>
+            <Text style={{ color: '#6B7280', fontSize: 10, fontWeight: '700', marginBottom: 4 }}>TRACKING</Text>
+            <Text style={{ color: '#60A5FA', fontWeight: '700', fontSize: 13 }}>
+              {COURIERS.find(c => c.key === order.courier)?.label ?? order.courier}
+            </Text>
+            <Text style={{ color: '#9CA3AF', fontSize: 12, marginTop: 2 }}>{order.trackingNumber}</Text>
+          </View>
+        )}
+
       </View>
     );
   };
@@ -621,10 +656,27 @@ export default function SellerOrdersScreen() {
                     overflow: 'hidden',
                   }}>
                     {group.orders.map((order, idx) => (
-                      <View key={order.id} style={{
-                        borderTopWidth: idx === 0 ? 0 : 1,
-                        borderTopColor: '#1F2937',
-                      }}>
+                      <View key={order.id}>
+                        {idx > 0 && (
+                          <View style={{
+                            backgroundColor: '#0D1117',
+                            paddingVertical: 12,
+                            alignItems: 'center',
+                            borderTopWidth: 1,
+                            borderBottomWidth: 1,
+                            borderColor: '#1F2937',
+                          }}>
+                            <View style={{
+                              flexDirection: 'row', alignItems: 'center', gap: 8,
+                            }}>
+                              <View style={{ width: 24, height: 1, backgroundColor: '#374151' }} />
+                              <Text style={{ color: '#374151', fontSize: 9, fontWeight: '700', letterSpacing: 1 }}>
+                                NEXT ORDER
+                              </Text>
+                              <View style={{ width: 24, height: 1, backgroundColor: '#374151' }} />
+                            </View>
+                          </View>
+                        )}
                         {renderOrder({ item: order })}
                       </View>
                     ))}
@@ -635,6 +687,65 @@ export default function SellerOrdersScreen() {
           })}
         </ScrollView>
       )}
+
+      {/* ── Full-screen Image Viewer ── */}
+      <Modal
+        visible={!!viewingImage}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setViewingImage(null)}
+        statusBarTranslucent
+      >
+        <View style={{
+          flex: 1, backgroundColor: 'rgba(0,0,0,0.95)',
+          alignItems: 'center', justifyContent: 'center',
+        }}>
+          {/* Close button */}
+          <TouchableOpacity
+            style={{
+              position: 'absolute', top: insets.top + 16, right: 16,
+              width: 36, height: 36, borderRadius: 18,
+              backgroundColor: 'rgba(255,255,255,0.15)',
+              alignItems: 'center', justifyContent: 'center',
+              zIndex: 10,
+            }}
+            onPress={() => setViewingImage(null)}
+          >
+            <Text style={{ color: '#fff', fontSize: 16 }}>✕</Text>
+          </TouchableOpacity>
+
+          {/* Header */}
+          <View style={{
+            position: 'absolute', top: insets.top + 16, left: 16,
+            zIndex: 10,
+          }}>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+              📸 Payment Proof
+            </Text>
+            <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>
+              Tap outside to close
+            </Text>
+          </View>
+
+          {/* Image */}
+          <TouchableOpacity
+            activeOpacity={1}
+            style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' }}
+            onPress={() => setViewingImage(null)}
+          >
+            {viewingImage && (
+              <Image
+                source={{ uri: viewingImage }}
+                style={{
+                  width: '100%',
+                  height: '80%',
+                }}
+                resizeMode="contain"
+              />
+            )}
+          </TouchableOpacity>
+        </View>
+      </Modal>
 
       {/* ── Ship Modal ── */}
       <Modal

@@ -81,9 +81,7 @@ export class OrdersService {
       where: {
         sellerId,
         auctionId,
-        status: {
-          in: [OrderStatus.PENDING_PAYMENT, OrderStatus.PENDING_MANUAL_PAYMENT],
-        },
+        status: OrderStatus.PENDING_PAYMENT,
       },
       include: {
         item: { select: { title: true } },
@@ -143,7 +141,7 @@ export class OrdersService {
       }),
       this.prisma.shopItem.updateMany({
         where: { id: { in: unpaid.map((o) => o.itemId) } },
-        data: { status: 'AVAILABLE' },
+        data: { status: 'CANCELLED' },
       }),
     ]);
 
@@ -479,9 +477,16 @@ export class OrdersService {
           in: [OrderStatus.PENDING_PAYMENT, OrderStatus.PENDING_MANUAL_PAYMENT],
         },
         paymentDeadline: { lte: new Date() },
+        // Skip chat bid live items — seller confirms manually, no auto-expire
+        NOT: {
+          AND: [
+            { status: OrderStatus.PENDING_MANUAL_PAYMENT },
+            { auctionId: { not: null } },
+          ],
+        },
       },
       include: {
-        item: { select: { id: true, title: true } },
+        item: { select: { id: true, title: true, auctionId: true } },
         buyer: { select: { id: true, displayName: true } },
         auction: { select: { status: true } },
       },
@@ -490,6 +495,12 @@ export class OrdersService {
     for (const order of expiredOrders) {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       const auctionEnded = order.auction?.status === 'ENDED';
+
+      const itemData = order.item as {
+        id: string;
+        title: string;
+        auctionId: string | null;
+      };
 
       await this.prisma.$transaction([
         this.prisma.order.update({
@@ -501,12 +512,18 @@ export class OrdersService {
         }),
         this.prisma.shopItem.update({
           where: { id: order.itemId },
-          data: { status: 'AVAILABLE' },
+          data: {
+            status: itemData.auctionId ? 'CANCELLED' : 'AVAILABLE',
+          },
         }),
       ]);
 
       // Notify buyer — different copy based on whether live is still going
-      const item = order.item as { id: string; title: string };
+      const item = order.item as {
+        id: string;
+        title: string;
+        auctionId: string | null;
+      };
       const buyer = order.buyer as { id: string; displayName: string };
 
       const buyerBody = auctionEnded
@@ -657,7 +674,7 @@ export class OrdersService {
         paymentMethod: PaymentMethod.MANUAL,
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         status: OrderStatus.PENDING_MANUAL_PAYMENT,
-        paymentDeadline: new Date(Date.now() + 10 * 60 * 1000),
+        paymentDeadline: null,
         mode: params.mode,
       },
       include: {
@@ -684,6 +701,49 @@ export class OrdersService {
       where: { id: orderId },
       data: { status: OrderStatus.PAID, paidAt: new Date() },
     });
+  }
+
+  // ── Submit Payment Reference (Buyer) ───────────────────────────────────────
+
+  async submitPaymentReference(
+    buyerId: string,
+    orderId: string,
+    reference: string,
+    proofUrl?: string,
+  ) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { item: { select: { title: true } } },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.buyerId !== buyerId)
+      throw new ForbiddenException('Access denied');
+    if (!reference && !proofUrl)
+      throw new BadRequestException(
+        'Provide a reference number or proof screenshot',
+      );
+
+    const updated = await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        ...(reference ? { paymentReference: reference } : {}),
+        ...(proofUrl ? { paymentProofUrl: proofUrl } : {}),
+      },
+    });
+
+    void this.notifications.sendToUser(order.sellerId, {
+      title: '💳 Payment proof submitted',
+      body: `${order.item.title} — ${reference || 'screenshot attached'}`,
+      data: { orderId, screen: 'seller-orders' },
+    });
+
+    return {
+      success: true,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      paymentReference: updated.paymentReference,
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      paymentProofUrl: updated.paymentProofUrl,
+    };
   }
 
   // ── Update Shipping Address (Buyer) ────────────────────────────────────────

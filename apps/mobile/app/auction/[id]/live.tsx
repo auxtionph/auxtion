@@ -18,7 +18,7 @@ import {
   PanResponder,
   LogBox,
 } from 'react-native';
-LogBox.ignoreLogs(['[HMS] ON_ERROR']);
+LogBox.ignoreLogs(['[HMS] ON_ERROR', 'setupPIP']);
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { auctionsApi, AuctionDetail } from '../../../src/services/api/auctions.api';
@@ -433,6 +433,67 @@ export default function LiveAuctionRoom() {
     bankName: '', bankAccountNumber: '', bankAccountName: '',
   });
   const [savingProfile, setSavingProfile] = useState(false);
+  const [showEndLiveModal, setShowEndLiveModal] = useState(false);
+  const [endLiveUnpaid, setEndLiveUnpaid] = useState<Array<{
+    id: string;
+    itemTitle: string;
+    buyerName: string;
+    amount: number;
+    paymentDeadline: string | null;
+  }>>([]);
+  const [endingLive, setEndingLive] = useState(false);
+  const [showChatPaySheet, setShowChatPaySheet] = useState(false);
+  const [chatPayReference, setChatPayReference] = useState('');
+  const [chatPayProofUrl, setChatPayProofUrl] = useState('');
+  const [uploadingChatProof, setUploadingChatProof] = useState(false);
+
+  const handlePickChatProof = async () => {
+    try {
+      const IPicker = await import('expo-image-picker');
+      const { status } = await IPicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Allow photo access to attach a screenshot.');
+        return;
+      }
+      const result = await IPicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.8,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      setUploadingChatProof(true);
+      const { uploadPhotoToCloudinary } = await import('../../../src/lib/cloudinary');
+      const uploaded = await uploadPhotoToCloudinary(result.assets[0].uri);
+      setChatPayProofUrl(uploaded.url);
+    } catch {
+      Alert.alert('Upload failed', 'Could not upload screenshot. Try again.');
+    } finally {
+      setUploadingChatProof(false);
+    }
+  };
+  const [chatPayOrder, setChatPayOrder] = useState<{
+    orderId: string;
+    itemTitle: string;
+    amount: number;
+    sellerId: string;
+  } | null>(null);
+  const [sellerPaymentInfo, setSellerPaymentInfo] = useState<{
+    displayName: string;
+    gcash: { number: string; name: string } | null;
+    bank: { name: string; accountNumber: string; accountName: string } | null;
+  } | null>(null);
+  const [loadingPaymentInfo, setLoadingPaymentInfo] = useState(false);
+
+  // Seller action sheet for chat bid sold items
+  const [showSellerChatSheet, setShowSellerChatSheet] = useState(false);
+  const [sellerChatOrder, setSellerChatOrder] = useState<{
+    orderId: string;
+    itemTitle: string;
+    amount: number;
+    buyerName: string;
+    paymentReference?: string;
+  } | null>(null);
+  const [markingPaid, setMarkingPaid] = useState(false);
   const insets = useSafeAreaInsets();
   const [soldSubTab, setSoldSubTab] = useState<'all' | 'auction' | 'chat' | 'buynow'>('all');
   const [soldSort, setSoldSort] = useState<'recent' | 'high' | 'low'>('recent');
@@ -600,6 +661,9 @@ export default function LiveAuctionRoom() {
     mode: 'auction' | 'chat' | 'buynow';
     paymentDeadline?: string;
     orderId?: string;
+    orderStatus?: string;
+    paymentReference?: string;
+    paymentProofUrl?: string;
   }>>({});
 
   useEffect(() => {
@@ -625,6 +689,53 @@ export default function LiveAuctionRoom() {
         expired: false,
       };
     };
+
+  const refreshOrderStatuses = useCallback(async () => {
+    try {
+      if (isSeller) {
+        const res = await apiClient.get('/orders/selling');
+        const orders = res.data.data as Array<{ id: string; itemId: string; status: string; auction?: { id: string } }>;
+        const auctionOrders = orders.filter(o => o.auction?.id === id);
+        setSoldItemWinners(prev => {
+          const updated = { ...prev };
+          auctionOrders.forEach(o => {
+            if (updated[o.itemId]) {
+              updated[o.itemId] = { ...updated[o.itemId], orderStatus: o.status, orderId: o.id };
+            }
+          });
+          return updated;
+        });
+      } else {
+        const res = await apiClient.get('/orders/buying');
+        const orders = res.data.data as Array<{ id: string; itemId: string; status: string; paymentDeadline?: string; paymentReference?: string; paymentProofUrl?: string }>;
+        setSoldItemWinners(prev => {
+          const updated = { ...prev };
+          orders.forEach(o => {
+            if (updated[o.itemId]) {
+              updated[o.itemId] = {
+                ...updated[o.itemId],
+                orderStatus: o.status,
+                orderId: o.id,
+                paymentDeadline: o.paymentDeadline,
+                paymentReference: o.paymentReference,
+                paymentProofUrl: o.paymentProofUrl,
+              };
+            }
+          });
+          return updated;
+        });
+      }
+    } catch {
+      // ignore — stale status is fine
+    }
+  }, [id, isSeller]);
+
+  useEffect(() => {
+    if (!showShop) return;
+    void refreshOrderStatuses();
+    const interval = setInterval(() => void refreshOrderStatuses(), 30000);
+    return () => clearInterval(interval);
+  }, [showShop, refreshOrderStatuses]);
 
   useEffect(() => {
     processChatHistoryRef.current = (messages) => {
@@ -1311,8 +1422,38 @@ export default function LiveAuctionRoom() {
     }, []),
   });
 
+  const doEndLive = async (cancelUnpaid: boolean) => {
+    setEndingLive(true);
+    try {
+      if (cancelUnpaid) {
+        await apiClient.patch(`/orders/auction/${id}/bulk-cancel-unpaid`);
+      }
+      await auctionsApi.end(id);
+      endAuction();
+    } catch { /* ignore */ }
+    await hms.leave();
+    setEndingLive(false);
+    setShowEndLiveModal(false);
+    router.replace('/(main)');
+  };
+
   const handleLeave = async () => {
     if (isSeller) {
+      // Check for unpaid orders first
+      try {
+        const res = await apiClient.get(`/orders/auction/${id}/unpaid-summary`);
+        const summary = res.data.data as {
+          totalUnpaid: number;
+          orders: Array<{ id: string; itemTitle: string; buyerName: string; amount: number; paymentDeadline: string | null }>;
+        };
+        if (summary.totalUnpaid > 0) {
+          setEndLiveUnpaid(summary.orders);
+          setShowEndLiveModal(true);
+          return;
+        }
+      } catch { /* ignore — fall through to simple confirm */ }
+
+      // No unpaid orders — simple confirm
       Alert.alert(
         'End Live?',
         'Are you sure you want to end your live auction?',
@@ -1321,14 +1462,7 @@ export default function LiveAuctionRoom() {
           {
             text: 'End Live',
             style: 'destructive',
-            onPress: async () => {
-              try {
-                await auctionsApi.end(id);
-                endAuction();
-              } catch { /* ignore */ }
-              await hms.leave();
-              router.replace('/(main)');
-            },
+            onPress: () => void doEndLive(false),
           },
         ],
       );
@@ -3098,9 +3232,84 @@ export default function LiveAuctionRoom() {
                       <TouchableOpacity
                         key={item.id}
                         activeOpacity={isMyWin ? 0.7 : 1}
-                        disabled={!isMyWin}
+                        disabled={!isMyWin && !isSeller || winner?.orderStatus === 'PAID' || winner?.orderStatus === 'CANCELLED'}
                         onPress={async () => {
+                          if (!isMyWin && !isSeller) return;
+
+                          // Seller taps their own chat bid sold item → seller action sheet
+                          if (isSeller && itemMode === 'chat') {
+                            const sellerOrder = winner;
+                            if (!sellerOrder) return;
+                            try {
+                              const res = await apiClient.get('/orders/selling');
+                              const orders = res.data.data as Array<{ id: string; itemId: string; status: string; auction?: { id: string } }>;
+                              const order = orders.find(o => o.itemId === item.id && o.auction?.id === id);
+                              if (!order) return;
+                              setSellerChatOrder({
+                                orderId: order.id,
+                                itemTitle: item.title,
+                                amount: sellerOrder.amount,
+                                buyerName: sellerOrder.displayName,
+                                paymentReference: (order as any).paymentReference ?? undefined,
+                              });
+                              setShowSellerChatSheet(true);
+                            } catch {
+                              Alert.alert('Error', 'Could not load order.');
+                            }
+                            return;
+                          }
+
                           if (!isMyWin) return;
+                          const status = winner?.orderStatus;
+                          if (status === 'PAID' || status === 'CANCELLED') return;
+
+                          // Chat bid win → show payment instructions
+                          if (itemMode === 'chat') {
+                            // Already submitted proof — show status instead
+                            if (winner?.paymentReference || winner?.paymentProofUrl) {
+                              Alert.alert(
+                                '✅ Proof already submitted',
+                                `Your payment proof has been sent to the seller.\n\n${winner.paymentReference ? `Ref: ${winner.paymentReference}` : ''}${winner.paymentProofUrl ? '\n📸 Screenshot attached' : ''}\n\nWaiting for ${auction?.seller.displayName ?? 'seller'} to confirm.`,
+                                [{ text: 'OK' }]
+                              );
+                              return;
+                            }
+                            try {
+                              const res = await apiClient.get('/orders/buying');
+                              const orders = res.data.data as Array<{ id: string; itemId: string; status: string; paymentReference?: string; paymentProofUrl?: string }>;
+                              const order = orders.find(o => o.itemId === item.id);
+                              if (!order) return;
+                              // Double-check from fresh data
+                              if (order.paymentReference || order.paymentProofUrl) {
+                                Alert.alert(
+                                  '✅ Proof already submitted',
+                                  `Waiting for ${auction?.seller.displayName ?? 'seller'} to confirm your payment.`,
+                                  [{ text: 'OK' }]
+                                );
+                                return;
+                              }
+                              setChatPayOrder({
+                                orderId: order.id,
+                                itemTitle: item.title,
+                                amount: winner?.amount ?? item.price,
+                                sellerId: auction?.seller.id ?? '',
+                              });
+                              setLoadingPaymentInfo(true);
+                              setShowChatPaySheet(true);
+                              setChatPayReference('');
+                              setChatPayProofUrl('');
+                              setShowShop(false);
+                              const infoRes = await apiClient.get(`/sellers/${auction?.seller.id}/payment-info`);
+                              setSellerPaymentInfo(infoRes.data.data as typeof sellerPaymentInfo);
+                            } catch {
+                              // show sheet anyway, payment info optional
+                            } finally {
+                              setLoadingPaymentInfo(false);
+                            }
+                            return;
+                          }
+
+                          // Swipe auction win → order detail
                           try {
                             const res = await apiClient.get('/orders/buying');
                             const orders = res.data.data as Array<{ id: string; itemId: string; status: string }>;
@@ -3129,23 +3338,24 @@ export default function LiveAuctionRoom() {
                       >
                         {isMyWin && (() => {
                           const cd = formatShopCountdown(winner?.paymentDeadline);
+                          const status = winner?.orderStatus;
+                          const isPaid = status === 'PAID' || status === 'SHIPPED' || status === 'DELIVERED' || status === 'COMPLETED';
+                          const isCancelled = status === 'CANCELLED';
+                          const isChatBid = itemMode === 'chat';
+                          const proofSubmitted = isChatBid && !!(winner?.paymentReference || winner?.paymentProofUrl);
                           return (
                             <View style={{
                               position: 'absolute', top: -8, right: 10,
-                              backgroundColor: cd?.expired ? '#6B7280' : cd?.urgent ? '#DC2626' : '#10B981',
+                              backgroundColor: isPaid ? '#059669' : isCancelled ? '#6B7280' : proofSubmitted ? '#059669' : isChatBid ? '#7C3AED' : cd?.expired ? '#6B7280' : cd?.urgent ? '#DC2626' : '#10B981',
                               borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3,
                               flexDirection: 'row', alignItems: 'center', gap: 5,
                               zIndex: 10,
                             }}>
                               <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.3 }}>
-                                {cd?.expired ? 'EXPIRED' : '🏆 TAP TO PAY'}
+                                {isPaid ? '✅ Paid' : isCancelled ? '❌ Cancelled' : proofSubmitted ? '✅ Proof Sent' : isChatBid ? '💬 Send Payment' : cd?.expired ? 'EXPIRED' : '🏆 TAP TO PAY'}
                               </Text>
-                              {cd && !cd.expired && (
-                                <Text style={{
-                                  color: '#fff', fontSize: 10, fontWeight: '800',
-                                  fontVariant: ['tabular-nums'],
-                                  opacity: 0.95,
-                                }}>
+                              {!isPaid && !isCancelled && !isChatBid && cd && !cd.expired && (
+                                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', fontVariant: ['tabular-nums'], opacity: 0.95 }}>
                                   · {cd.label}
                                 </Text>
                               )}
@@ -3175,6 +3385,17 @@ export default function LiveAuctionRoom() {
                               {!isBuyNow && winner.displayName && winner.displayName !== 'Unknown' && (
                                 <Text style={{ color: '#6B7280', fontSize: 11 }}>
                                   Won by {winner.displayName}
+                                  {isSeller && winner.orderStatus && (
+                                    <Text style={{
+                                      color: winner.orderStatus === 'PAID' || winner.orderStatus === 'COMPLETED' ? '#10B981'
+                                        : winner.orderStatus === 'CANCELLED' ? '#6B7280' : '#F59E0B',
+                                      fontWeight: '700',
+                                    }}>
+                                      {winner.orderStatus === 'PAID' || winner.orderStatus === 'COMPLETED' ? ' · ✅ Paid'
+                                        : winner.orderStatus === 'CANCELLED' ? ' · ❌ Cancelled'
+                                        : ' · ⏳ Awaiting'}
+                                    </Text>
+                                  )}
                                 </Text>
                               )}
                               {isBuyNow && (
@@ -5487,6 +5708,454 @@ export default function LiveAuctionRoom() {
           />
         ))}
       </View>
+
+      {/* ── End Live — Unpaid Orders Modal ── */}
+      <Modal
+        visible={showEndLiveModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowEndLiveModal(false)}
+      >
+        <View style={{
+          flex: 1, backgroundColor: 'rgba(0,0,0,0.85)',
+          alignItems: 'center', justifyContent: 'center',
+          paddingHorizontal: 24,
+        }}>
+          <View style={{
+            backgroundColor: '#111827', borderRadius: 24,
+            padding: 28, width: '100%',
+            borderWidth: 1, borderColor: '#1F2937',
+          }}>
+            {/* Header */}
+            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+              <Text style={{ fontSize: 36, marginBottom: 12 }}>⚠️</Text>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 8, textAlign: 'center' }}>
+                {endLiveUnpaid.length} unpaid order{endLiveUnpaid.length !== 1 ? 's' : ''}
+              </Text>
+              <Text style={{ color: '#9CA3AF', fontSize: 13, textAlign: 'center', lineHeight: 20 }}>
+                These buyers haven't paid yet. What should happen to their orders?
+              </Text>
+            </View>
+
+            {/* Order list */}
+            <View style={{
+              backgroundColor: '#1F2937', borderRadius: 14,
+              padding: 14, marginBottom: 20, gap: 10,
+            }}>
+              {endLiveUnpaid.map((order, i) => {
+                const msLeft = order.paymentDeadline
+                  ? new Date(order.paymentDeadline).getTime() - Date.now()
+                  : null;
+                const minLeft = msLeft !== null ? Math.max(0, Math.floor(msLeft / 60000)) : null;
+                return (
+                  <View key={order.id} style={{
+                    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                    paddingBottom: i < endLiveUnpaid.length - 1 ? 10 : 0,
+                    borderBottomWidth: i < endLiveUnpaid.length - 1 ? 1 : 0,
+                    borderBottomColor: '#374151',
+                  }}>
+                    <View style={{ flex: 1, marginRight: 12 }}>
+                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
+                        {order.itemTitle}
+                      </Text>
+                      <Text style={{ color: '#9CA3AF', fontSize: 11, marginTop: 2 }}>
+                        {order.buyerName}
+                        {minLeft !== null && (
+                          <Text style={{ color: minLeft <= 2 ? '#EF4444' : '#F59E0B' }}>
+                            {' · '}{minLeft}m left
+                          </Text>
+                        )}
+                      </Text>
+                    </View>
+                    <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 13 }}>
+                      {formatPHP(order.amount)}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+
+            {/* Cancel all + end */}
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#DC2626', borderRadius: 14,
+                paddingVertical: 14, alignItems: 'center', marginBottom: 10,
+                opacity: endingLive ? 0.6 : 1,
+              }}
+              disabled={endingLive}
+              onPress={() => void doEndLive(true)}
+            >
+              {endingLive ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                    Cancel all unpaid + end live
+                  </Text>
+                  <Text style={{ color: '#FCA5A5', fontSize: 11, marginTop: 2 }}>
+                    Orders cancelled · buyers notified
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            {/* Wait, end anyway */}
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#1A56DB', borderRadius: 14,
+                paddingVertical: 14, alignItems: 'center', marginBottom: 10,
+                opacity: endingLive ? 0.6 : 1,
+              }}
+              disabled={endingLive}
+              onPress={() => void doEndLive(false)}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                End live — let them pay
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 2 }}>
+                Orders stay open until their 10-min window expires
+              </Text>
+            </TouchableOpacity>
+
+            {/* Don't end yet */}
+            <TouchableOpacity
+              style={{
+                borderRadius: 14, paddingVertical: 12, alignItems: 'center',
+                borderWidth: 1, borderColor: '#374151',
+                opacity: endingLive ? 0.4 : 1,
+              }}
+              disabled={endingLive}
+              onPress={() => setShowEndLiveModal(false)}
+            >
+              <Text style={{ color: '#6B7280', fontWeight: '600', fontSize: 14 }}>
+                Don't end yet
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Chat Bid Payment Instructions Sheet (Buyer) ── */}
+      <Modal
+        visible={showChatPaySheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowChatPaySheet(false)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.3)' }}
+          activeOpacity={1}
+          onPress={() => setShowChatPaySheet(false)}
+        />
+        <View style={{
+          backgroundColor: '#111827',
+          borderTopLeftRadius: 24, borderTopRightRadius: 24,
+          padding: 24, paddingBottom: insets.bottom + 24,
+        }}>
+          <View style={{ alignItems: 'center', marginBottom: 20 }}>
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: '#374151', marginBottom: 16 }} />
+            <Text style={{ fontSize: 32, marginBottom: 8 }}>💬</Text>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 4 }}>
+              Send Payment
+            </Text>
+            <Text style={{ color: '#9CA3AF', fontSize: 13, textAlign: 'center' }}>
+              {chatPayOrder?.itemTitle} — {formatPHP(chatPayOrder?.amount ?? 0)}
+            </Text>
+          </View>
+
+          {loadingPaymentInfo ? (
+            <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+              <ActivityIndicator color="#7C3AED" />
+              <Text style={{ color: '#6B7280', fontSize: 13, marginTop: 8 }}>Loading payment details...</Text>
+            </View>
+          ) : sellerPaymentInfo ? (
+            <View style={{ gap: 12, marginBottom: 20 }}>
+              {sellerPaymentInfo.gcash && (
+                <View style={{
+                  backgroundColor: '#1F2937', borderRadius: 14,
+                  borderWidth: 1, borderColor: 'rgba(26,86,219,0.3)',
+                  padding: 16,
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                    <Text style={{ fontSize: 20 }}>📱</Text>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>GCash</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Number</Text>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{sellerPaymentInfo.gcash.number}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Name</Text>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{sellerPaymentInfo.gcash.name}</Text>
+                  </View>
+                </View>
+              )}
+
+              {sellerPaymentInfo.bank && (
+                <View style={{
+                  backgroundColor: '#1F2937', borderRadius: 14,
+                  borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)',
+                  padding: 16,
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                    <Text style={{ fontSize: 20 }}>🏦</Text>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{sellerPaymentInfo.bank.name}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Account Number</Text>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{sellerPaymentInfo.bank.accountNumber}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Account Name</Text>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{sellerPaymentInfo.bank.accountName}</Text>
+                  </View>
+                </View>
+              )}
+
+              {!sellerPaymentInfo.gcash && !sellerPaymentInfo.bank && (
+                <View style={{
+                  backgroundColor: '#1F2937', borderRadius: 14, padding: 16,
+                  alignItems: 'center',
+                }}>
+                  <Text style={{ color: '#9CA3AF', fontSize: 13, textAlign: 'center' }}>
+                    Seller hasn't added payment details yet.{'\n'}Contact them directly to arrange payment.
+                  </Text>
+                </View>
+              )}
+            </View>
+          ) : (
+            <View style={{
+              backgroundColor: '#1F2937', borderRadius: 14, padding: 16,
+              alignItems: 'center', marginBottom: 20,
+            }}>
+              <Text style={{ color: '#9CA3AF', fontSize: 13, textAlign: 'center' }}>
+                Contact the seller directly to arrange payment.
+              </Text>
+            </View>
+          )}
+
+          <View style={{
+            backgroundColor: 'rgba(124,58,237,0.1)',
+            borderWidth: 1, borderColor: 'rgba(124,58,237,0.25)',
+            borderRadius: 12, padding: 14, marginBottom: 20,
+          }}>
+            <Text style={{ color: '#A78BFA', fontSize: 12, lineHeight: 18, textAlign: 'center' }}>
+              Send the exact amount and screenshot your payment.{'\n'}
+              The seller will confirm once received.
+            </Text>
+          </View>
+
+          {/* Screenshot proof */}
+          <TouchableOpacity
+            style={{
+              backgroundColor: '#1F2937',
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: chatPayProofUrl ? '#7C3AED' : '#374151',
+              borderStyle: chatPayProofUrl ? 'solid' : 'dashed',
+              overflow: 'hidden',
+              marginBottom: 12,
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: 72,
+            }}
+            onPress={() => void handlePickChatProof()}
+            disabled={uploadingChatProof}
+          >
+            {uploadingChatProof ? (
+              <View style={{ padding: 16, alignItems: 'center', gap: 6 }}>
+                <ActivityIndicator color="#7C3AED" size="small" />
+                <Text style={{ color: '#6B7280', fontSize: 12 }}>Uploading...</Text>
+              </View>
+            ) : chatPayProofUrl ? (
+              <View style={{ width: '100%' }}>
+                <Image
+                  source={{ uri: chatPayProofUrl }}
+                  style={{ width: '100%', height: 140, borderRadius: 14 }}
+                  resizeMode="cover"
+                />
+                <TouchableOpacity
+                  style={{
+                    position: 'absolute', top: 8, right: 8,
+                    backgroundColor: 'rgba(0,0,0,0.6)',
+                    borderRadius: 999, width: 28, height: 28,
+                    alignItems: 'center', justifyContent: 'center',
+                  }}
+                  onPress={() => setChatPayProofUrl('')}
+                >
+                  <Text style={{ color: '#fff', fontSize: 12 }}>✕</Text>
+                </TouchableOpacity>
+                <View style={{
+                  position: 'absolute', bottom: 8, left: 8,
+                  backgroundColor: 'rgba(124,58,237,0.9)',
+                  borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3,
+                }}>
+                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>✓ Screenshot attached</Text>
+                </View>
+              </View>
+            ) : (
+              <View style={{ padding: 16, alignItems: 'center', gap: 4 }}>
+                <Text style={{ fontSize: 24 }}>📸</Text>
+                <Text style={{ color: '#6B7280', fontSize: 12, fontWeight: '600' }}>
+                  Attach GCash / bank screenshot
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          {/* Reference number input */}
+          <View style={{
+            backgroundColor: '#1F2937', borderRadius: 14,
+            borderWidth: 1, borderColor: '#374151',
+            flexDirection: 'row', alignItems: 'center',
+            paddingHorizontal: 14, marginBottom: 12,
+          }}>
+            <Text style={{ color: '#6B7280', fontSize: 13, marginRight: 8 }}>Ref#</Text>
+            <TextInput
+              style={{ flex: 1, color: '#fff', fontSize: 14, paddingVertical: 12 }}
+              placeholder="GCash ref number or note..."
+              placeholderTextColor="#4B5563"
+              value={chatPayReference}
+              onChangeText={setChatPayReference}
+              autoCapitalize="none"
+            />
+          </View>
+
+          <TouchableOpacity
+            style={{
+              backgroundColor: (chatPayReference.trim() || chatPayProofUrl) ? '#7C3AED' : '#374151',
+              borderRadius: 14, paddingVertical: 14,
+              alignItems: 'center', marginBottom: 10,
+            }}
+            onPress={async () => {
+              if (!chatPayOrder || !chatPayReference.trim()) return;
+              try {
+                await apiClient.patch(`/orders/${chatPayOrder.orderId}/payment-reference`, {
+                  reference: chatPayReference.trim() || undefined,
+                  proofUrl: chatPayProofUrl || undefined,
+                });
+                setShowChatPaySheet(false);
+                setChatPayReference('');
+                Alert.alert('✅ Sent!', 'Your reference number has been sent to the seller.');
+              } catch {
+                Alert.alert('Error', 'Failed to submit. Try again.');
+              }
+            }}
+            disabled={(!chatPayReference.trim() && !chatPayProofUrl) || uploadingChatProof}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+              {(!chatPayReference.trim() && !chatPayProofUrl) ? 'Add ref# or screenshot above' : 'Submit Proof'}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={{ paddingVertical: 10, alignItems: 'center' }}
+            onPress={() => setShowChatPaySheet(false)}
+          >
+            <Text style={{ color: '#6B7280', fontSize: 13 }}>I'll do this later</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      {/* ── Seller Chat Bid Action Sheet ── */}
+      <Modal
+        visible={showSellerChatSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowSellerChatSheet(false)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}
+          activeOpacity={1}
+          onPress={() => setShowSellerChatSheet(false)}
+        />
+        <View style={{
+          backgroundColor: '#111827',
+          borderTopLeftRadius: 24, borderTopRightRadius: 24,
+          padding: 24, paddingBottom: insets.bottom + 24,
+        }}>
+          <View style={{ alignItems: 'center', marginBottom: 20 }}>
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: '#374151', marginBottom: 16 }} />
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17 }} numberOfLines={1}>
+              {sellerChatOrder?.itemTitle}
+            </Text>
+            <Text style={{ color: '#9CA3AF', fontSize: 13, marginTop: 4 }}>
+              Won by {sellerChatOrder?.buyerName} · {formatPHP(sellerChatOrder?.amount ?? 0)}
+            </Text>
+            {sellerChatOrder?.paymentReference && (
+              <View style={{
+                backgroundColor: 'rgba(124,58,237,0.1)',
+                borderWidth: 1, borderColor: 'rgba(124,58,237,0.3)',
+                borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
+                marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 8,
+              }}>
+                <Text style={{ color: '#A78BFA', fontSize: 11, fontWeight: '700' }}>REF#</Text>
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 }}>
+                  {sellerChatOrder.paymentReference}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Mark as Paid */}
+          <TouchableOpacity
+            style={{
+              backgroundColor: markingPaid ? '#374151' : '#10B981',
+              borderRadius: 14, paddingVertical: 14,
+              alignItems: 'center', marginBottom: 10,
+              opacity: markingPaid ? 0.6 : 1,
+            }}
+            disabled={markingPaid}
+            onPress={async () => {
+              if (!sellerChatOrder) return;
+              setMarkingPaid(true);
+              try {
+                await apiClient.patch(`/orders/${sellerChatOrder.orderId}/mark-paid`);
+                setSoldItemWinners(prev => ({
+                  ...prev,
+                  ...Object.fromEntries(
+                    Object.entries(prev).filter(([, w]) => w.orderId === sellerChatOrder.orderId)
+                      .map(([k, w]) => [k, { ...w, orderStatus: 'PAID' }])
+                  ),
+                }));
+                setShowSellerChatSheet(false);
+                Alert.alert('✅ Marked as Paid', `${sellerChatOrder.buyerName}'s order is now confirmed.`);
+              } catch {
+                Alert.alert('Error', 'Failed to mark as paid. Try again.');
+              } finally {
+                setMarkingPaid(false);
+              }
+            }}
+          >
+            {markingPaid
+              ? <ActivityIndicator color="#fff" />
+              : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>✅ Mark as Paid</Text>
+            }
+          </TouchableOpacity>
+
+          {/* Enter Tracking */}
+          <TouchableOpacity
+            style={{
+              backgroundColor: '#1A56DB', borderRadius: 14,
+              paddingVertical: 14, alignItems: 'center', marginBottom: 10,
+            }}
+            onPress={() => {
+              setShowSellerChatSheet(false);
+              if (!sellerChatOrder) return;
+              setTimeout(() => router.push(`/order/${sellerChatOrder.orderId}` as any), 100);
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>📦 Enter Tracking Number</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={{ paddingVertical: 12, alignItems: 'center' }}
+            onPress={() => setShowSellerChatSheet(false)}
+          >
+            <Text style={{ color: '#6B7280', fontSize: 14 }}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </View>
   );
 }

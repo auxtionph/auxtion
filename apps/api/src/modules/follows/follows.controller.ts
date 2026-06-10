@@ -43,4 +43,9 @@ export class FollowsController {
   ) {
     return this.followsService.getAuctionFollowStatus(user.id, auctionId);
   }
+
+  @Get('sellers/:sellerId/payment-info')
+  getSellerPaymentInfo(@Param('sellerId') sellerId: string) {
+    return this.followsService.getSellerPaymentInfo(sellerId);
+  }
 }

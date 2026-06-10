@@ -8,6 +8,9 @@ import {
   Image,
   Linking,
   Platform,
+  Modal,
+  KeyboardAvoidingView,
+  TextInput,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -59,6 +62,8 @@ interface OrderDetail {
     id: string;
     displayName: string;
   };
+  paymentReference?: string;
+  paymentProofUrl?: string;
   payment?: {
     status: string;
     paymongoRef?: string;
@@ -113,6 +118,45 @@ export default function OrderDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const [paying, setPaying] = useState(false);
+  const [showPaymentSheet, setShowPaymentSheet] = useState(false);
+  const [sellerPaymentInfo, setSellerPaymentInfo] = useState<{
+    gcash: { number: string; name: string } | null;
+    bank: { name: string; accountNumber: string; accountName: string } | null;
+  } | null>(null);
+  const [loadingPaymentInfo, setLoadingPaymentInfo] = useState(false);
+  const [paymentReference, setPaymentReference] = useState('');
+  const [submittingRef, setSubmittingRef] = useState(false);
+  const [viewingProof, setViewingProof] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<string>('');
+  const [proofUrl, setProofUrl] = useState<string>('');
+  const [uploadingProof, setUploadingProof] = useState(false);
+
+  const handlePickScreenshot = async () => {
+    try {
+      const { status } = await import('expo-image-picker').then(m =>
+        m.requestMediaLibraryPermissionsAsync()
+      );
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Allow photo access to attach a screenshot.');
+        return;
+      }
+      const result = await (await import('expo-image-picker')).launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.8,
+        base64: false,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      setUploadingProof(true);
+      const { uploadPhotoToCloudinary } = await import('../../src/lib/cloudinary');
+      const uploaded = await uploadPhotoToCloudinary(result.assets[0].uri);
+      setProofUrl(uploaded.url);
+    } catch {
+      Alert.alert('Upload failed', 'Could not upload screenshot. Try again.');
+    } finally {
+      setUploadingProof(false);
+    }
+  };
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
@@ -121,7 +165,7 @@ export default function OrderDetailScreen() {
 
   const countdown = (() => {
     if (!order?.paymentDeadline) return null;
-    if (order.status !== 'PENDING_PAYMENT' && order.status !== 'PENDING_MANUAL_PAYMENT') return null;
+    if (order.status !== 'PENDING_PAYMENT') return null;
     const diffMs = new Date(order.paymentDeadline).getTime() - now;
     if (diffMs <= 0) return { label: 'EXPIRED', urgent: true, expired: true };
     const totalSec = Math.floor(diffMs / 1000);
@@ -203,9 +247,10 @@ export default function OrderDetailScreen() {
 
   if (!order) return null;
 
-  const isPendingPayment = order.status === 'PENDING_PAYMENT' || order.status === 'PENDING_MANUAL_PAYMENT';
+  const isPendingPayment = order.status === 'PENDING_PAYMENT';
+  const isPendingManual = order.status === 'PENDING_MANUAL_PAYMENT';
   const isDelivered = order.status === 'DELIVERED';
-  const hasCTA = isPendingPayment || isDelivered;
+  const hasCTA = isPendingPayment || isPendingManual || isDelivered;
 
   // Build stepper — collapse PENDING_PAYMENT and PENDING_MANUAL_PAYMENT into one
   const steps = order.status === 'PENDING_MANUAL_PAYMENT'
@@ -245,7 +290,7 @@ export default function OrderDetailScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           padding: 20,
-          paddingBottom: hasCTA ? insets.bottom + 100 : insets.bottom + 32,
+          paddingBottom: hasCTA ? insets.bottom + 220 : insets.bottom + 32,
         }}
       >
         {/* Item photo + title hero */}
@@ -491,7 +536,7 @@ export default function OrderDetailScreen() {
         </View>
       </ScrollView>
 
-      {/* Pay Now CTA */}
+      {/* Pay Now CTA — PayMongo (swipe auction only) */}
       {isPendingPayment && (
         <View style={{
           position: 'absolute', bottom: 0, left: 0, right: 0,
@@ -499,7 +544,6 @@ export default function OrderDetailScreen() {
           backgroundColor: '#0D1117',
           borderTopWidth: 1, borderColor: '#1F2937',
         }}>
-          {/* Countdown banner */}
           {countdown && (
             <View style={{
               backgroundColor: countdown.expired
@@ -543,7 +587,6 @@ export default function OrderDetailScreen() {
               </View>
             </View>
           )}
-
           <TouchableOpacity
             style={{
               backgroundColor: countdown?.expired ? '#374151' : '#1A56DB',
@@ -569,6 +612,117 @@ export default function OrderDetailScreen() {
               </>
             )}
           </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Chat Bid Payment CTA — manual GCash/bank */}
+      {isPendingManual && (
+        <View style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0,
+          paddingHorizontal: 20, paddingBottom: insets.bottom + 16, paddingTop: 16,
+          backgroundColor: '#0D1117',
+          borderTopWidth: 1, borderColor: '#1F2937',
+        }}>
+          {order.paymentReference || order.paymentProofUrl ? (
+            // ── Proof already submitted ──────────────────────────────
+            <>
+              <View style={{
+                backgroundColor: 'rgba(16,185,129,0.1)',
+                borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)',
+                borderRadius: 12, padding: 14, marginBottom: 12,
+                flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+              }}>
+                <Text style={{ fontSize: 20 }}>✅</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#10B981', fontWeight: '700', fontSize: 13, marginBottom: 4 }}>
+                    Proof submitted — waiting for seller
+                  </Text>
+                  {order.paymentReference && (
+                    <Text style={{ color: '#6B7280', fontSize: 12 }}>
+                      Ref: <Text style={{ color: '#fff', fontWeight: '600' }}>{order.paymentReference}</Text>
+                    </Text>
+                  )}
+                  {order.paymentProofUrl && (
+                    <TouchableOpacity
+                      style={{ marginTop: 8 }}
+                      onPress={() => setViewingProof(true)}
+                      activeOpacity={0.85}
+                    >
+                      <Image
+                        source={{ uri: order.paymentProofUrl }}
+                        style={{ width: '100%', height: 100, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)' }}
+                        resizeMode="cover"
+                      />
+                      <View style={{
+                        position: 'absolute', bottom: 6, left: 8,
+                        backgroundColor: 'rgba(0,0,0,0.6)',
+                        borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3,
+                      }}>
+                        <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>📸 Tap to view full screen</Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+              <View style={{
+                backgroundColor: '#1F2937',
+                borderRadius: 16, paddingVertical: 14,
+                alignItems: 'center', gap: 2,
+              }}>
+                <Text style={{ color: '#9CA3AF', fontWeight: '600', fontSize: 14 }}>
+                  Waiting for {order.seller.displayName} to confirm
+                </Text>
+                <Text style={{ color: '#4B5563', fontSize: 12 }}>
+                  You'll be notified once payment is received
+                </Text>
+              </View>
+            </>
+          ) : (
+            // ── Not yet submitted ────────────────────────────────────
+            <>
+              <View style={{
+                backgroundColor: 'rgba(124,58,237,0.1)',
+                borderWidth: 1, borderColor: 'rgba(124,58,237,0.3)',
+                borderRadius: 12, padding: 14, marginBottom: 12,
+              }}>
+                <Text style={{ color: '#A78BFA', fontWeight: '700', fontSize: 13, marginBottom: 4 }}>
+                  💬 Chat Bid — Manual Payment
+                </Text>
+                <Text style={{ color: '#6B7280', fontSize: 12, lineHeight: 18 }}>
+                  Send {formatPHP(order.amount)} to the seller via GCash or bank transfer, then share your proof.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#7C3AED',
+                  borderRadius: 16, paddingVertical: 16,
+                  alignItems: 'center',
+                }}
+                onPress={async () => {
+                  setShowPaymentSheet(true);
+                  setLoadingPaymentInfo(true);
+                  setPaymentReference('');
+                  setPaymentMethod('');
+                  setProofUrl('');
+                  try {
+                    const res = await apiClient.get(`/sellers/${order.seller.id}/payment-info`);
+                    setSellerPaymentInfo(res.data.data as typeof sellerPaymentInfo);
+                  } catch {
+                    // show sheet anyway
+                  } finally {
+                    setLoadingPaymentInfo(false);
+                  }
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>
+                  View Payment Details
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 2 }}>
+                  Get seller's GCash / bank info
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       )}
 
@@ -605,6 +759,282 @@ export default function OrderDetailScreen() {
           </TouchableOpacity>
         </View>
       )}
+    {/* ── Chat Bid Payment Sheet ── */}
+      <Modal
+        visible={showPaymentSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowPaymentSheet(false)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}
+          activeOpacity={1}
+          onPress={() => setShowPaymentSheet(false)}
+        />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={{
+            backgroundColor: '#111827',
+            borderTopLeftRadius: 24, borderTopRightRadius: 24,
+            padding: 24, paddingBottom: insets.bottom + 24,
+          }}>
+            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: '#374151', marginBottom: 16 }} />
+              <Text style={{ fontSize: 28, marginBottom: 8 }}>💬</Text>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 4 }}>
+                Send Payment
+              </Text>
+              <Text style={{ color: '#9CA3AF', fontSize: 13 }}>
+                {order?.item.title} — {formatPHP(order?.amount ?? 0)}
+              </Text>
+            </View>
+
+            {loadingPaymentInfo ? (
+              <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                <ActivityIndicator color="#7C3AED" />
+              </View>
+            ) : (
+              <View style={{ gap: 12, marginBottom: 16 }}>
+                {sellerPaymentInfo?.gcash && (
+                  <View style={{
+                    backgroundColor: '#1F2937', borderRadius: 14,
+                    borderWidth: 1, borderColor: 'rgba(26,86,219,0.3)', padding: 16,
+                  }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <Text style={{ fontSize: 20 }}>📱</Text>
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>GCash</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Number</Text>
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{sellerPaymentInfo.gcash.number}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Name</Text>
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{sellerPaymentInfo.gcash.name}</Text>
+                    </View>
+                  </View>
+                )}
+                {sellerPaymentInfo?.bank && (
+                  <View style={{
+                    backgroundColor: '#1F2937', borderRadius: 14,
+                    borderWidth: 1, borderColor: 'rgba(16,185,129,0.3)', padding: 16,
+                  }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <Text style={{ fontSize: 20 }}>🏦</Text>
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{sellerPaymentInfo.bank.name}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Account Number</Text>
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{sellerPaymentInfo.bank.accountNumber}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ color: '#9CA3AF', fontSize: 13 }}>Account Name</Text>
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{sellerPaymentInfo.bank.accountName}</Text>
+                    </View>
+                  </View>
+                )}
+                {!sellerPaymentInfo?.gcash && !sellerPaymentInfo?.bank && (
+                  <View style={{ backgroundColor: '#1F2937', borderRadius: 14, padding: 16, alignItems: 'center' }}>
+                    <Text style={{ color: '#9CA3AF', fontSize: 13, textAlign: 'center' }}>
+                      Seller hasn't added payment details yet.{'\n'}Contact them directly.
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {/* Payment method selector */}
+            <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '700', marginBottom: 8, letterSpacing: 0.5 }}>
+              PAID VIA
+            </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ marginBottom: 12 }}
+              contentContainerStyle={{ gap: 8, paddingRight: 4 }}
+            >
+              {['GCash', 'Maya', 'BPI', 'BDO', 'Metrobank', 'UnionBank', 'Bank Transfer', 'Other'].map(method => (
+                <TouchableOpacity
+                  key={method}
+                  onPress={() => setPaymentMethod(method)}
+                  style={{
+                    paddingHorizontal: 14, paddingVertical: 8,
+                    borderRadius: 999,
+                    backgroundColor: paymentMethod === method ? '#7C3AED' : '#1F2937',
+                    borderWidth: 1,
+                    borderColor: paymentMethod === method ? '#7C3AED' : '#374151',
+                  }}
+                >
+                  <Text style={{
+                    color: paymentMethod === method ? '#fff' : '#9CA3AF',
+                    fontSize: 13, fontWeight: '600',
+                  }}>
+                    {method}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* Reference number */}
+            <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '700', marginBottom: 8, letterSpacing: 0.5 }}>
+              REFERENCE NUMBER
+            </Text>
+            <View style={{
+              backgroundColor: '#1F2937', borderRadius: 14,
+              borderWidth: 1, borderColor: paymentReference ? '#7C3AED' : '#374151',
+              flexDirection: 'row', alignItems: 'center',
+              paddingHorizontal: 14, marginBottom: 12,
+            }}>
+              <TextInput
+                style={{ flex: 1, color: '#fff', fontSize: 14, paddingVertical: 12 }}
+                placeholder="e.g. 1234567890"
+                placeholderTextColor="#4B5563"
+                value={paymentReference}
+                onChangeText={setPaymentReference}
+                autoCapitalize="none"
+                keyboardType="default"
+              />
+            </View>
+            {/* Screenshot proof */}
+            <Text style={{ color: '#6B7280', fontSize: 11, fontWeight: '700', marginBottom: 8, letterSpacing: 0.5 }}>
+              PAYMENT SCREENSHOT (OPTIONAL)
+            </Text>
+            <TouchableOpacity
+              style={{
+                backgroundColor: '#1F2937',
+                borderRadius: 14,
+                borderWidth: 1,
+                borderColor: proofUrl ? '#7C3AED' : '#374151',
+                borderStyle: proofUrl ? 'solid' : 'dashed',
+                overflow: 'hidden',
+                marginBottom: 12,
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: 80,
+              }}
+              onPress={() => void handlePickScreenshot()}
+              disabled={uploadingProof}
+            >
+              {uploadingProof ? (
+                <View style={{ padding: 20, alignItems: 'center', gap: 8 }}>
+                  <ActivityIndicator color="#7C3AED" />
+                  <Text style={{ color: '#6B7280', fontSize: 12 }}>Uploading...</Text>
+                </View>
+              ) : proofUrl ? (
+                <View style={{ width: '100%' }}>
+                  <Image
+                    source={{ uri: proofUrl }}
+                    style={{ width: '100%', height: 160, borderRadius: 14 }}
+                    resizeMode="cover"
+                  />
+                  <TouchableOpacity
+                    style={{
+                      position: 'absolute', top: 8, right: 8,
+                      backgroundColor: 'rgba(0,0,0,0.6)',
+                      borderRadius: 999, width: 28, height: 28,
+                      alignItems: 'center', justifyContent: 'center',
+                    }}
+                    onPress={() => setProofUrl('')}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 12 }}>✕</Text>
+                  </TouchableOpacity>
+                  <View style={{
+                    position: 'absolute', bottom: 8, left: 8,
+                    backgroundColor: 'rgba(124,58,237,0.9)',
+                    borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3,
+                  }}>
+                    <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>✓ Screenshot attached</Text>
+                  </View>
+                </View>
+              ) : (
+                <View style={{ padding: 20, alignItems: 'center', gap: 6 }}>
+                  <Text style={{ fontSize: 28 }}>📸</Text>
+                  <Text style={{ color: '#6B7280', fontSize: 13, fontWeight: '600' }}>
+                    Tap to attach GCash / bank screenshot
+                  </Text>
+                  <Text style={{ color: '#4B5563', fontSize: 11 }}>
+                    JPG or PNG · max 5MB
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                backgroundColor: (paymentReference.trim() || proofUrl) && paymentMethod ? '#7C3AED' : '#374151',
+                borderRadius: 14, paddingVertical: 14,
+                alignItems: 'center', marginBottom: 10,
+                opacity: submittingRef ? 0.6 : 1,
+              }}
+              disabled={(!paymentReference.trim() && !proofUrl) || !paymentMethod || submittingRef || uploadingProof}
+              onPress={async () => {
+                if (!order || !paymentReference.trim()) return;
+                setSubmittingRef(true);
+                try {
+                  const fullRef = paymentMethod
+                    ? `[${paymentMethod}] ${paymentReference.trim()}`
+                    : paymentReference.trim();
+                  await apiClient.patch(`/orders/${order.id}/payment-reference`, {
+                    reference: fullRef || undefined,
+                    proofUrl: proofUrl || undefined,
+                  });
+                  setShowPaymentSheet(false);
+                  setPaymentReference('');
+                  Alert.alert('✅ Sent!', 'Your reference number has been sent to the seller.');
+                  void fetchOrder();
+                } catch {
+                  Alert.alert('Error', 'Failed to submit. Try again.');
+                } finally {
+                  setSubmittingRef(false);
+                }
+              }}
+            >
+              {submittingRef ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+                  {!paymentMethod ? 'Select payment method above'
+                    : !paymentReference.trim() && !proofUrl ? 'Add reference number or screenshot'
+                    : 'Submit Proof'}
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ paddingVertical: 10, alignItems: 'center' }}
+              onPress={() => setShowPaymentSheet(false)}
+            >
+              <Text style={{ color: '#6B7280', fontSize: 13 }}>I'll do this later</Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    {/* ── Proof Full-screen Viewer ── */}
+      <Modal visible={viewingProof} transparent animationType="fade" onRequestClose={() => setViewingProof(false)} statusBarTranslucent>
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', alignItems: 'center', justifyContent: 'center' }}
+          activeOpacity={1}
+          onPress={() => setViewingProof(false)}
+        >
+          <TouchableOpacity
+            style={{
+              position: 'absolute', top: insets.top + 16, right: 16,
+              width: 36, height: 36, borderRadius: 18,
+              backgroundColor: 'rgba(255,255,255,0.15)',
+              alignItems: 'center', justifyContent: 'center', zIndex: 10,
+            }}
+            onPress={() => setViewingProof(false)}
+          >
+            <Text style={{ color: '#fff', fontSize: 16 }}>✕</Text>
+          </TouchableOpacity>
+          <View style={{ position: 'absolute', top: insets.top + 16, left: 16, zIndex: 10 }}>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>📸 Payment Proof</Text>
+            <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }}>Tap anywhere to close</Text>
+          </View>
+          {order?.paymentProofUrl && (
+            <Image source={{ uri: order.paymentProofUrl }} style={{ width: '100%', height: '80%' }} resizeMode="contain" />
+          )}
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }

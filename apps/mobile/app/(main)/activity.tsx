@@ -407,7 +407,22 @@ export default function ActivityScreen() {
                             </Text>
                           </TouchableOpacity>
                         )}
-                        {(item.status === 'PENDING_PAYMENT' || item.status === 'PENDING_MANUAL_PAYMENT') && (() => {
+                        {item.status === 'PENDING_MANUAL_PAYMENT' && (
+                          <TouchableOpacity
+                            style={{
+                              marginTop: 10,
+                              backgroundColor: '#7C3AED',
+                              borderRadius: 10, paddingVertical: 8,
+                              alignItems: 'center',
+                            }}
+                            onPress={() => router.push(`/order/${item.id}`)}
+                          >
+                            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                              💬 View Payment Details
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                        {item.status === 'PENDING_PAYMENT' && (() => {
                           const countdown = formatCountdown(item.paymentDeadline);
                           const expired = countdown?.label === 'EXPIRED';
                           const urgent = countdown?.urgent ?? false;
