@@ -123,6 +123,14 @@ const getBidIncrement = (price: number): number => {
   return 50_000;                          // ₱10,000+ → +₱500
 };
 
+// Fuzzy name match — checks if any word in gcash name appears in seller display name
+const namesSeem = (gcashName: string, sellerName: string): boolean => {
+  if (!gcashName || !sellerName) return true;
+  const gcashWords = gcashName.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+  const sellerLower = sellerName.toLowerCase();
+  return gcashWords.some(word => sellerLower.includes(word));
+};
+
 function SwipeBidButton({ label, sublabel, onBid, color = '#1A56DB' }: {
   label: string;
   sublabel: string;
@@ -446,6 +454,7 @@ export default function LiveAuctionRoom() {
   const [chatPayReference, setChatPayReference] = useState('');
   const [chatPayProofUrl, setChatPayProofUrl] = useState('');
   const [uploadingChatProof, setUploadingChatProof] = useState(false);
+  const [verifiedChatName, setVerifiedChatName] = useState(false);
 
   const handlePickChatProof = async () => {
     try {
@@ -3298,6 +3307,7 @@ export default function LiveAuctionRoom() {
                               setShowChatPaySheet(true);
                               setChatPayReference('');
                               setChatPayProofUrl('');
+                              setVerifiedChatName(false);
                               setShowShop(false);
                               const infoRes = await apiClient.get(`/sellers/${auction?.seller.id}/payment-info`);
                               setSellerPaymentInfo(infoRes.data.data as typeof sellerPaymentInfo);
@@ -5870,6 +5880,51 @@ export default function LiveAuctionRoom() {
             </View>
           ) : sellerPaymentInfo ? (
             <View style={{ gap: 12, marginBottom: 20 }}>
+              {/* Seller identity banner */}
+              <View style={{
+                backgroundColor: 'rgba(124,58,237,0.08)',
+                borderWidth: 1, borderColor: 'rgba(124,58,237,0.2)',
+                borderRadius: 12, padding: 12,
+                flexDirection: 'row', alignItems: 'center', gap: 10,
+              }}>
+                <View style={{
+                  width: 36, height: 36, borderRadius: 18,
+                  backgroundColor: '#7C3AED',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>
+                    {auction?.seller.displayName?.charAt(0).toUpperCase() ?? '?'}
+                  </Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#6B7280', fontSize: 10, fontWeight: '700' }}>SENDING TO</Text>
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                    {auction?.seller.displayName ?? 'Seller'}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 18 }}>🔒</Text>
+              </View>
+
+              {/* Name mismatch warning */}
+              {sellerPaymentInfo.gcash && !namesSeem(sellerPaymentInfo.gcash.name, auction?.seller.displayName ?? '') && (
+                <View style={{
+                  backgroundColor: 'rgba(245,158,11,0.08)',
+                  borderWidth: 1, borderColor: 'rgba(245,158,11,0.3)',
+                  borderRadius: 12, padding: 12,
+                  flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+                }}>
+                  <Text style={{ fontSize: 16 }}>⚠️</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 12, marginBottom: 2 }}>
+                      Name mismatch detected
+                    </Text>
+                    <Text style={{ color: '#9CA3AF', fontSize: 11, lineHeight: 16 }}>
+                      The GCash account name doesn't match the seller's profile. Verify carefully before sending.
+                    </Text>
+                  </View>
+                </View>
+              )}
+
               {sellerPaymentInfo.gcash && (
                 <View style={{
                   backgroundColor: '#1F2937', borderRadius: 14,
@@ -6021,9 +6076,34 @@ export default function LiveAuctionRoom() {
             />
           </View>
 
+          {/* Verification checkbox */}
+          {(sellerPaymentInfo?.gcash || sellerPaymentInfo?.bank) && (
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: 10,
+                marginBottom: 12, paddingHorizontal: 2,
+              }}
+              onPress={() => setVerifiedChatName(prev => !prev)}
+              activeOpacity={0.7}
+            >
+              <View style={{
+                width: 22, height: 22, borderRadius: 6,
+                borderWidth: 2,
+                borderColor: verifiedChatName ? '#7C3AED' : '#374151',
+                backgroundColor: verifiedChatName ? '#7C3AED' : 'transparent',
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                {verifiedChatName && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>✓</Text>}
+              </View>
+              <Text style={{ color: '#9CA3AF', fontSize: 12, flex: 1, lineHeight: 18 }}>
+                I have verified the account name matches the seller before sending payment
+              </Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={{
-              backgroundColor: (chatPayReference.trim() || chatPayProofUrl) ? '#7C3AED' : '#374151',
+              backgroundColor: (chatPayReference.trim() || chatPayProofUrl) && (verifiedChatName || (!sellerPaymentInfo?.gcash && !sellerPaymentInfo?.bank)) ? '#7C3AED' : '#374151',
               borderRadius: 14, paddingVertical: 14,
               alignItems: 'center', marginBottom: 10,
             }}
@@ -6041,7 +6121,7 @@ export default function LiveAuctionRoom() {
                 Alert.alert('Error', 'Failed to submit. Try again.');
               }
             }}
-            disabled={(!chatPayReference.trim() && !chatPayProofUrl) || uploadingChatProof}
+            disabled={(!chatPayReference.trim() && !chatPayProofUrl) || uploadingChatProof || !(verifiedChatName || (!sellerPaymentInfo?.gcash && !sellerPaymentInfo?.bank))}
           >
             <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
               {(!chatPayReference.trim() && !chatPayProofUrl) ? 'Add ref# or screenshot above' : 'Submit Proof'}

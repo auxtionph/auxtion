@@ -25,6 +25,7 @@ model User {
   bankName                   String?
   bankAccountNumber          String?
   bankAccountName            String?
+  paymentInfoUpdatedAt       DateTime?
   pushToken                  String?
   isEmailVerified            Boolean                 @default(false)
   verificationToken          String?                 @unique

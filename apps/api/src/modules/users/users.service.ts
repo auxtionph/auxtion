@@ -2,15 +2,22 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { SaveAddressDto } from './dto/save-address.dto';
 import { SavePaymentMethodsDto } from './dto/save-payment-methods.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(UsersService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async getMe(userId: string) {
     const user = await this.prisma.user.findUnique({
@@ -126,13 +133,20 @@ export class UsersService {
 
   // ── Save / Update Payment Methods ──────────────────────────────────────
   async savePaymentMethods(userId: string, dto: SavePaymentMethodsDto) {
-    // At least one method must be provided
     const hasGcash = dto.gcashNumber && dto.gcashName;
     const hasBank =
       dto.bankName && dto.bankAccountNumber && dto.bankAccountName;
+
     if (!hasGcash && !hasBank) {
       throw new BadRequestException(
         'Provide at least one payment method (GCash or Bank).',
+      );
+    }
+
+    // Validate PH GCash number format
+    if (dto.gcashNumber && !/^09\d{9}$/.test(dto.gcashNumber)) {
+      throw new BadRequestException(
+        'GCash number must be 11 digits starting with 09.',
       );
     }
 
@@ -144,16 +158,31 @@ export class UsersService {
         bankName: dto.bankName ?? null,
         bankAccountNumber: dto.bankAccountNumber ?? null,
         bankAccountName: dto.bankAccountName ?? null,
+        paymentInfoUpdatedAt: new Date(),
       },
       select: {
         id: true,
+        email: true,
+        displayName: true,
         gcashNumber: true,
         gcashName: true,
         bankName: true,
         bankAccountNumber: true,
         bankAccountName: true,
+        paymentInfoUpdatedAt: true,
       },
     });
+
+    // Security push notification
+    void this.notifications.sendToUser(userId, {
+      title: '🔐 Payment details updated',
+      body: "Your GCash/bank info was just changed. If this wasn't you, contact support immediately.",
+      data: { screen: 'payment-settings' },
+    });
+
+    this.logger.log(
+      `Payment info updated for user ${userId} at ${new Date().toISOString()}`,
+    );
 
     return user;
   }

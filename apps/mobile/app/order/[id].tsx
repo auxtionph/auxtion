@@ -110,6 +110,14 @@ const MODE_LABELS: Record<string, string> = {
   buynow:  'Buy Now',
 };
 
+// Fuzzy name match — checks if any word in gcash name appears in seller display name
+const namesSeem = (gcashName: string, sellerName: string): boolean => {
+  if (!gcashName || !sellerName) return true; // can't check, don't warn
+  const gcashWords = gcashName.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+  const sellerLower = sellerName.toLowerCase();
+  return gcashWords.some(word => sellerLower.includes(word));
+};
+
 export default function OrderDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -126,6 +134,7 @@ export default function OrderDetailScreen() {
   const [loadingPaymentInfo, setLoadingPaymentInfo] = useState(false);
   const [paymentReference, setPaymentReference] = useState('');
   const [submittingRef, setSubmittingRef] = useState(false);
+  const [verifiedName, setVerifiedName] = useState(false);
   const [viewingProof, setViewingProof] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<string>('');
   const [proofUrl, setProofUrl] = useState<string>('');
@@ -704,6 +713,7 @@ export default function OrderDetailScreen() {
                   setPaymentReference('');
                   setPaymentMethod('');
                   setProofUrl('');
+                  setVerifiedName(false);
                   try {
                     const res = await apiClient.get(`/sellers/${order.seller.id}/payment-info`);
                     setSellerPaymentInfo(res.data.data as typeof sellerPaymentInfo);
@@ -794,6 +804,51 @@ export default function OrderDetailScreen() {
               </View>
             ) : (
               <View style={{ gap: 12, marginBottom: 16 }}>
+                {/* Seller identity banner */}
+                <View style={{
+                  backgroundColor: 'rgba(124,58,237,0.08)',
+                  borderWidth: 1, borderColor: 'rgba(124,58,237,0.2)',
+                  borderRadius: 12, padding: 12,
+                  flexDirection: 'row', alignItems: 'center', gap: 10,
+                }}>
+                  <View style={{
+                    width: 36, height: 36, borderRadius: 18,
+                    backgroundColor: '#7C3AED',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>
+                      {order?.seller.displayName.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: '#6B7280', fontSize: 10, fontWeight: '700' }}>SENDING TO</Text>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                      {order?.seller.displayName}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 18 }}>🔒</Text>
+                </View>
+
+                {/* Name mismatch warning */}
+                {sellerPaymentInfo?.gcash && !namesSeem(sellerPaymentInfo.gcash.name, order?.seller.displayName ?? '') && (
+                  <View style={{
+                    backgroundColor: 'rgba(245,158,11,0.08)',
+                    borderWidth: 1, borderColor: 'rgba(245,158,11,0.3)',
+                    borderRadius: 12, padding: 12,
+                    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+                  }}>
+                    <Text style={{ fontSize: 16 }}>⚠️</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 12, marginBottom: 2 }}>
+                        Name mismatch detected
+                      </Text>
+                      <Text style={{ color: '#9CA3AF', fontSize: 11, lineHeight: 16 }}>
+                        The GCash account name doesn't match the seller's profile name. Verify carefully before sending.
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
                 {sellerPaymentInfo?.gcash && (
                   <View style={{
                     backgroundColor: '#1F2937', borderRadius: 14,
@@ -958,14 +1013,39 @@ export default function OrderDetailScreen() {
               )}
             </TouchableOpacity>
 
+            {/* Verification checkbox */}
+            {(sellerPaymentInfo?.gcash || sellerPaymentInfo?.bank) && (
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 10,
+                  marginBottom: 12, paddingHorizontal: 2,
+                }}
+                onPress={() => setVerifiedName(prev => !prev)}
+                activeOpacity={0.7}
+              >
+                <View style={{
+                  width: 22, height: 22, borderRadius: 6,
+                  borderWidth: 2,
+                  borderColor: verifiedName ? '#7C3AED' : '#374151',
+                  backgroundColor: verifiedName ? '#7C3AED' : 'transparent',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {verifiedName && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>✓</Text>}
+                </View>
+                <Text style={{ color: '#9CA3AF', fontSize: 12, flex: 1, lineHeight: 18 }}>
+                  I have verified the account name matches the seller before sending payment
+                </Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity
               style={{
-                backgroundColor: (paymentReference.trim() || proofUrl) && paymentMethod ? '#7C3AED' : '#374151',
+                backgroundColor: (paymentReference.trim() || proofUrl) && paymentMethod && verifiedName ? '#7C3AED' : '#374151',
                 borderRadius: 14, paddingVertical: 14,
                 alignItems: 'center', marginBottom: 10,
                 opacity: submittingRef ? 0.6 : 1,
               }}
-              disabled={(!paymentReference.trim() && !proofUrl) || !paymentMethod || submittingRef || uploadingProof}
+              disabled={(!paymentReference.trim() && !proofUrl) || !paymentMethod || submittingRef || uploadingProof || !verifiedName}
               onPress={async () => {
                 if (!order || !paymentReference.trim()) return;
                 setSubmittingRef(true);

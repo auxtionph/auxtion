@@ -172,7 +172,12 @@ export default function ProfileScreen() {
           icon: '🚚',
           label: 'Manage Shipments',
           action: () => router.push('/seller/orders'),
-        }] : []),
+        },
+        {
+          icon: '💳',
+          label: 'Payment Settings',
+          action: () => router.push('/seller/payment-settings'),
+        },] : []),
         { icon: '💰', label: 'Payouts', action: () => {} },
       ],
     },
