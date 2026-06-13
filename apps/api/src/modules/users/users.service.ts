@@ -33,6 +33,12 @@ export class UsersService {
         totalSales: true,
         isVerified: true,
         createdAt: true,
+        gcashNumber: true,
+        gcashName: true,
+        bankName: true,
+        bankAccountNumber: true,
+        bankAccountName: true,
+        paymentInfoUpdatedAt: true,
         sellerApplication: {
           select: { status: true, createdAt: true },
         },
