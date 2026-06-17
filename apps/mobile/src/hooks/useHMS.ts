@@ -225,6 +225,13 @@ export const useHMS = ({ roomId, userName, role, onSellerLeft, onRoleChanged }: 
 
             if (updateType === HMSTrackUpdate.TRACK_MUTED) {
               console.log('[HMS] ⚠️ Video track muted for peer:', peer.name);
+              // Remove from trackMap so viewer shows reconnecting state, not frozen frame
+              delete trackMapRef.current[peer.peerID];
+              setTrackMap(prev => {
+                const next = { ...prev };
+                delete next[peer.peerID];
+                return next;
+              });
             }
           }
 
@@ -271,6 +278,48 @@ export const useHMS = ({ roomId, userName, role, onSellerLeft, onRoleChanged }: 
           } catch (e) {
             console.warn('[HMS] acceptRoleChange failed:', e);
           }
+        },
+      );
+
+      // ─── ON_RECONNECTED ─────────────────────────────────────────
+      // Fires after HMS auto-recovers from a transient network error (codes 1003/1004).
+      // The SDK reconnects but does NOT re-publish local tracks — we must do it manually.
+      hms.addEventListener(
+HMSUpdateListenerActions.RECONNECTED,        async () => {
+          console.log('[HMS] ON_RECONNECTED — re-publishing local tracks');
+          if (role === 'broadcaster' || role === 'co-broadcaster') {
+            const tryRepublish = async () => {
+              try {
+                const lp = await hms.getLocalPeer();
+                const videoTrack = lp?.localVideoTrack();
+                const audioTrack = lp?.localAudioTrack();
+                if (videoTrack) {
+                  videoTrack.setMute(false);
+                  console.log('[HMS] Reconnected — video re-published, trackId:', videoTrack.trackId);
+                }
+                if (audioTrack) {
+                  audioTrack.setMute(false);
+                }
+                await buildPeerList();
+              } catch (e) {
+                console.warn('[HMS] ON_RECONNECTED re-publish attempt failed:', e);
+              }
+            };
+            await tryRepublish();
+            setTimeout(() => { void tryRepublish(); }, 600);
+            setTimeout(() => { void tryRepublish(); }, 2000);
+          } else {
+            // Viewer — just rebuild peer list so trackMap refreshes
+            await buildPeerList();
+          }
+        },
+      );
+
+      // ─── ON_RECONNECTING ────────────────────────────────────────
+      hms.addEventListener(
+        HMSUpdateListenerActions.RECONNECTING,
+        (data: unknown) => {
+          console.warn('[HMS] ON_RECONNECTING — network interrupted, waiting for recovery');
         },
       );
 

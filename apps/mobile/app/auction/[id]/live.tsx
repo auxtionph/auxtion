@@ -518,6 +518,9 @@ export default function LiveAuctionRoom() {
   const pendingChatHistoryRef = useRef<Array<{ userId: string; displayName: string; message: string; timestamp: number }> | null>(null);
   const processChatHistoryRef = useRef<((messages: Array<{ userId: string; displayName: string; message: string; timestamp: number }>) => void) | null>(null);
   const lastAddedQueueItemRef = useRef<{ title: string; price: number } | null>(null);
+  const sellerVideoLostTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const coHostVideoLostTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [coHostReconnecting, setCoHostReconnecting] = useState(false);
 
   useEffect(() => {
     currentItemRef.current = currentItem;
@@ -616,7 +619,7 @@ export default function LiveAuctionRoom() {
           return seeded;
         });
       }
-      const liveItem = data.shopItems.find(i => i.status === 'LIVE');
+      const liveItem = data.shopItems.find(i => i.status === 'LIVE' || i.status === 'LIVE_BUYNOW');
       if (liveItem) {
         liveItemFromApiRef.current = {
           itemId: liveItem.id,
@@ -631,7 +634,7 @@ export default function LiveAuctionRoom() {
             currentPrice: liveItem.price,
             photos: liveItem.photos,
             totalBids: 0,
-            mode: (liveItem.mode ?? 'auction') as 'auction' | 'chat',
+            mode: (liveItem.status === 'LIVE_BUYNOW' ? 'buynow' : liveItem.mode ?? 'auction') as 'auction' | 'chat' | 'buynow',
           };
           // Apply pending bid state if it exists for this item
           const pending = pendingBidStateRef.current;
@@ -1057,8 +1060,11 @@ export default function LiveAuctionRoom() {
     }, []),
     onAuctionEnded: useCallback(() => {
       console.log('onAuctionEnded callback fired!');
-      setAuctionEnded(true);
-      setTimeout(() => router.replace('/(main)'), 3000);
+      setAuctionEnded(prev => {
+        if (prev) return prev; // already handled
+        setTimeout(() => router.replace('/(main)'), 3000);
+        return true;
+      });
     }, [router]),
 
     onTimerStarted: useCallback((data: { itemId: string; remaining: number; counterbidSeconds: number }) => {
@@ -1162,6 +1168,8 @@ export default function LiveAuctionRoom() {
     }, []),
 
     onLiveBuyNowStarted: useCallback((data: { itemId: string; title: string; price: number; photos: { url: string }[] }) => {
+      setTimerRemaining(null);
+      setTimerPaused(false);
       setChatMessages(prev => [...prev, {
         id: `divider-buynow-${data.itemId}-${Date.now()}`,
         userId: '__system__',
@@ -1439,11 +1447,15 @@ export default function LiveAuctionRoom() {
       }
       await auctionsApi.end(id);
       endAuction();
-    } catch { /* ignore */ }
-    await hms.leave();
-    setEndingLive(false);
-    setShowEndLiveModal(false);
-    router.replace('/(main)');
+      await hms.leave();
+    } catch (e) {
+      console.error('doEndLive error:', e);
+      await hms.leave().catch(() => {});
+    } finally {
+      setEndingLive(false);
+      setShowEndLiveModal(false);
+      router.replace('/(main)');
+    }
   };
 
   const handleLeave = async () => {
@@ -1501,7 +1513,7 @@ export default function LiveAuctionRoom() {
         void auctionsApi.getById(id).then(data => {
           auctionRef.current = data;
           setAuction(data);
-          const liveItem = data.shopItems.find(i => i.status === 'LIVE');
+          const liveItem = data.shopItems.find(i => i.status === 'LIVE' || i.status === 'LIVE_BUYNOW');
           if (liveItem) {
             liveItemFromApiRef.current = {
               itemId: liveItem.id,
@@ -1523,6 +1535,63 @@ export default function LiveAuctionRoom() {
     if (isSeller) return;
     setBroadcasterReconnecting(timerPaused);
   }, [timerPaused, isSeller]);
+
+  // ── Viewer: fallback when seller or co-host video drops ──────────
+  useEffect(() => {
+    if (isSeller || !hms.isJoined) return;
+
+    const hostName = auction?.seller.displayName;
+    const coHostName = auction?.coHost?.displayName;
+
+    const hostPeer = hms.peers.find(p => !p.isLocal && hostName && p.name === hostName);
+
+    const coHostPeer = coHostName
+      ? hms.peers.find(p => !p.isLocal && p.name === coHostName)
+      : null;
+
+    // ── Seller peer gone from room ──
+    if (!hostPeer) {
+      if (!sellerVideoLostTimerRef.current) {
+        sellerVideoLostTimerRef.current = setTimeout(() => {
+          setBroadcasterReconnecting(true);
+        }, 8000);
+      }
+    } else {
+      if (sellerVideoLostTimerRef.current) {
+        clearTimeout(sellerVideoLostTimerRef.current);
+        sellerVideoLostTimerRef.current = null;
+      }
+      setBroadcasterReconnecting(false);
+    }
+
+    // ── Co-host video lost (only when co-host is present) ──
+    if (hasCoHost && coHostName) {
+      if (!coHostPeer) {
+        if (!coHostVideoLostTimerRef.current) {
+          coHostVideoLostTimerRef.current = setTimeout(() => {
+            setCoHostReconnecting(true);
+          }, 8000);
+        }
+      } else {
+        if (coHostVideoLostTimerRef.current) {
+          clearTimeout(coHostVideoLostTimerRef.current);
+          coHostVideoLostTimerRef.current = null;
+        }
+        setCoHostReconnecting(false);
+      }
+    }
+
+    return () => {
+      if (sellerVideoLostTimerRef.current) {
+        clearTimeout(sellerVideoLostTimerRef.current);
+        sellerVideoLostTimerRef.current = null;
+      }
+      if (coHostVideoLostTimerRef.current) {
+        clearTimeout(coHostVideoLostTimerRef.current);
+        coHostVideoLostTimerRef.current = null;
+      }
+    };
+  }, [hms.peers, isSeller, hms.isJoined, auction?.seller.displayName, auction?.coHost?.displayName, hasCoHost]);
 
   // ── Poll for auction ended while seller disconnected ─────────────
   useEffect(() => {
@@ -1640,11 +1709,15 @@ export default function LiveAuctionRoom() {
     trackId, mirror, label, style,
   }: { trackId: string | null; mirror: boolean; label?: string; style?: any }) => {
     if (!trackId) {
+      const isCoHostTile = label && label !== 'You' && label !== (auction?.seller.displayName ?? 'Host');
       return (
         <View style={[{ alignItems: 'center', justifyContent: 'center', backgroundColor: '#111827' }, style]}>
           <ActivityIndicator size="small" color="#6B7280" />
           {label && (
             <Text style={{ color: '#6B7280', fontSize: 11, marginTop: 6 }}>{label}</Text>
+          )}
+          {coHostReconnecting && isCoHostTile && (
+            <Text style={{ color: '#F59E0B', fontSize: 10, marginTop: 4 }}>Reconnecting...</Text>
           )}
         </View>
       );
@@ -1677,7 +1750,9 @@ export default function LiveAuctionRoom() {
       return (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color="#1A56DB" />
-          <Text style={{ color: '#9CA3AF', fontSize: 14, marginTop: 12 }}>Starting camera...</Text>
+          <Text style={{ color: '#9CA3AF', fontSize: 14, marginTop: 12 }}>
+            {broadcasterReconnecting ? 'Reconnecting...' : 'Starting camera...'}
+          </Text>
         </View>
       );
     }
@@ -1697,8 +1772,10 @@ export default function LiveAuctionRoom() {
       if (!hostTrack) {
         return (
           <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ fontSize: 64 }}>📺</Text>
-            <Text style={{ color: '#4B5563', fontSize: 14, marginTop: 8 }}>Watching live</Text>
+            <ActivityIndicator size="large" color="#1A56DB" style={{ marginBottom: 16 }} />
+            <Text style={{ color: '#9CA3AF', fontSize: 14 }}>
+              {hms.isJoined ? 'Waiting for seller video...' : 'Connecting to stream...'}
+            </Text>
           </View>
         );
       }
@@ -2992,7 +3069,7 @@ export default function LiveAuctionRoom() {
                                 }
                               }}
                             >
-                              <Text style={{ color: '#6B7280', fontSize: 18 }}>▲</Text>
+                              <Icon symbol="chevron.up" fallback="^" size={14} tint="#6B7280" />
                             </TouchableOpacity>
                             <TouchableOpacity
                               disabled={index === biddingItems.length - 1}
@@ -3018,7 +3095,7 @@ export default function LiveAuctionRoom() {
                                 }
                               }}
                             >
-                              <Text style={{ color: '#6B7280', fontSize: 18 }}>▼</Text>
+                              <Icon symbol="chevron.down" fallback="v" size={14} tint="#6B7280" />
                             </TouchableOpacity>
                           </View>
                         )}
@@ -3131,7 +3208,7 @@ export default function LiveAuctionRoom() {
                             <Text style={{ color: '#60A5FA', fontSize: 11, fontWeight: '600' }}>Swap here</Text>
                           )}
                           {!isSeller && (
-                            <Text style={{ color: '#6B7280', fontSize: 11 }}>›</Text>
+                            <Icon symbol="chevron.right" fallback="›" size={13} tint="#6B7280" />
                           )}
                         </TouchableOpacity>
                       </View>
@@ -3196,7 +3273,7 @@ export default function LiveAuctionRoom() {
                           : soldSubTab === 'chat' ? 'Chat'
                           : 'Buy Now'}
                       </Text>
-                      <Text style={{ color: '#4B5563', fontSize: 11 }}>⇄</Text>
+                      <Icon symbol="arrow.left.arrow.right" fallback="↔" size={11} tint="#4B5563" />
                     </TouchableOpacity>
 
                     {/* Sort pill */}
@@ -3216,7 +3293,12 @@ export default function LiveAuctionRoom() {
                         color: soldSort !== 'recent' ? '#F59E0B' : '#6B7280',
                         fontSize: 13, fontWeight: '700',
                       }}>
-                        {soldSort === 'recent' ? '↕' : soldSort === 'high' ? '↓' : '↑'}
+                        <Icon
+                          symbol={soldSort === 'recent' ? 'arrow.up.arrow.down' : soldSort === 'high' ? 'arrow.down' : 'arrow.up'}
+                          fallback={soldSort === 'recent' ? '⇅' : soldSort === 'high' ? '↓' : '↑'}
+                          size={13}
+                          tint={soldSort !== 'recent' ? '#F59E0B' : '#6B7280'}
+                        />
                       </Text>
                       <Text style={{
                         color: soldSort !== 'recent' ? '#F59E0B' : '#6B7280',
@@ -3437,17 +3519,12 @@ export default function LiveAuctionRoom() {
                               ? 'rgba(124,58,237,0.4)'
                               : 'rgba(26,86,219,0.4)',
                         }}>
-                          <Text style={{
-                            fontSize: 10, fontWeight: '700',
-                            color: isBuyNow ? '#10B981' : itemMode === 'chat' ? '#A78BFA' : '#60A5FA',
-                          }}>
-                            <Icon
-                              symbol={isBuyNow ? 'tag.fill' : itemMode === 'chat' ? 'bubble.left.fill' : 'hammer.fill'}
-                              fallback={isBuyNow ? '🏷️' : itemMode === 'chat' ? '💬' : '🔨'}
-                              size={10}
-                              tint={isBuyNow ? '#10B981' : itemMode === 'chat' ? '#A78BFA' : '#60A5FA'}
-                            />
-                          </Text>
+                          <Icon
+                            symbol={isBuyNow ? 'tag.fill' : itemMode === 'chat' ? 'bubble.left.fill' : 'hammer.fill'}
+                            fallback={isBuyNow ? '🏷' : itemMode === 'chat' ? '💬' : '🔨'}
+                            size={12}
+                            tint={isBuyNow ? '#10B981' : itemMode === 'chat' ? '#A78BFA' : '#60A5FA'}
+                          />
                         </View>
                       </TouchableOpacity>
                     );
@@ -3648,12 +3725,57 @@ export default function LiveAuctionRoom() {
                   </View>
                   {/* Seller can remove from buy now */}
                   {isSeller ? (
-                    <View style={{
-                      backgroundColor: '#064E3B', borderRadius: 8,
-                      paddingHorizontal: 10, paddingVertical: 4,
-                    }}>
-                      <Text style={{ color: '#10B981', fontSize: 11, fontWeight: '700' }}>FIXED</Text>
-                    </View>
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: currentItem ? '#1F2937' : '#064E3B',
+                        borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6,
+                      }}
+                      disabled={!!currentItem}
+                      onPress={() => {
+                        if (currentItem) {
+                          Alert.alert('Item Running', 'End or skip the current item first.');
+                          return;
+                        }
+                        Alert.alert(
+                          `Show "${item.title}" live?`,
+                          `Viewers will see a swipe-to-buy button. You can pull it back anytime.`,
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            {
+                              text: 'Show Live',
+                              onPress: () => {
+                                setShowShop(false);
+                                startLiveBuyNow(item.id, user?.id ?? '');
+                                setCurrentItem({
+                                  itemId: item.id,
+                                  title: item.title,
+                                  currentPrice: item.price,
+                                  photos: item.photos,
+                                  totalBids: 0,
+                                  mode: 'buynow',
+                                });
+                                setAuction(prev => {
+                                  if (!prev) return prev;
+                                  return {
+                                    ...prev,
+                                    shopItems: prev.shopItems.map(i =>
+                                      i.id === item.id ? { ...i, status: 'LIVE_BUYNOW' as any } : i
+                                    ),
+                                  };
+                                });
+                              },
+                            },
+                          ],
+                        );
+                      }}
+                    >
+                      <Text style={{
+                        color: currentItem ? '#4B5563' : '#10B981',
+                        fontSize: 11, fontWeight: '700',
+                      }}>
+                        {currentItem ? 'FIXED' : 'SHOW LIVE'}
+                      </Text>
+                    </TouchableOpacity>
                   ) : (
                     <View style={{ flexDirection: 'column', gap: 6 }}>
                       <TouchableOpacity

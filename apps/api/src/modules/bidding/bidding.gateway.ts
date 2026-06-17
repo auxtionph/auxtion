@@ -155,6 +155,7 @@ export class BiddingGateway
     { targetUserId: string; expiresAt: number }
   >();
   private coHostPeerIds = new Map<string, { userId: string; peerId: string }>();
+  private sellerDisconnectTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private readonly biddingService: BiddingService,
@@ -218,6 +219,23 @@ export class BiddingGateway
               });
             }
           });
+
+          // ── Auto-end if seller doesn't return within 3 minutes ──────────
+          const existingTimer = this.sellerDisconnectTimers.get(auctionId);
+          if (existingTimer) clearTimeout(existingTimer);
+
+          const autoEndTimer = setTimeout(
+            () => {
+              this.sellerDisconnectTimers.delete(auctionId);
+              void this.runAutoEnd(auctionId);
+            },
+            3 * 60 * 1000,
+          );
+
+          this.sellerDisconnectTimers.set(auctionId, autoEndTimer);
+          this.logger.log(
+            `Auto-end timer started for auction ${auctionId} — fires in 3 minutes`,
+          );
         }
       }
     }
@@ -266,13 +284,13 @@ export class BiddingGateway
 
     const auction = await this.prisma.auction.findUnique({
       where: { id: payload.auctionId },
-      select: { sellerId: true },
+      select: { sellerId: true, status: true },
     });
     if (auction) {
       this.logger.log(
         `Join payload sellerId: ${payload.sellerId ?? 'none'}, auction sellerId: ${auction.sellerId}`,
       );
-      if (payload.sellerId === auction.sellerId) {
+      if (payload.sellerId === auction.sellerId && auction.status === 'LIVE') {
         if (!this.sellerSockets.has(payload.auctionId)) {
           this.sellerSockets.set(payload.auctionId, new Set());
         }
@@ -281,6 +299,19 @@ export class BiddingGateway
         this.logger.log(
           `Seller socket tracked: ${client.id} for auction ${payload.auctionId} (total: ${this.sellerSockets.get(payload.auctionId)!.size})`,
         );
+
+        // ── Clear auto-end timer if seller rejoins ──────────────────────
+        const pendingAutoEnd = this.sellerDisconnectTimers.get(
+          payload.auctionId,
+        );
+        if (pendingAutoEnd) {
+          clearTimeout(pendingAutoEnd);
+          this.sellerDisconnectTimers.delete(payload.auctionId);
+          this.logger.log(
+            `Auto-end timer CLEARED — seller rejoined auction ${payload.auctionId}`,
+          );
+          // Don't auto-resume — seller will choose via the resume modal
+        }
       }
     }
 
@@ -929,6 +960,13 @@ export class BiddingGateway
 
   @SubscribeMessage('end-auction')
   handleEndAuction(@MessageBody() payload: { auctionId: string }) {
+    // Clear any pending auto-end timer — seller ended manually
+    const pendingTimer = this.sellerDisconnectTimers.get(payload.auctionId);
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      this.sellerDisconnectTimers.delete(payload.auctionId);
+    }
+
     // Demote co-host if present
     void (async () => {
       const a = await this.prisma.auction.findUnique({
@@ -1598,6 +1636,160 @@ export class BiddingGateway
 
     this.server.to(`auction:${payload.auctionId}`).emit('room:roster-updated');
   }
+  private async runAutoEnd(auctionId: string): Promise<void> {
+    this.logger.log(`[AUTO-END] Firing for auction ${auctionId}`);
+
+    const auction = await this.prisma.auction.findUnique({
+      where: { id: auctionId },
+      select: {
+        id: true,
+        status: true,
+        sellerId: true,
+        coHostId: true,
+        hmsRoomId: true,
+      },
+    });
+    if (!auction || auction.status !== 'LIVE') {
+      this.logger.log(`[AUTO-END] Skipped — auction ${auctionId} is not LIVE`);
+      return;
+    }
+
+    // Clear all item timers
+    this.timerState.forEach((_state, itemId) => {
+      if (_state.auctionId === auctionId) this.clearTimer(itemId);
+    });
+
+    // Handle running swipe item — sell to highest bidder if bids exist
+    const liveSwipeItem = await this.prisma.shopItem.findFirst({
+      where: { auctionId, status: 'LIVE', mode: 'auction' },
+    });
+    if (liveSwipeItem) {
+      try {
+        await this.maxBidsService.deactivateForItem(liveSwipeItem.id);
+        const result = await this.biddingService.endItemBidding(
+          auction.sellerId,
+          auctionId,
+          liveSwipeItem.id,
+        );
+        this.server.to(`auction:${auctionId}`).emit('item-ended', {
+          itemId: liveSwipeItem.id,
+          winner: result.winner,
+          timestamp: Date.now(),
+        });
+        if (result.winner) {
+          try {
+            await this.paymentsService.createPaymongoOrder({
+              buyerId: result.winner.userId,
+              sellerId: auction.sellerId,
+              itemId: liveSwipeItem.id,
+              auctionId,
+              amount: result.winner.amount,
+              mode: 'auction',
+            });
+            const itemData = await this.prisma.shopItem.findUnique({
+              where: { id: liveSwipeItem.id },
+              select: { title: true },
+            });
+            void this.notifications.sendToUser(result.winner.userId, {
+              title: '🎉 You won!',
+              body: `You won ${itemData?.title ?? 'an item'} for ₱${(result.winner.amount / 100).toLocaleString()}. Pay now to secure it!`,
+              data: { screen: 'order' },
+            });
+          } catch (e) {
+            this.logger.error(`[AUTO-END] Order creation failed:`, e);
+          }
+        }
+      } catch (e) {
+        this.logger.error(
+          `[AUTO-END] endItemBidding failed, resetting to QUEUED:`,
+          e,
+        );
+        await this.prisma.shopItem.update({
+          where: { id: liveSwipeItem.id },
+          data: { status: 'QUEUED' },
+        });
+      }
+    }
+
+    // Handle running chat item — reset to QUEUED (can't auto-declare winner)
+    const liveChatItem = await this.prisma.shopItem.findFirst({
+      where: { auctionId, status: 'LIVE', mode: 'chat' },
+    });
+    if (liveChatItem) {
+      const originalPrice =
+        liveChatItem.originalPrice > 0
+          ? liveChatItem.originalPrice
+          : liveChatItem.price;
+      await this.prisma.shopItem.update({
+        where: { id: liveChatItem.id },
+        data: { status: 'QUEUED', price: originalPrice },
+      });
+      this.server.to(`auction:${auctionId}`).emit('item-ended', {
+        itemId: liveChatItem.id,
+        winner: null,
+        timestamp: Date.now(),
+      });
+    }
+
+    // Handle live buy now — pull back to AVAILABLE
+    const liveBuyNowItem = await this.prisma.shopItem.findFirst({
+      where: { auctionId, status: 'LIVE_BUYNOW' },
+    });
+    if (liveBuyNowItem) {
+      await this.prisma.shopItem.update({
+        where: { id: liveBuyNowItem.id },
+        data: { status: 'AVAILABLE' },
+      });
+      this.server.to(`auction:${auctionId}`).emit('buynow-pulled', {
+        itemId: liveBuyNowItem.id,
+      });
+    }
+
+    // Demote co-host if present
+    if (auction.coHostId && auction.hmsRoomId) {
+      const info = this.coHostPeerIds.get(auctionId);
+      if (info) {
+        try {
+          await this.streaming.changePeerRole(
+            auction.hmsRoomId,
+            info.peerId,
+            'viewer-realtime',
+          );
+        } catch (e) {
+          this.logger.error(`[AUTO-END] Co-host demote failed:`, e);
+        }
+      }
+      await this.prisma.auction.update({
+        where: { id: auctionId },
+        data: { coHostId: null },
+      });
+      this.coHostPeerIds.delete(auctionId);
+      this.server.to(`auction:${auctionId}`).emit('co-host:left', {
+        auctionId,
+        userId: auction.coHostId,
+        reason: 'auction-ended',
+      });
+    }
+
+    // End auction in DB
+    await this.prisma.auction.update({
+      where: { id: auctionId },
+      data: { status: 'ENDED', endTime: new Date() },
+    });
+
+    // Cleanup in-memory state
+    this.auctionViewers.delete(auctionId);
+    this.auctionRosters.delete(auctionId);
+    this.sellerSockets.delete(auctionId);
+
+    this.server.to(`auction:${auctionId}`).emit('auction-ended', {
+      auctionId,
+      timestamp: Date.now(),
+    });
+
+    this.logger.log(`[AUTO-END] Auction ${auctionId} ended successfully`);
+  }
+
   @SubscribeMessage('host:request-roster')
   handleRequestRoster(
     @ConnectedSocket() client: Socket,
