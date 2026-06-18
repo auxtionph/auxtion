@@ -17,6 +17,7 @@ import { StreamingModule } from './modules/streaming/streaming.module';
 import { MaxBidsModule } from './modules/max-bids/max-bids.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { FollowsModule } from './modules/follows/follows.module';
+import { ShopModule } from './modules/shop/shop.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { FollowsModule } from './modules/follows/follows.module';
     MaxBidsModule,
     NotificationsModule,
     FollowsModule,
+    ShopModule,
   ],
 })
 export class AppModule {}

@@ -112,6 +112,8 @@ model ShopItem {
   originalPrice     Int                @default(0)
   mode              String             @default("auction")
   photos            Json               @default("[]")
+  category          ShopItemCategory?
+  viewCount         Int                @default(0)
   consignedToUserId String?
   maxBids           MaxBid[]
   bids              Bid[]
@@ -367,6 +369,19 @@ enum ShopItemType {
   GIVEAWAY
 }
 
+enum ShopItemCategory {
+  SNEAKERS
+  TRADING_CARDS
+  WATCHES
+  ELECTRONICS
+  COLLECTIBLES
+  CLOTHING
+  ACCESSORIES
+  BOOKS
+  TOYS
+  OTHERS
+}
+
 enum ShopItemStatus {
   AVAILABLE
   QUEUED
@@ -374,6 +389,7 @@ enum ShopItemStatus {
   SOLD
   CANCELLED
   LIVE_BUYNOW
+  STOREFRONT
 }
 
 enum OfferStatus {
