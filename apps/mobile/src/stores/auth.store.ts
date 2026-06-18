@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
+import * as Notifications from 'expo-notifications';
+import { apiClient } from '../services/api/client';
 
 export interface AuthUser {
   id: string;
@@ -30,6 +32,16 @@ export const useAuthStore = create<AuthState>((set) => ({
     await SecureStore.setItemAsync('accessToken', accessToken);
     await SecureStore.setItemAsync('refreshToken', refreshToken);
     set({ user, accessToken, isAuthenticated: true });
+    // Register push token — fire and forget, never block login
+    try {
+      const { status } = await Notifications.getPermissionsAsync();
+      if (status === 'granted') {
+        const { data: token } = await Notifications.getExpoPushTokenAsync();
+        await apiClient.post('/users/me/push-token', { token });
+      }
+    } catch {
+      // non-fatal — push notifications degrade gracefully
+    }
   },
 
   clearAuth: async () => {
