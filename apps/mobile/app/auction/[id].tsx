@@ -203,7 +203,7 @@ export default function AuctionDetailScreen() {
   const isSeller = auction.seller.id === user?.id;
 
   const queuedItems = auction.shopItems.filter(i => i.type !== 'BUY_NOW' && (i.status === 'QUEUED' || i.status === 'LIVE'));
-  const buyNowItems = auction.shopItems.filter(i => i.type === 'BUY_NOW' && i.status !== 'SOLD');
+  const buyNowItems = auction.shopItems.filter(i => i.type === 'BUY_NOW' && i.status !== 'SOLD' && i.status !== 'CANCELLED');
   const liveItem = auction.shopItems.find(i => i.status === 'LIVE');
   const soldItems = auction.shopItems.filter(i => i.status === 'SOLD');
 

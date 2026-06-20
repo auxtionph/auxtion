@@ -1,4 +1,5 @@
 /* eslint-disable */
+
 import {
   Injectable,
   NotFoundException,
@@ -92,6 +93,7 @@ export class ShopService {
           title: true,
           description: true,
           price: true,
+          originalPrice: true,
           photos: true,
           category: true,
           viewCount: true,
@@ -209,7 +211,7 @@ export class ShopService {
       {
         data: {
           attributes: {
-            amount:      item.price * 100,
+            amount:      item.price, // already centavos
             description: item.title,
             remarks:     `auxtion-order-${order.id}`,
           },
@@ -302,14 +304,15 @@ export class ShopService {
   // ─── Seller management ────────────────────────────────────────────────────
 
   async createStorefrontItem(sellerId: string, dto: CreateStorefrontItemDto) {
+    const priceCentavos = dto.price * 100; // mobile sends pesos; app stores centavos everywhere
     return this.prisma.shopItem.create({
       data: {
         sellerId,
         title:         dto.title,
         description:   dto.description,
-        price:         dto.price,
-        minimumOffer:  dto.price,
-        originalPrice: dto.price,
+        price:         priceCentavos,
+        minimumOffer:  priceCentavos,
+        originalPrice: priceCentavos,
         category:      dto.category as ShopItemCategory,
         photos:        dto.photos   as Prisma.InputJsonValue,
         status:        ShopItemStatus.STOREFRONT,
@@ -381,7 +384,7 @@ export class ShopService {
       data: {
         ...(dto.title       !== undefined ? { title: dto.title }                                     : {}),
         ...(dto.description !== undefined ? { description: dto.description }                         : {}),
-        ...(dto.price       !== undefined ? { price: dto.price, minimumOffer: dto.price, originalPrice: dto.price } : {}),
+        ...(dto.price       !== undefined ? { price: dto.price * 100, minimumOffer: dto.price * 100, originalPrice: dto.price * 100 } : {}),
         ...(dto.category    !== undefined ? { category: dto.category as ShopItemCategory }           : {}),
         ...(dto.photos      !== undefined ? { photos: dto.photos as Prisma.InputJsonValue }          : {}),
       },

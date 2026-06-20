@@ -388,7 +388,7 @@ export class AuctionsService {
     if (item.sellerId !== sellerId) {
       throw new ForbiddenException('You do not own this item');
     }
-    if (item.status !== ShopItemStatus.AVAILABLE) {
+    if (item.status !== ShopItemStatus.AVAILABLE && item.status !== ShopItemStatus.STOREFRONT) {
       throw new BadRequestException('Item is not available');
     }
 

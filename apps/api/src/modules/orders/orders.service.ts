@@ -513,7 +513,9 @@ export class OrdersService {
         this.prisma.shopItem.update({
           where: { id: order.itemId },
           data: {
-            status: itemData.auctionId ? 'CANCELLED' : 'AVAILABLE',
+            status: order.mode === 'storefront'
+              ? 'STOREFRONT'
+              : itemData.auctionId ? 'CANCELLED' : 'AVAILABLE',
           },
         }),
       ]);

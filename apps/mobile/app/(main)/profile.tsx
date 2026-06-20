@@ -328,7 +328,7 @@ export default function ProfileScreen() {
   // ── MAIN SCREEN ──────────────────────────────────────────────────────────
   const quickActions = isSeller
     ? [
-        { symbol: 'building.storefront.fill' as SFSymbol, fallback: '🏪', label: 'My Shop', color: '#1A56DB', bg: '#1A56DB22', action: () => router.push('/(main)/sell') },
+        { symbol: 'building.storefront.fill' as SFSymbol, fallback: '🏪', label: 'My Shop', color: '#1A56DB', bg: '#1A56DB22', action: () => router.push('/seller/shop' as any) },
         { symbol: 'shippingbox.fill' as SFSymbol, fallback: '📦', label: 'My Orders', color: '#A78BFA', bg: '#7C3AED22', action: () => router.push('/(main)/activity') },
         { symbol: 'shippingbox.and.arrow.backward.fill' as SFSymbol, fallback: '🚚', label: 'Shipments', color: '#10B981', bg: '#10B98122', action: () => router.push('/seller/orders' as any) },
         { symbol: 'creditcard.fill' as SFSymbol, fallback: '💳', label: 'Payments', color: '#F59E0B', bg: '#F59E0B22', action: () => router.push('/seller/payment-settings' as any) },
@@ -348,7 +348,7 @@ export default function ProfileScreen() {
       symbol: 'building.storefront' as SFSymbol,
       fallback: '🏪',
       label: 'Become a Seller',
-      action: () => router.push('/(main)/sell'),
+      action: () => router.push('/seller/shop' as any),
     }] : []),
   ];
 
