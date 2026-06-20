@@ -47,6 +47,7 @@ interface StorefrontItem {
 
 interface StorefrontMeta {
   liveAuction: { id: string; title: string; hmsRoomId: string } | null;
+  followerCount: number;
 }
 
 type Tab = 'shows' | 'shop';
@@ -135,15 +136,17 @@ export function SellerPublicProfileView({ userId, onBack, embedded, onAuctionPre
       const auctions = auctionsRes.data.data as UserProfile['auctions'];
       setProfile({ ...p, auctions: auctions ?? [] });
       if (followRes) {
-        const d = followRes.data.data as { following: boolean; followerCount: number };
+        const d = followRes.data.data as { following: boolean };
         setFollowing(d.following);
         followStore.set(userId, d.following);
-        setFollowerCount(d.followerCount);
       }
       if (storefrontRes) {
         const sd = storefrontRes.data.data as { items: StorefrontItem[]; seller: StorefrontMeta };
         setStorefrontItems(sd.items ?? []);
         setLiveAuction(sd.seller?.liveAuction ?? null);
+        // Single source of truth for follower count — always available regardless
+        // of whether the viewer is the owner (the follow-status call is skipped for self).
+        setFollowerCount(sd.seller?.followerCount ?? 0);
       }
     } catch { /* ignore */ }
     finally {
