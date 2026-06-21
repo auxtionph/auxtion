@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Patch,
+  Delete,
   Post,
   Body,
   Param,
@@ -11,7 +12,8 @@ import {
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { SaveAddressDto } from './dto/save-address.dto';
-import { SavePaymentMethodsDto } from './dto/save-payment-methods.dto';
+import { CreateAddressDto } from './dto/create-address.dto';
+import { UpdateAddressDto } from './dto/update-address.dto';import { SavePaymentMethodsDto } from './dto/save-payment-methods.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -67,7 +69,35 @@ export class UsersController {
     return this.usersService.savePaymentMethods(user.id, dto);
   }
 
-  @Get(':id')
+// ── Multi-address CRUD ──────────────────────────────────────────────────
+  @Get('me/addresses')
+  listAddresses(@CurrentUser() user: AuthUser) {
+    return this.usersService.listAddresses(user.id);
+  }
+
+  @Post('me/addresses')
+  createAddress(@CurrentUser() user: AuthUser, @Body() dto: CreateAddressDto) {
+    return this.usersService.createAddress(user.id, dto);
+  }
+
+  @Patch('me/addresses/:id')
+  updateAddress(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateAddressDto,
+  ) {
+    return this.usersService.updateAddress(user.id, id, dto);
+  }
+
+  @Patch('me/addresses/:id/default')
+  setDefaultAddress(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.usersService.setDefaultAddress(user.id, id);
+  }
+
+  @Delete('me/addresses/:id')
+  deleteAddress(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.usersService.deleteAddress(user.id, id);
+  }  @Get(':id')
   getUserById(@Param('id') id: string) {
     return this.usersService.getUserById(id);
   }

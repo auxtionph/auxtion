@@ -1,13 +1,15 @@
 import {
   Injectable,
   NotFoundException,
+  ForbiddenException,
   BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { SaveAddressDto } from './dto/save-address.dto';
-import { SavePaymentMethodsDto } from './dto/save-payment-methods.dto';
+import { CreateAddressDto } from './dto/create-address.dto';
+import { UpdateAddressDto } from './dto/update-address.dto';import { SavePaymentMethodsDto } from './dto/save-payment-methods.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
@@ -263,7 +265,113 @@ export class UsersService {
     });
   }
 
-  async savePushToken(userId: string, token: string) {
+// ── Multi-address CRUD ──────────────────────────────────────────────────
+  async listAddresses(userId: string) {
+    return this.prisma.userAddress.findMany({
+      where: { userId },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
+
+  async createAddress(userId: string, dto: CreateAddressDto) {
+    const existingCount = await this.prisma.userAddress.count({ where: { userId } });
+    const shouldBeDefault = existingCount === 0 || dto.isDefault === true;
+
+    if (shouldBeDefault) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const [, address] = await this.prisma.$transaction([
+        this.prisma.userAddress.updateMany({
+          where: { userId, isDefault: true },
+          data: { isDefault: false },
+        }),
+        this.prisma.userAddress.create({
+          data: {
+            userId,
+            name: dto.name,
+            phone: dto.phone,
+            line1: dto.line1,
+            city: dto.city,
+            province: dto.province,
+            postalCode: dto.postalCode,
+            isDefault: true,
+          },
+        }),
+      ]);
+      return address;
+    }
+
+    return this.prisma.userAddress.create({
+      data: {
+        userId,
+        name: dto.name,
+        phone: dto.phone,
+        line1: dto.line1,
+        city: dto.city,
+        province: dto.province,
+        postalCode: dto.postalCode,
+        isDefault: false,
+      },
+    });
+  }
+
+  async updateAddress(userId: string, addressId: string, dto: UpdateAddressDto) {
+    const existing = await this.prisma.userAddress.findUnique({ where: { id: addressId } });
+    if (!existing) throw new NotFoundException('Address not found');
+    if (existing.userId !== userId) throw new ForbiddenException('Not your address');
+
+    return this.prisma.userAddress.update({
+      where: { id: addressId },
+      data: {
+        ...(dto.name       !== undefined ? { name: dto.name }             : {}),
+        ...(dto.phone      !== undefined ? { phone: dto.phone }           : {}),
+        ...(dto.line1      !== undefined ? { line1: dto.line1 }           : {}),
+        ...(dto.city       !== undefined ? { city: dto.city }             : {}),
+        ...(dto.province   !== undefined ? { province: dto.province }     : {}),
+        ...(dto.postalCode !== undefined ? { postalCode: dto.postalCode } : {}),
+      },
+    });
+  }
+
+  async setDefaultAddress(userId: string, addressId: string) {
+    const existing = await this.prisma.userAddress.findUnique({ where: { id: addressId } });
+    if (!existing) throw new NotFoundException('Address not found');
+    if (existing.userId !== userId) throw new ForbiddenException('Not your address');
+
+    await this.prisma.$transaction([
+      this.prisma.userAddress.updateMany({
+        where: { userId, isDefault: true },
+        data: { isDefault: false },
+      }),
+      this.prisma.userAddress.update({
+        where: { id: addressId },
+        data: { isDefault: true },
+      }),
+    ]);
+    return { message: 'Default address updated' };
+  }
+
+  async deleteAddress(userId: string, addressId: string) {
+    const existing = await this.prisma.userAddress.findUnique({ where: { id: addressId } });
+    if (!existing) throw new NotFoundException('Address not found');
+    if (existing.userId !== userId) throw new ForbiddenException('Not your address');
+
+    await this.prisma.userAddress.delete({ where: { id: addressId } });
+
+    // If the deleted address was the default, promote the most recently created remaining one
+    if (existing.isDefault) {
+      const next = await this.prisma.userAddress.findFirst({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (next) {
+        await this.prisma.userAddress.update({
+          where: { id: next.id },
+          data: { isDefault: true },
+        });
+      }
+    }
+    return { message: 'Address deleted' };
+  }  async savePushToken(userId: string, token: string) {
     await this.prisma.user.update({
       where: { id: userId },
       data: { pushToken: token },
