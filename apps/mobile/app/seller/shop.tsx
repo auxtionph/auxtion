@@ -34,6 +34,17 @@ interface StorefrontItem {
   viewCount: number;
   status: string;
   createdAt: string;
+  order?: {
+    id: string;
+    status: string;
+    shippingName?: string;
+    shippingPhone?: string;
+    shippingLine1?: string;
+    shippingCity?: string;
+    shippingProvince?: string;
+    shippingPostalCode?: string;
+    buyer?: { displayName: string };
+  } | null;
 }
 
 interface Stats {
@@ -74,6 +85,7 @@ export default function SellerShopScreen() {
   const [loading, setLoading]   = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab]   = useState<'listed' | 'sold'>('listed');
+  const [soldDetailItem, setSoldDetailItem] = useState<StorefrontItem | null>(null);
 
   // Add/Edit modal
   const [modalVisible, setModalVisible] = useState(false);
@@ -229,10 +241,19 @@ export default function SellerShopScreen() {
   };
 
   // ── Item card ─────────────────────────────────────────────────────────────
+  const openSoldDetail = (item: StorefrontItem) => {
+    setSoldDetailItem(item);
+  };
+
   const renderItem = ({ item }: { item: StorefrontItem }) => {
     const photo = item.photos?.[0];
     return (
-      <View style={styles.card}>
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={activeTab === 'sold' ? 0.8 : 1}
+        onPress={activeTab === 'sold' ? () => openSoldDetail(item) : undefined}
+        disabled={activeTab !== 'sold'}
+      >
         {/* Photo */}
         <View style={styles.cardPhoto}>
           {photo ? (
@@ -267,7 +288,7 @@ export default function SellerShopScreen() {
             </TouchableOpacity>
           </View>
         )}
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -531,6 +552,99 @@ export default function SellerShopScreen() {
               <Text style={styles.pullCancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Sold item detail — buyer + shipping info */}
+      <Modal
+        visible={!!soldDetailItem}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSoldDetailItem(null)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' }}
+          activeOpacity={1}
+          onPress={() => setSoldDetailItem(null)}
+        >
+          {soldDetailItem && (
+            <View
+              style={{
+                backgroundColor: '#13192A', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+                padding: 20, paddingBottom: insets.bottom + 24,
+              }}
+              onStartShouldSetResponder={() => true}
+            >
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.15)', alignSelf: 'center', marginBottom: 18 }} />
+
+              <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '800', letterSpacing: 0.3, marginBottom: 4 }}>SOLD</Text>
+              <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', marginBottom: 2 }}>{soldDetailItem.title}</Text>
+              <Text style={{ color: '#10B981', fontSize: 15, fontWeight: '700', marginBottom: 16 }}>{formatPHP(soldDetailItem.price)}</Text>
+
+              {soldDetailItem.order ? (
+                <>
+                  <View style={{
+                    flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10,
+                  }}>
+                    <SymbolView name="person.fill" size={13} tintColor="#A78BFA" />
+                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
+                      {soldDetailItem.order.buyer?.displayName ?? 'Buyer'}
+                    </Text>
+                    <View style={{
+                      backgroundColor: 'rgba(167,139,250,0.15)', borderRadius: 999,
+                      paddingHorizontal: 8, paddingVertical: 2, marginLeft: 4,
+                    }}>
+                      <Text style={{ color: '#A78BFA', fontSize: 10, fontWeight: '700' }}>
+                        {soldDetailItem.order.status.replace(/_/g, ' ')}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {soldDetailItem.order.shippingName ? (
+                    <View style={{ backgroundColor: '#1c2742', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+                      <Text style={{ color: '#6B7280', fontSize: 10.5, fontWeight: '700', letterSpacing: 0.3, marginBottom: 6 }}>
+                        SHIP TO
+                      </Text>
+                      <Text style={{ color: '#fff', fontSize: 13.5, fontWeight: '600' }}>
+                        {soldDetailItem.order.shippingName}
+                      </Text>
+                      <Text style={{ color: '#9CA3AF', fontSize: 12.5, marginTop: 1 }}>
+                        {soldDetailItem.order.shippingPhone}
+                      </Text>
+                      <Text style={{ color: '#9CA3AF', fontSize: 12.5, marginTop: 4, lineHeight: 17 }}>
+                        {soldDetailItem.order.shippingLine1}, {soldDetailItem.order.shippingCity}, {soldDetailItem.order.shippingProvince} {soldDetailItem.order.shippingPostalCode}
+                      </Text>
+                    </View>
+                  ) : (
+                    <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 16 }}>
+                      No shipping address on file for this order yet.
+                    </Text>
+                  )}
+
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#1A56DB', borderRadius: 14, paddingVertical: 15,
+                      alignItems: 'center', marginBottom: 10,
+                    }}
+                    onPress={() => { setSoldDetailItem(null); router.push('/seller/orders' as any); }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Manage in Orders</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 16 }}>
+                  No order details found for this sale.
+                </Text>
+              )}
+
+              <TouchableOpacity
+                style={{ paddingVertical: 12, alignItems: 'center' }}
+                onPress={() => setSoldDetailItem(null)}
+              >
+                <Text style={{ color: '#6B7280', fontWeight: '600', fontSize: 14 }}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </TouchableOpacity>
       </Modal>
     </View>

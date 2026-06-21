@@ -347,8 +347,41 @@ export class ShopService {
       this.prisma.shopItem.count({ where }),
     ]);
 
+
+    // Attach buyer + shipping info for sold items so sellers can see who bought what
+    const soldItemIds = items.filter(i => i.status === ShopItemStatus.SOLD).map(i => i.id);
+    const ordersByItemId = new Map<string, unknown>();
+    if (soldItemIds.length > 0) {
+      const orders = await this.prisma.order.findMany({
+        where: { itemId: { in: soldItemIds } },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          itemId: true,
+          status: true,
+          shippingName: true,
+          shippingPhone: true,
+          shippingLine1: true,
+          shippingCity: true,
+          shippingProvince: true,
+          shippingPostalCode: true,
+          buyer: { select: { displayName: true } },
+        },
+      });
+      for (const order of orders) {
+        if (!ordersByItemId.has(order.itemId)) {
+          ordersByItemId.set(order.itemId, order);
+        }
+      }
+    }
+
+    const itemsWithOrder = items.map(item => ({
+      ...item,
+      order: ordersByItemId.get(item.id) ?? null,
+    }));
+
     return {
-      items,
+      items: itemsWithOrder,
       meta: { total, page: opts.page, limit: opts.limit, pages: Math.ceil(total / opts.limit) },
     };
   }
