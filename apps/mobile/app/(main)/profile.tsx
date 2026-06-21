@@ -144,6 +144,8 @@ export default function ProfileScreen() {
   const [phone, setPhone] = useState('');
   const [saving, setSaving] = useState(false);
   const [profileStatus, setProfileStatus] = useState<ProfileStatus | null>(null);
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
 
   const isSeller = user?.role === 'SELLER';
 
@@ -156,9 +158,20 @@ export default function ProfileScreen() {
     }
   }, []);
 
+  const fetchFollowCounts = useCallback(async () => {
+    try {
+      const res = await apiClient.get('/users/me');
+      const d = res.data.data as { followerCount?: number; followingCount?: number };
+      setFollowerCount(d.followerCount ?? 0);
+      setFollowingCount(d.followingCount ?? 0);
+    } catch {
+      // silently fail
+    }
+  }, []);
   useEffect(() => {
     void fetchProfileStatus();
-  }, [fetchProfileStatus]);
+    void fetchFollowCounts();
+  }, [fetchProfileStatus, fetchFollowCounts]);
 
   const completionPct = (() => {
     if (!profileStatus) return 0;
@@ -328,16 +341,14 @@ export default function ProfileScreen() {
   // ── MAIN SCREEN ──────────────────────────────────────────────────────────
   const quickActions = isSeller
     ? [
-        { symbol: 'building.storefront.fill' as SFSymbol, fallback: '🏪', label: 'My Shop', color: '#1A56DB', bg: '#1A56DB22', action: () => router.push('/seller/shop' as any) },
+        { symbol: 'storefront.fill' as SFSymbol, fallback: '🏪', label: 'My Shop', color: '#1A56DB', bg: '#1A56DB22', action: () => router.push('/seller/shop' as any) },
         { symbol: 'shippingbox.fill' as SFSymbol, fallback: '📦', label: 'My Orders', color: '#A78BFA', bg: '#7C3AED22', action: () => router.push('/(main)/activity') },
         { symbol: 'shippingbox.and.arrow.backward.fill' as SFSymbol, fallback: '🚚', label: 'Shipments', color: '#10B981', bg: '#10B98122', action: () => router.push('/seller/orders' as any) },
-        { symbol: 'creditcard.fill' as SFSymbol, fallback: '💳', label: 'Payments', color: '#F59E0B', bg: '#F59E0B22', action: () => router.push('/seller/payment-settings' as any) },
       ]
     : [
         { symbol: 'shippingbox.fill' as SFSymbol, fallback: '📦', label: 'My Orders', color: '#60A5FA', bg: '#1A56DB22', action: () => router.push('/(main)/activity') },
         { symbol: 'bell.fill' as SFSymbol, fallback: '🔔', label: 'Activity', color: '#A78BFA', bg: '#7C3AED22', action: () => router.push('/(main)/activity') },
         { symbol: 'mappin.circle.fill' as SFSymbol, fallback: '📍', label: 'Address', color: '#10B981', bg: '#10B98122', action: () => router.push('/profile/address' as any) },
-        { symbol: 'creditcard.fill' as SFSymbol, fallback: '💳', label: 'Payment', color: '#F59E0B', bg: '#F59E0B22', action: () => router.push('/seller/payment-settings' as any) },
       ];
 
   const settingsItems = [
@@ -414,10 +425,13 @@ export default function ProfileScreen() {
               {isSeller ? 'SELLER' : 'BUYER'}
             </Text>
           </View>
+          <Text style={{ color: '#6B7280', fontSize: 12.5, marginTop: 10 }}>
+            <Text style={{ color: '#fff', fontWeight: '700' }}>{followerCount}</Text> followers · <Text style={{ color: '#fff', fontWeight: '700' }}>{followingCount}</Text> following
+          </Text>
         </View>
 
         {/* Completion banner — buyers only when incomplete */}
-        {!isSeller && profileStatus && !profileStatus.isComplete && (
+        {profileStatus && !profileStatus.isComplete && (
           <TouchableOpacity
             style={{
               marginHorizontal: 20, marginBottom: 20,
@@ -435,7 +449,7 @@ export default function ProfileScreen() {
             <Icon symbol="exclamationmark.triangle.fill" fallback="⚠️" size={20} tint="#F59E0B" />
             <View style={{ flex: 1 }}>
               <Text style={{ color: '#F59E0B', fontWeight: '700', fontSize: 13 }}>
-                Complete your profile to bid
+                {isSeller ? 'Complete your profile' : 'Complete your profile to bid'}
               </Text>
               <Text style={{ color: '#9CA3AF', fontSize: 11, marginTop: 2 }}>
                 {!profileStatus.hasAddress && !profileStatus.hasPaymentMethod

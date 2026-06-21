@@ -56,12 +56,20 @@ export class UsersService {
           },
           take: 1,
         },
+        _count: {
+          select: { followers: true, following: true },
+        },
       },
     });
     if (!user) throw new NotFoundException('User not found');
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-    const { addresses, ...rest } = user;
-    return { ...rest, address: addresses[0] ?? null };
+    const { addresses, _count, ...rest } = user;
+    return {
+      ...rest,
+      address: addresses[0] ?? null,
+      followerCount: _count.followers,
+      followingCount: _count.following,
+    };
   }
 
   // ── Profile Status (used by mobile gate check) ──────────────────────────
