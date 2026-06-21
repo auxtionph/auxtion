@@ -89,6 +89,7 @@ export default function SellerShopScreen() {
 
   // Add/Edit modal
   const [modalVisible, setModalVisible] = useState(false);
+  const [focusedField, setFocusedField] = useState<string | null>(null);
   const [editingItem, setEditingItem]   = useState<StorefrontItem | null>(null);
   const [form, setForm]                 = useState(EMPTY_FORM);
   const [saving, setSaving]             = useState(false);
@@ -247,19 +248,25 @@ export default function SellerShopScreen() {
 
   const renderItem = ({ item }: { item: StorefrontItem }) => {
     const photo = item.photos?.[0];
+    const isSold = activeTab === 'sold';
     return (
       <TouchableOpacity
         style={styles.card}
-        activeOpacity={activeTab === 'sold' ? 0.8 : 1}
-        onPress={activeTab === 'sold' ? () => openSoldDetail(item) : undefined}
-        disabled={activeTab !== 'sold'}
+        activeOpacity={isSold ? 0.8 : 1}
+        onPress={isSold ? () => openSoldDetail(item) : undefined}
+        disabled={!isSold}
       >
         {/* Photo */}
         <View style={styles.cardPhoto}>
           {photo ? (
             <Image source={{ uri: photo }} style={StyleSheet.absoluteFill} resizeMode="cover" />
           ) : (
-            <SymbolView name="photo" size={28} tintColor="#374151" />
+            <SymbolView name="shippingbox.fill" size={30} tintColor="#374151" />
+          )}
+          {isSold && (
+            <View style={styles.soldRibbonWrap}>
+              <Text style={styles.soldRibbonText}>SOLD</Text>
+            </View>
           )}
         </View>
 
@@ -267,15 +274,29 @@ export default function SellerShopScreen() {
         <View style={styles.cardInfo}>
           <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
           <Text style={styles.cardCategory}>{CATEGORY_LABELS[item.category] ?? item.category}</Text>
-          <Text style={styles.cardPrice}>{formatPHP(item.price)}</Text>
-          <View style={styles.cardMeta}>
-            <SymbolView name="eye" size={11} tintColor="#6B7280" />
-            <Text style={styles.cardViews}>{item.viewCount} views</Text>
+          <View style={[styles.priceTag, isSold && styles.priceTagSold]}>
+            <View style={[styles.priceTagDot, isSold && styles.priceTagDotSold]} />
+            <Text style={[styles.priceTagText, isSold && styles.priceTagTextSold]}>
+              {formatPHP(item.price)}
+            </Text>
           </View>
+          {isSold && item.order ? (
+            <View style={styles.buyerPill}>
+              <SymbolView name="person.fill" size={9} tintColor="#A78BFA" />
+              <Text style={styles.buyerPillText} numberOfLines={1}>
+                {item.order.buyer?.displayName ?? 'Buyer'} · {item.order.status.replace(/_/g, ' ')}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.cardMeta}>
+              <SymbolView name="eye" size={11} tintColor="#6B7280" />
+              <Text style={styles.cardViews}>{item.viewCount} views</Text>
+            </View>
+          )}
         </View>
 
         {/* Actions */}
-        {activeTab === 'listed' && (
+        {activeTab === 'listed' ? (
           <View style={styles.cardActions}>
             <TouchableOpacity style={styles.actionBtn} onPress={() => openEdit(item)}>
               <SymbolView name="pencil" size={15} tintColor="#A78BFA" />
@@ -287,6 +308,8 @@ export default function SellerShopScreen() {
               <SymbolView name="trash" size={15} tintColor="#EF4444" />
             </TouchableOpacity>
           </View>
+        ) : (
+          <SymbolView name="chevron.right" size={14} tintColor="#4B5563" />
         )}
       </TouchableOpacity>
     );
@@ -318,16 +341,19 @@ export default function SellerShopScreen() {
           {stats && (
             <View style={styles.statsRow}>
               <View style={styles.statCard}>
+                <SymbolView name="tag.fill" size={15} tintColor="#A78BFA" style={styles.statIcon} />
                 <Text style={styles.statValue}>{stats.listed}</Text>
                 <Text style={styles.statLabel}>Listed</Text>
               </View>
               <View style={styles.statDivider} />
               <View style={styles.statCard}>
+                <SymbolView name="checkmark.circle.fill" size={15} tintColor="#10B981" style={styles.statIcon} />
                 <Text style={styles.statValue}>{stats.sold}</Text>
                 <Text style={styles.statLabel}>Sold</Text>
               </View>
               <View style={styles.statDivider} />
               <View style={styles.statCard}>
+                <SymbolView name="eye.fill" size={15} tintColor="#6B7280" style={styles.statIcon} />
                 <Text style={styles.statValue}>
                   {stats.totalViews >= 1000 ? `${(stats.totalViews / 1000).toFixed(1)}k` : stats.totalViews}
                 </Text>
@@ -408,56 +434,94 @@ export default function SellerShopScreen() {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {/* Title */}
-            <Text style={styles.fieldLabel}>TITLE</Text>
-            <TextInput
-              style={styles.fieldInput}
-              value={form.title}
-              onChangeText={v => setForm(p => ({ ...p, title: v }))}
-              placeholder="e.g. Nike Air Max 90"
-              placeholderTextColor="#374151"
-              maxLength={120}
-              returnKeyType="next"
-            />
+            {/* Form */}
+            <View style={styles.formCard}>
+              <View style={styles.formRow}>
+                {focusedField === 'title' && <View style={styles.formRowBar} />}
+                <View style={styles.formRowInner}>
+                  <Text style={[
+                    styles.formRowLabel,
+                    focusedField === 'title' ? styles.formRowLabelActive : (form.title ? styles.formRowLabelFilled : null),
+                  ]}>
+                    TITLE
+                  </Text>
+                  <TextInput
+                    style={styles.formRowInput}
+                    value={form.title}
+                    onChangeText={v => setForm(p => ({ ...p, title: v }))}
+                    onFocus={() => setFocusedField('title')}
+                    onBlur={() => setFocusedField(null)}
+                    placeholder="e.g. Nike Air Max 90"
+                    placeholderTextColor="rgba(75,85,99,0.55)"
+                    maxLength={120}
+                    returnKeyType="next"
+                  />
+                </View>
+              </View>
 
-            {/* Description */}
-            <Text style={styles.fieldLabel}>DESCRIPTION</Text>
-            <TextInput
-              style={[styles.fieldInput, styles.fieldTextArea]}
-              value={form.description}
-              onChangeText={v => setForm(p => ({ ...p, description: v }))}
-              placeholder="Condition, size, details..."
-              placeholderTextColor="#374151"
-              maxLength={1000}
-              multiline
-              numberOfLines={4}
-            />
+              <View style={styles.formRow}>
+                {focusedField === 'description' && <View style={styles.formRowBar} />}
+                <View style={styles.formRowInner}>
+                  <Text style={[
+                    styles.formRowLabel,
+                    focusedField === 'description' ? styles.formRowLabelActive : (form.description ? styles.formRowLabelFilled : null),
+                  ]}>
+                    DESCRIPTION
+                  </Text>
+                  <TextInput
+                    style={[styles.formRowInput, styles.formRowTextArea]}
+                    value={form.description}
+                    onChangeText={v => setForm(p => ({ ...p, description: v }))}
+                    onFocus={() => setFocusedField('description')}
+                    onBlur={() => setFocusedField(null)}
+                    placeholder="Condition, size, details..."
+                    placeholderTextColor="rgba(75,85,99,0.55)"
+                    maxLength={1000}
+                    multiline
+                    numberOfLines={3}
+                  />
+                </View>
+              </View>
 
-            {/* Price */}
-            <Text style={styles.fieldLabel}>PRICE (₱)</Text>
-            <TextInput
-              style={styles.fieldInput}
-              value={form.price}
-              onChangeText={v => setForm(p => ({ ...p, price: v.replace(/[^0-9]/g, '') }))}
-              placeholder="e.g. 1500"
-              placeholderTextColor="#374151"
-              keyboardType="numeric"
-              returnKeyType="done"
-            />
+              <View style={styles.formRow}>
+                {focusedField === 'price' && <View style={styles.formRowBar} />}
+                <View style={styles.formRowInner}>
+                  <Text style={[
+                    styles.formRowLabel,
+                    focusedField === 'price' ? styles.formRowLabelActive : (form.price ? styles.formRowLabelFilled : null),
+                  ]}>
+                    PRICE (₱)
+                  </Text>
+                  <TextInput
+                    style={styles.formRowInput}
+                    value={form.price}
+                    onChangeText={v => setForm(p => ({ ...p, price: v.replace(/[^0-9]/g, '') }))}
+                    onFocus={() => setFocusedField('price')}
+                    onBlur={() => setFocusedField(null)}
+                    placeholder="e.g. 1500"
+                    placeholderTextColor="rgba(75,85,99,0.55)"
+                    keyboardType="numeric"
+                    returnKeyType="done"
+                  />
+                </View>
+              </View>
 
-            {/* Category */}
-            <Text style={styles.fieldLabel}>CATEGORY</Text>
-            <TouchableOpacity
-              style={styles.categorySelect}
-              onPress={() => setCategoryOpen(true)}
-            >
-              <Text style={styles.categorySelectText}>
-                {CATEGORY_LABELS[form.category] ?? form.category}
-              </Text>
-              <SymbolView name="chevron.down" size={13} tintColor="#6B7280" />
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.formRow, styles.formRowLast]}
+                onPress={() => setCategoryOpen(true)}
+              >
+                <View style={styles.formRowInner}>
+                  <Text style={[styles.formRowLabel, styles.formRowLabelFilled]}>CATEGORY</Text>
+                  <View style={styles.categoryValueRow}>
+                    <Text style={styles.formRowInput}>
+                      {CATEGORY_LABELS[form.category] ?? form.category}
+                    </Text>
+                    <SymbolView name="chevron.down" size={13} tintColor="#6B7280" />
+                  </View>
+                </View>
+              </TouchableOpacity>
+            </View>
 
-            {/* Photo placeholder — reuses existing upload flow */}
             <Text style={styles.fieldLabel}>PHOTOS</Text>
             <View style={styles.photoPlaceholder}>
               <SymbolView name="photo.badge.plus" size={28} tintColor="#374151" />
@@ -465,7 +529,6 @@ export default function SellerShopScreen() {
                 Photo upload coming in next update
               </Text>
             </View>
-
             <View style={{ height: 40 }} />
           </ScrollView>
         </KeyboardAvoidingView>
@@ -713,6 +776,10 @@ const styles = StyleSheet.create({
     width: 80, height: 80,
     backgroundColor: '#1F2937',
     alignItems: 'center', justifyContent: 'center',
+    borderRadius: 12,
+    overflow: 'hidden',
+    position: 'relative',
+    marginLeft: 10,
   },
   cardInfo: { flex: 1, paddingHorizontal: 12, paddingVertical: 10, gap: 2 },
   cardTitle: { fontSize: 14, fontWeight: '600', color: '#F9FAFB' },
@@ -853,4 +920,74 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pullCancelText: { fontSize: 15, fontWeight: '600', color: '#9CA3AF' },
+
+  // Stats icons
+  statIcon: { marginBottom: 4 },
+
+  // Price tag chip
+  priceTag: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    alignSelf: 'flex-start',
+    backgroundColor: '#A78BFA',
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    marginTop: 2,
+  },
+  priceTagSold: { backgroundColor: '#10B981' },
+  priceTagDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: '#1a1130' },
+  priceTagDotSold: { backgroundColor: '#06281c' },
+  priceTagText: { color: '#1a1130', fontWeight: '800', fontSize: 12.5 },
+  priceTagTextSold: { color: '#06281c' },
+
+  // Sold ribbon on photo
+  soldRibbonWrap: {
+    position: 'absolute', top: 4, left: -18, width: 80,
+    backgroundColor: '#10B981', transform: [{ rotate: '-40deg' }],
+    paddingVertical: 1, alignItems: 'center',
+  },
+  soldRibbonText: { color: '#06281c', fontSize: 8, fontWeight: '800', letterSpacing: 0.3 },
+
+  // Buyer pill on sold cards
+  buyerPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(167,139,250,0.10)',
+    borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3,
+    marginTop: 6, maxWidth: '100%',
+  },
+  buyerPillText: { color: '#A78BFA', fontSize: 10.5, fontWeight: '700' },
+
+  // Unified glass form card
+  formCard: {
+    backgroundColor: '#10172A',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+    overflow: 'hidden',
+    marginBottom: 16,
+  },
+  formRow: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+    position: 'relative',
+    minHeight: 64,
+  },
+  formRowLast: { borderBottomWidth: 0 },
+  formRowBar: {
+    position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
+    backgroundColor: '#A78BFA',
+    borderTopLeftRadius: 3, borderBottomLeftRadius: 3,
+    zIndex: 1,
+  },
+  formRowInner: { paddingHorizontal: 16, paddingTop: 11, paddingBottom: 10, justifyContent: 'center' },
+  formRowLabel: {
+    fontSize: 10, fontWeight: '700', letterSpacing: 0.7,
+    textTransform: 'uppercase', color: '#374151', marginBottom: 4,
+  },
+  formRowLabelFilled: { color: '#6B7280' },
+  formRowLabelActive: { color: '#A78BFA' },
+  formRowInput: { fontSize: 15, color: '#F9FAFB', padding: 0, margin: 0, fontWeight: '500' },
+  formRowTextArea: { minHeight: 50, textAlignVertical: 'top' },
+  categoryValueRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
 });
