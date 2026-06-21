@@ -42,10 +42,25 @@ export class UsersService {
         sellerApplication: {
           select: { status: true, createdAt: true },
         },
+        addresses: {
+          where: { isDefault: true },
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            line1: true,
+            city: true,
+            province: true,
+            postalCode: true,
+          },
+          take: 1,
+        },
       },
     });
     if (!user) throw new NotFoundException('User not found');
-    return user;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const { addresses, ...rest } = user;
+    return { ...rest, address: addresses[0] ?? null };
   }
 
   // ── Profile Status (used by mobile gate check) ──────────────────────────

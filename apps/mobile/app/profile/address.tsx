@@ -65,7 +65,8 @@ export default function AddressScreen() {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await apiClient.get('/users/me');
+        const res = await apiClient.get('/users/me');
+        const data = res.data.data;
         if (data.address) {
           setForm({
             name:       data.address.name       ?? '',
