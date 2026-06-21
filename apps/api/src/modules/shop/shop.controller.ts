@@ -68,8 +68,9 @@ export class ShopController {
   buyStorefrontItem(
     @Param('id') id: string,
     @CurrentUser() user: Record<string, any>,
+    @Body() body: { addressId?: string },
   ) {
-    return this.shopService.buyItem(id, user.id as string);
+    return this.shopService.buyItem(id, user.id as string, body?.addressId);
   }
 
   @Get('search')

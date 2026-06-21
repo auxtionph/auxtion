@@ -7,7 +7,6 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import { SaveAddressDto } from './dto/save-address.dto';
 import { CreateAddressDto } from './dto/create-address.dto';
 import { UpdateAddressDto } from './dto/update-address.dto';import { SavePaymentMethodsDto } from './dto/save-payment-methods.dto';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -126,33 +125,6 @@ export class UsersService {
     };
   }
 
-  // ── Save / Update Default Address ──────────────────────────────────────
-  async saveAddress(userId: string, dto: SaveAddressDto) {
-    // Unset any existing default, then create new default in one transaction
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const [, address] = await this.prisma.$transaction([
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      this.prisma.userAddress.updateMany({
-        where: { userId, isDefault: true },
-        data: { isDefault: false },
-      }),
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      this.prisma.userAddress.create({
-        data: {
-          userId,
-          name: dto.name,
-          phone: dto.phone,
-          line1: dto.line1,
-          city: dto.city,
-          province: dto.province,
-          postalCode: dto.postalCode,
-          isDefault: true,
-        },
-      }),
-    ]);
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-    return address;
-  }
 
   // ── Save / Update Payment Methods ──────────────────────────────────────
   async savePaymentMethods(userId: string, dto: SavePaymentMethodsDto) {

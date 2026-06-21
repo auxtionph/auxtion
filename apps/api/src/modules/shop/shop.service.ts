@@ -142,7 +142,7 @@ export class ShopService {
     return item;
   }
 
-  async buyItem(itemId: string, buyerId: string) {
+  async buyItem(itemId: string, buyerId: string, addressId?: string) {
     const item = await this.prisma.shopItem.findUnique({
       where: { id: itemId },
       include: { seller: true },
@@ -155,13 +155,14 @@ export class ShopService {
       throw new BadRequestException('Cannot buy your own item');
     }
 
-    // Address gate
-    const buyer = await this.prisma.user.findUnique({
-      where: { id: buyerId },
-      include: { addresses: { take: 1 } },
-    });
-    if (!buyer) throw new NotFoundException('Buyer not found');
-    const address = buyer.addresses[0];
+    // Address gate — use the explicitly chosen address if provided, else the buyer's default
+    const address = addressId
+      ? await this.prisma.userAddress.findFirst({
+          where: { id: addressId, userId: buyerId },
+        })
+      : await this.prisma.userAddress.findFirst({
+          where: { userId: buyerId, isDefault: true },
+        });
     if (!address) {
       throw new BadRequestException('Please add a shipping address before purchasing');
     }

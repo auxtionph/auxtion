@@ -11,7 +11,6 @@ import {
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import { SaveAddressDto } from './dto/save-address.dto';
 import { CreateAddressDto } from './dto/create-address.dto';
 import { UpdateAddressDto } from './dto/update-address.dto';import { SavePaymentMethodsDto } from './dto/save-payment-methods.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -48,10 +47,6 @@ export class UsersController {
     return this.usersService.updateProfile(user.id, dto);
   }
 
-  @Post('me/address')
-  saveAddress(@CurrentUser() user: AuthUser, @Body() dto: SaveAddressDto) {
-    return this.usersService.saveAddress(user.id, dto);
-  }
 
   @Post('me/push-token')
   savePushToken(

@@ -1,186 +1,94 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  TextInput,
   TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
   Alert,
   ActivityIndicator,
-  Keyboard,
-  InputAccessoryView,
+  RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
-import { SymbolView, SFSymbol } from 'expo-symbols';
-import { LinearGradient } from 'expo-linear-gradient';
+import { router, useFocusEffect } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import { apiClient } from '@/services/api/client';
 
-const NUMERIC_ACCESSORY_ID = 'auxtion-numeric-dismiss';
-
-// Location autofill: requires expo-location dev build — added in next native rebuild
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-type AddressForm = {
+interface Address {
+  id: string;
   name: string;
   phone: string;
   line1: string;
   city: string;
   province: string;
   postalCode: string;
-};
+  isDefault: boolean;
+}
 
-type FieldDef = {
-  key: keyof AddressForm;
-  label: string;
-  placeholder: string;
-  keyboard: 'default' | 'numeric' | 'phone-pad';
-  icon: SFSymbol;
-  half?: boolean;
-};
-
-const FIELDS: FieldDef[] = [
-  { key: 'name',       label: 'Full Name',           placeholder: 'e.g. Juan dela Cruz',         keyboard: 'default',   icon: 'person.fill' },
-  { key: 'phone',      label: 'Phone Number',         placeholder: 'e.g. 09171234567',           keyboard: 'phone-pad', icon: 'phone.fill' },
-  { key: 'line1',      label: 'Street / Barangay',    placeholder: 'e.g. 123 Rizal St., Brgy. San Jose', keyboard: 'default', icon: 'house.fill' },
-  { key: 'city',       label: 'City / Municipality',  placeholder: 'e.g. Quezon City',           keyboard: 'default',   icon: 'building.2.fill', half: true },
-  { key: 'province',   label: 'Province',             placeholder: 'e.g. Metro Manila',          keyboard: 'default',   icon: 'map.fill',         half: true },
-  { key: 'postalCode', label: 'Postal Code',          placeholder: 'e.g. 1100',                  keyboard: 'numeric',   icon: 'number' },
-];
-
-const LAST_KEY: keyof AddressForm = 'postalCode';
-const EMPTY_FORM: AddressForm = { name: '', phone: '', line1: '', city: '', province: '', postalCode: '' };
-
-// ─── Component ───────────────────────────────────────────────────────────────
-export default function AddressScreen() {
+export default function AddressListScreen() {
   const insets = useSafeAreaInsets();
-  const [form, setForm]             = useState<AddressForm>(EMPTY_FORM);
-  const [loading, setLoading]       = useState(true);
-  const [saving, setSaving]         = useState(false);
-  const [focusedKey, setFocusedKey] = useState<keyof AddressForm | null>(null);
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyId, setBusyId]       = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await apiClient.get('/users/me');
-        const data = res.data.data;
-        if (data.address) {
-          setForm({
-            name:       data.address.name       ?? '',
-            phone:      data.address.phone      ?? '',
-            line1:      data.address.line1      ?? '',
-            city:       data.address.city       ?? '',
-            province:   data.address.province   ?? '',
-            postalCode: data.address.postalCode ?? '',
-          });
-        }
-      } catch { /* non-fatal */ }
-      finally { setLoading(false); }
-    })();
+  const fetchAddresses = useCallback(async () => {
+    try {
+      const res = await apiClient.get('/users/me/addresses');
+      setAddresses(res.data.data ?? []);
+    } catch {
+      /* non-fatal */
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  const handleSave = async () => {
-    const { name, phone, line1, city, province, postalCode } = form;
-    if (!name || !phone || !line1 || !city || !province || !postalCode) {
-      Alert.alert('Missing Info', 'Please fill in all address fields.');
-      return;
-    }
-    setSaving(true);
+  useFocusEffect(
+    useCallback(() => {
+      void fetchAddresses();
+    }, [fetchAddresses]),
+  );
+
+  const handleSetDefault = async (id: string) => {
+    setBusyId(id);
     try {
-      await apiClient.post('/users/me/address', form);
-      router.back();
+      await apiClient.patch(`/users/me/addresses/${id}/default`);
+      void fetchAddresses();
     } catch {
-      Alert.alert('Error', 'Failed to save address. Please try again.');
-    } finally { setSaving(false); }
+      Alert.alert('Error', 'Could not set default address.');
+    } finally {
+      setBusyId(null);
+    }
   };
 
-  // ─── Field renderer ────────────────────────────────────────────────────
-  const renderFieldCell = (field: FieldDef) => {
-    const focused = focusedKey === field.key;
-    const filled  = !!form[field.key];
-    const isLastField = field.key === LAST_KEY;
-    return (
-      <>
-        {focused && <View style={styles.activeBar} />}
-        <View style={styles.cellInner}>
-          <View style={styles.labelRow}>
-            <SymbolView
-              name={field.icon}
-              size={11}
-              tintColor={focused ? '#A78BFA' : filled ? '#6B7280' : '#374151'}
-              weight="semibold"
-            />
-            <Text style={[styles.cellLabel, focused && styles.cellLabelFocused, filled && !focused && styles.cellLabelFilled]}>
-              {field.label}
-            </Text>
-          </View>
-          <TextInput
-            style={[styles.cellInput, filled && styles.cellInputFilled]}
-            value={form[field.key]}
-            onChangeText={v => setForm(prev => ({ ...prev, [field.key]: v }))}
-            onFocus={() => setFocusedKey(field.key)}
-            onBlur={() => setFocusedKey(null)}
-            placeholder={field.placeholder}
-            placeholderTextColor="rgba(75,85,99,0.55)"
-            keyboardType={field.keyboard}
-            autoCorrect={false}
-            autoCapitalize={field.key === 'postalCode' || field.key === 'phone' ? 'none' : 'words'}
-            returnKeyType={isLastField ? 'done' : 'next'}
-            onSubmitEditing={isLastField ? Keyboard.dismiss : undefined}
-            blurOnSubmit={isLastField}
-            selectionColor="#A78BFA"
-            inputAccessoryViewID={
-              Platform.OS === 'ios' && (field.keyboard === 'numeric' || field.keyboard === 'phone-pad')
-                ? NUMERIC_ACCESSORY_ID
-                : undefined
+  const handleDelete = (address: Address) => {
+    Alert.alert(
+      'Remove Address',
+      `Remove "${address.name}'s" address? This can't be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            setBusyId(address.id);
+            try {
+              await apiClient.delete(`/users/me/addresses/${address.id}`);
+              void fetchAddresses();
+            } catch {
+              Alert.alert('Error', 'Could not remove address.');
+            } finally {
+              setBusyId(null);
             }
-          />
-        </View>
-      </>
+          },
+        },
+      ],
     );
   };
 
-  const renderField = (field: FieldDef, isLast = false) => (
-    <View key={field.key} style={[styles.row, isLast && styles.rowLast]}>
-      {renderFieldCell(field)}
-    </View>
-  );
-
-  const renderHalfPair = (left: FieldDef, right: FieldDef, isLast = false) => (
-    <View key={`pair-${left.key}`} style={[styles.halfRow, isLast && styles.rowLast]}>
-      <View style={styles.halfCell}>{renderFieldCell(left)}</View>
-      <View style={styles.halfDivider} />
-      <View style={styles.halfCell}>{renderFieldCell(right)}</View>
-    </View>
-  );
-
-  const renderFields = () => {
-    const elements: React.ReactNode[] = [];
-    let i = 0;
-    while (i < FIELDS.length) {
-      const field = FIELDS[i];
-      const isLast = i >= FIELDS.length - 1;
-      if (field.half && FIELDS[i + 1]?.half) {
-        elements.push(renderHalfPair(field, FIELDS[i + 1], i + 1 >= FIELDS.length - 1));
-        i += 2;
-      } else {
-        elements.push(renderField(field, isLast));
-        i++;
-      }
-    }
-    return elements;
-  };
-
-  // ─── Completion summary ────────────────────────────────────────────────
-  const filledCount = Object.values(form).filter(Boolean).length;
-  const totalCount  = FIELDS.length;
-  const isComplete  = filledCount === totalCount;
-
   return (
-    <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <View style={styles.root}>
       {/* Header */}
       <View style={[styles.header, { paddingTop: insets.top }]}>
         <TouchableOpacity
@@ -190,101 +98,107 @@ export default function AddressScreen() {
         >
           <SymbolView name="chevron.left" size={20} tintColor="#E5E7EB" weight="semibold" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Shipping Address</Text>
+        <Text style={styles.headerTitle}>Shipping Addresses</Text>
         <View style={styles.headerSpacer} />
       </View>
 
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 32 }]}
-        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { setRefreshing(true); void fetchAddresses(); }}
+            tintColor="#A78BFA"
+          />
+        }
       >
         {loading ? (
           <ActivityIndicator color="#A78BFA" style={{ marginTop: 64 }} />
-        ) : (
-          <>
-            {/* Hero — icon + tagline */}
-            <View style={styles.hero}>
-              <View style={styles.heroIconWrap}>
-                <LinearGradient
-                  colors={['rgba(167,139,250,0.18)', 'rgba(167,139,250,0.04)']}
-                  style={styles.heroIconBg}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                />
-                <SymbolView name="shippingbox.fill" size={26} tintColor="#A78BFA" />
-              </View>
-              <Text style={styles.heroTitle}>Where do we ship your wins?</Text>
-              <Text style={styles.heroSubtitle}>
-                Sellers use this address to send items you win at auction.
-              </Text>
+        ) : addresses.length === 0 ? (
+          <View style={styles.emptyState}>
+            <View style={styles.emptyIconWrap}>
+              <SymbolView name="shippingbox.fill" size={28} tintColor="#A78BFA" />
             </View>
-
-            {/* Card */}
-            <View style={styles.card}>
-              {renderFields()}
-            </View>
-
-            {/* Progress badge */}
-            <View style={styles.progressRow}>
-              <SymbolView
-                name={isComplete ? 'checkmark.circle.fill' : 'circle.dotted'}
-                size={14}
-                tintColor={isComplete ? '#10B981' : '#6B7280'}
-                weight="semibold"
-              />
-              <Text style={[styles.progressText, isComplete && styles.progressTextDone]}>
-                {isComplete ? 'All set — ready to save' : `${filledCount} of ${totalCount} fields complete`}
-              </Text>
-            </View>
-
-            {/* Save */}
-            <TouchableOpacity
-              style={[styles.saveBtn, (saving || !isComplete) && styles.saveBtnDisabled]}
-              onPress={handleSave}
-              disabled={saving}
-              activeOpacity={0.85}
-            >
-              {saving
-                ? <ActivityIndicator color="#fff" size="small" />
-                : (
-                  <>
-                    <Text style={styles.saveBtnText}>Save Address</Text>
-                    <SymbolView name="arrow.right" size={15} tintColor="#fff" weight="semibold" />
-                  </>
-                )
-              }
-            </TouchableOpacity>
-
-            {/* Trust footer */}
-            <View style={styles.trustRow}>
-              <SymbolView name="lock.fill" size={11} tintColor="#4B5563" />
-              <Text style={styles.trustText}>Only shared with sellers of items you win</Text>
-            </View>
-          </>
-        )}
-      </ScrollView>
-      {Platform.OS === 'ios' && (
-        <InputAccessoryView nativeID={NUMERIC_ACCESSORY_ID}>
-          <View style={styles.accessory}>
-            <TouchableOpacity onPress={Keyboard.dismiss} style={styles.accessoryBtn} hitSlop={{ top: 8, bottom: 8, left: 16, right: 16 }}>
-              <Text style={styles.accessoryBtnText}>Done</Text>
-            </TouchableOpacity>
+            <Text style={styles.emptyTitle}>No addresses yet</Text>
+            <Text style={styles.emptySubtitle}>
+              Add a shipping address so sellers know where to send your wins.
+            </Text>
           </View>
-        </InputAccessoryView>
-      )}
-    </KeyboardAvoidingView>
+        ) : (
+          addresses.map((addr) => (
+            <View key={addr.id} style={styles.card}>
+              {addr.isDefault && (
+                <View style={styles.defaultBadge}>
+                  <SymbolView name="checkmark.circle.fill" size={11} tintColor="#10B981" weight="semibold" />
+                  <Text style={styles.defaultBadgeText}>Default</Text>
+                </View>
+              )}
+
+              <Text style={styles.cardName}>{addr.name}</Text>
+              <Text style={styles.cardPhone}>{addr.phone}</Text>
+              <Text style={styles.cardAddress} numberOfLines={2}>
+                {addr.line1}, {addr.city}, {addr.province} {addr.postalCode}
+              </Text>
+
+              <View style={styles.cardActions}>
+                {!addr.isDefault && (
+                  <TouchableOpacity
+                    style={styles.actionBtn}
+                    onPress={() => void handleSetDefault(addr.id)}
+                    disabled={busyId === addr.id}
+                  >
+                    {busyId === addr.id ? (
+                      <ActivityIndicator size="small" color="#A78BFA" />
+                    ) : (
+                      <Text style={styles.actionBtnText}>Set as Default</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={() => router.push(`/profile/address-form?id=${addr.id}` as any)}
+                >
+                  <SymbolView name="pencil" size={13} tintColor="#9CA3AF" weight="semibold" />
+                  <Text style={styles.actionBtnTextSecondary}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={() => handleDelete(addr)}
+                  disabled={busyId === addr.id}
+                >
+                  <SymbolView name="trash" size={13} tintColor="#EF4444" weight="semibold" />
+                  <Text style={styles.actionBtnTextDanger}>Remove</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))
+        )}
+
+        <TouchableOpacity
+          style={styles.addBtn}
+          onPress={() => router.push('/profile/address-form' as any)}
+          activeOpacity={0.85}
+        >
+          <SymbolView name="plus" size={15} tintColor="#A78BFA" weight="semibold" />
+          <Text style={styles.addBtnText}>Add New Address</Text>
+        </TouchableOpacity>
+
+        <View style={styles.trustRow}>
+          <SymbolView name="lock.fill" size={11} tintColor="#4B5563" />
+          <Text style={styles.trustText}>Only shared with sellers of items you win</Text>
+        </View>
+      </ScrollView>
+    </View>
   );
 }
 
-// ─── Styles ──────────────────────────────────────────────────────────────────
 const DIVIDER = 'rgba(255,255,255,0.06)';
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0B0F17' },
 
-  // Header
   header: {
     backgroundColor: '#0B0F17',
     flexDirection: 'row',
@@ -298,136 +212,64 @@ const styles = StyleSheet.create({
   headerTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600', color: '#F9FAFB', letterSpacing: -0.3 },
   headerSpacer: { width: 36 },
 
-  // Scroll
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 20, paddingTop: 20, gap: 18 },
+  scrollContent: { paddingHorizontal: 20, paddingTop: 20, gap: 14 },
 
-  // Hero
-  hero: { alignItems: 'center', paddingTop: 12, paddingBottom: 4, gap: 12 },
-  heroIconWrap: {
+  emptyState: { alignItems: 'center', paddingTop: 56, gap: 12, paddingHorizontal: 24 },
+  emptyIconWrap: {
     width: 64, height: 64, borderRadius: 20,
+    backgroundColor: 'rgba(167,139,250,0.10)',
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: 'rgba(167,139,250,0.18)',
-    overflow: 'hidden',
   },
-  heroIconBg: { ...StyleSheet.absoluteFillObject },
-  heroTitle: {
-    fontSize: 19, fontWeight: '700', color: '#F9FAFB',
-    letterSpacing: -0.4, textAlign: 'center',
-  },
-  heroSubtitle: {
-    fontSize: 13, color: '#6B7280', textAlign: 'center',
-    lineHeight: 18, paddingHorizontal: 24, maxWidth: 320,
-  },
+  emptyTitle: { fontSize: 17, fontWeight: '700', color: '#F9FAFB' },
+  emptySubtitle: { fontSize: 13, color: '#6B7280', textAlign: 'center', lineHeight: 18 },
 
-  // Card
   card: {
     backgroundColor: '#10172A',
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.07)',
-    overflow: 'hidden',
+    padding: 16,
   },
+  defaultBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(16,185,129,0.12)',
+    borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3,
+    marginBottom: 10,
+  },
+  defaultBadgeText: { color: '#10B981', fontSize: 10.5, fontWeight: '700' },
 
-  // Row
-  row: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: DIVIDER,
-    position: 'relative',
-    minHeight: 70,
-  },
-  rowLast: { borderBottomWidth: 0 },
-  cellInner: { flex: 1, paddingHorizontal: 18, paddingTop: 12, paddingBottom: 11, justifyContent: 'center' },
-  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
-  cellLabel: {
-    fontSize: 10, fontWeight: '700', letterSpacing: 0.8,
-    textTransform: 'uppercase', color: '#374151',
-  },
-  cellLabelFilled: { color: '#6B7280' },
-  cellLabelFocused: { color: '#A78BFA' },
-  cellInput: {
-    fontSize: 15.5,
-    color: '#9CA3AF',
-    padding: 0,
-    margin: 0,
-    fontWeight: '500',
-  },
-  cellInputFilled: { color: '#F9FAFB', fontWeight: '500' },
+  cardName: { fontSize: 15.5, fontWeight: '700', color: '#F9FAFB' },
+  cardPhone: { fontSize: 13, color: '#9CA3AF', marginTop: 2 },
+  cardAddress: { fontSize: 13, color: '#6B7280', marginTop: 6, lineHeight: 18 },
 
-  // Active bar
-  activeBar: {
-    position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
-    backgroundColor: '#A78BFA',
-    borderTopLeftRadius: 3, borderBottomLeftRadius: 3,
-    zIndex: 1,
+  cardActions: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    marginTop: 14, paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: DIVIDER,
   },
-
-  // Half-width pair
-  halfRow: {
-    flexDirection: 'row',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: DIVIDER,
-    minHeight: 70,
+  actionBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 10, paddingVertical: 8, paddingHorizontal: 11,
   },
-  halfCell: { flex: 1, position: 'relative' },
-  halfDivider: { width: StyleSheet.hairlineWidth, backgroundColor: DIVIDER },
+  actionBtnText: { color: '#A78BFA', fontSize: 12.5, fontWeight: '700' },
+  actionBtnTextSecondary: { color: '#9CA3AF', fontSize: 12.5, fontWeight: '600' },
+  actionBtnTextDanger: { color: '#EF4444', fontSize: 12.5, fontWeight: '600' },
 
-  // Progress
-  progressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 2,
+  addBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    borderWidth: 1, borderColor: 'rgba(167,139,250,0.3)', borderStyle: 'dashed',
+    borderRadius: 14, paddingVertical: 15,
+    marginTop: 4,
   },
-  progressText: { fontSize: 12, fontWeight: '500', color: '#6B7280', letterSpacing: -0.1 },
-  progressTextDone: { color: '#10B981' },
+  addBtnText: { color: '#A78BFA', fontSize: 14.5, fontWeight: '700' },
 
-  // Save
-  saveBtn: {
-    backgroundColor: '#1A56DB',
-    borderRadius: 14,
-    paddingVertical: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    shadowColor: '#1A56DB',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    elevation: 6,
-  },
-  saveBtnDisabled: { opacity: 0.5, shadowOpacity: 0 },
-  saveBtnText: { fontSize: 16, fontWeight: '600', color: '#fff', letterSpacing: -0.2 },
-
-  // Trust
   trustRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingTop: 4,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingTop: 8,
   },
   trustText: { fontSize: 11, color: '#4B5563', fontWeight: '500', letterSpacing: -0.05 },
-
-  // Keyboard accessory
-  accessory: {
-    backgroundColor: '#161B27',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(255,255,255,0.08)',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    alignItems: 'flex-end',
-  },
-  accessoryBtn: {
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-  },
-  accessoryBtnText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#A78BFA',
-    letterSpacing: -0.2,
-  },
 });
