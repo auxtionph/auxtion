@@ -50,6 +50,17 @@ interface StorefrontMeta {
   followerCount: number;
 }
 
+interface SavedAddress {
+  id: string;
+  name: string;
+  phone: string;
+  line1: string;
+  city: string;
+  province: string;
+  postalCode: string;
+  isDefault: boolean;
+}
+
 type Tab = 'shows' | 'shop';
 type SortKey = 'newest' | 'price_low' | 'price_high' | 'most_viewed';
 
@@ -109,6 +120,12 @@ export function SellerPublicProfileView({ userId, onBack, embedded, onAuctionPre
   const [selectedItem, setSelectedItem] = useState<StorefrontItem | null>(null);
   const [buySheetOpen, setBuySheetOpen] = useState(false);
   const [buying, setBuying] = useState(false);
+
+  // Shipping address for checkout
+  const [addresses, setAddresses] = useState<SavedAddress[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [addressPickerOpen, setAddressPickerOpen] = useState(false);
+  const [loadingAddresses, setLoadingAddresses] = useState(false);
 
   const viewedItemIdsRef = useRef<Set<string>>(new Set());
 
@@ -180,6 +197,22 @@ export function SellerPublicProfileView({ userId, onBack, embedded, onAuctionPre
     }
   };
 
+  const fetchAddressesForCheckout = async () => {
+    setLoadingAddresses(true);
+    try {
+      const res = await apiClient.get('/users/me/addresses');
+      const list: SavedAddress[] = res.data.data ?? [];
+      setAddresses(list);
+      const def = list.find(a => a.isDefault) ?? list[0] ?? null;
+      setSelectedAddressId(def?.id ?? null);
+    } catch {
+      setAddresses([]);
+      setSelectedAddressId(null);
+    } finally {
+      setLoadingAddresses(false);
+    }
+  };
+
   const openBuyNow = (item: StorefrontItem) => {
     if (user?.id === userId) {
       router.push('/seller/shop' as any);
@@ -187,6 +220,7 @@ export function SellerPublicProfileView({ userId, onBack, embedded, onAuctionPre
     }
     setSelectedItem(item);
     setBuySheetOpen(true);
+    void fetchAddressesForCheckout();
   };
 
   const buyFromDetail = () => {
@@ -202,6 +236,7 @@ export function SellerPublicProfileView({ userId, onBack, embedded, onAuctionPre
     setTimeout(() => {
       setSelectedItem(item);
       setBuySheetOpen(true);
+      void fetchAddressesForCheckout();
     }, 300);
   };
 
@@ -209,7 +244,9 @@ export function SellerPublicProfileView({ userId, onBack, embedded, onAuctionPre
     if (!selectedItem || buying) return;
     setBuying(true);
     try {
-      const res = await apiClient.post(`/shop-items/${selectedItem.id}/buy`);
+      const res = await apiClient.post(`/shop-items/${selectedItem.id}/buy`, {
+        ...(selectedAddressId ? { addressId: selectedAddressId } : {}),
+      });
       const { checkoutUrl } = res.data.data as { checkoutUrl: string };
       setBuySheetOpen(false);
       await Linking.openURL(checkoutUrl);
@@ -814,7 +851,13 @@ export function SellerPublicProfileView({ userId, onBack, embedded, onAuctionPre
       </Modal>
 
       {/* Buy Now confirmation sheet */}
-      <Modal visible={buySheetOpen} transparent animationType="slide" onRequestClose={() => setBuySheetOpen(false)}>
+      <Modal
+        visible={buySheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setBuySheetOpen(false)}
+        onDismiss={() => setAddressPickerOpen(false)}
+      >
         <TouchableOpacity
           style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' }}
           activeOpacity={1}
@@ -827,65 +870,162 @@ export function SellerPublicProfileView({ userId, onBack, embedded, onAuctionPre
             >
               <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.15)', alignSelf: 'center', marginBottom: 18 }} />
 
-              <View style={{ flexDirection: 'row', gap: 14, marginBottom: 20 }}>
-                <View style={{ width: 64, height: 64, borderRadius: 12, backgroundColor: '#1F2937', overflow: 'hidden' }}>
-                  {(selectedItem.photos ?? [])[0]?.url ? (
-                    <Image source={{ uri: selectedItem.photos[0].url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-                  ) : (
-                    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ fontSize: 24 }}>📦</Text>
+              {addressPickerOpen ? (
+                /* ── Address picker view (swapped in place of confirmation) ── */
+                <>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+                    <TouchableOpacity onPress={() => setAddressPickerOpen(false)} style={{ padding: 4, marginRight: 4 }}>
+                      <Text style={{ color: '#A78BFA', fontSize: 18 }}>‹</Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>Choose shipping address</Text>
+                  </View>
+                  <ScrollView style={{ maxHeight: 340 }}>
+                    {addresses.map(addr => {
+                      const isSelected = addr.id === selectedAddressId;
+                      return (
+                        <TouchableOpacity
+                          key={addr.id}
+                          style={{
+                            padding: 12, borderRadius: 12,
+                            backgroundColor: isSelected ? 'rgba(167,139,250,0.10)' : '#1c2742',
+                            borderWidth: isSelected ? 1 : 0, borderColor: 'rgba(167,139,250,0.3)',
+                            marginBottom: 8,
+                          }}
+                          onPress={() => { setSelectedAddressId(addr.id); setAddressPickerOpen(false); }}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text style={{ color: isSelected ? '#A78BFA' : '#fff', fontSize: 13.5, fontWeight: '700' }}>{addr.name}</Text>
+                            {addr.isDefault && (
+                              <View style={{ backgroundColor: 'rgba(16,185,129,0.15)', borderRadius: 999, paddingHorizontal: 6, paddingVertical: 1.5 }}>
+                                <Text style={{ color: '#10B981', fontSize: 9, fontWeight: '700' }}>DEFAULT</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={{ color: '#6B7280', fontSize: 12, marginTop: 2 }} numberOfLines={2}>
+                            {addr.line1}, {addr.city}, {addr.province} {addr.postalCode}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12 }}
+                    onPress={() => { setBuySheetOpen(false); router.push('/profile/address-form' as any); }}
+                  >
+                    <Text style={{ color: '#A78BFA', fontSize: 13, fontWeight: '700' }}>+ Add New Address</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                /* ── Confirmation view ── */
+                <>
+                  <View style={{ flexDirection: 'row', gap: 14, marginBottom: 20 }}>
+                    <View style={{ width: 64, height: 64, borderRadius: 12, backgroundColor: '#1F2937', overflow: 'hidden' }}>
+                      {(selectedItem.photos ?? [])[0]?.url ? (
+                        <Image source={{ uri: selectedItem.photos[0].url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                      ) : (
+                        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontSize: 24 }}>📦</Text>
+                        </View>
+                      )}
                     </View>
+                    <View style={{ flex: 1, justifyContent: 'center' }}>
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }} numberOfLines={2}>{selectedItem.title}</Text>
+                      <Text style={{ color: '#10B981', fontWeight: '800', fontSize: 18, marginTop: 4 }}>{formatPHP(selectedItem.price)}</Text>
+                    </View>
+                  </View>
+
+                  {/* Ship to */}
+                  {loadingAddresses ? (
+                    <View style={{ paddingVertical: 14, alignItems: 'center' }}>
+                      <ActivityIndicator size="small" color="#A78BFA" />
+                    </View>
+                  ) : addresses.length === 0 ? (
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row', alignItems: 'center', gap: 8,
+                        backgroundColor: 'rgba(167,139,250,0.10)', borderWidth: 1, borderColor: 'rgba(167,139,250,0.3)',
+                        borderRadius: 10, padding: 12, marginBottom: 16,
+                      }}
+                      onPress={() => { setBuySheetOpen(false); router.push('/profile/address-form' as any); }}
+                    >
+                      <Text style={{ fontSize: 14 }}>📦</Text>
+                      <Text style={{ color: '#A78BFA', fontSize: 13, fontWeight: '700', flex: 1 }}>
+                        Add a shipping address to continue
+                      </Text>
+                      <Text style={{ color: '#A78BFA', fontSize: 13, fontWeight: '700' }}>Add →</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row', alignItems: 'center', gap: 10,
+                        backgroundColor: '#1c2742', borderRadius: 12, padding: 12, marginBottom: 16,
+                      }}
+                      onPress={() => setAddressPickerOpen(true)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ fontSize: 16 }}>📍</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: '#6B7280', fontSize: 10.5, fontWeight: '700', letterSpacing: 0.3 }}>SHIP TO</Text>
+                        {(() => {
+                          const addr = addresses.find(a => a.id === selectedAddressId) ?? addresses[0];
+                          return (
+                            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', marginTop: 1 }} numberOfLines={1}>
+                              {addr.name} · {addr.city}, {addr.province}
+                            </Text>
+                          );
+                        })()}
+                      </View>
+                      <Text style={{ color: '#A78BFA', fontSize: 12.5, fontWeight: '700' }}>Change</Text>
+                    </TouchableOpacity>
                   )}
-                </View>
-                <View style={{ flex: 1, justifyContent: 'center' }}>
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }} numberOfLines={2}>{selectedItem.title}</Text>
-                  <Text style={{ color: '#10B981', fontWeight: '800', fontSize: 18, marginTop: 4 }}>{formatPHP(selectedItem.price)}</Text>
-                </View>
-              </View>
 
-              <Text style={{ color: '#9CA3AF', fontSize: 13, textAlign: 'center', marginBottom: 12, lineHeight: 18 }}>
-                You'll be taken to a secure checkout to pay via GCash or card.
-              </Text>
-
-              <View style={{
-                flexDirection: 'row', alignItems: 'flex-start', gap: 8,
-                backgroundColor: 'rgba(245,158,11,0.10)', borderWidth: 1, borderColor: 'rgba(245,158,11,0.3)',
-                borderRadius: 10, padding: 10, marginBottom: 20,
-              }}>
-                <Text style={{ fontSize: 14 }}>⏱️</Text>
-                <Text style={{ color: '#F59E0B', fontSize: 12, flex: 1, lineHeight: 16 }}>
-                  This item will be reserved for you for 10 minutes. If payment isn't completed in time, it will be relisted for other buyers.
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                style={{
-                  backgroundColor: '#10B981', borderRadius: 14, paddingVertical: 16,
-                  alignItems: 'center', marginBottom: 10, opacity: buying ? 0.6 : 1,
-                }}
-                onPress={() => void confirmBuyNow()}
-                disabled={buying}
-              >
-                {buying ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
-                    Confirm Purchase — {formatPHP(selectedItem.price)}
+                  <Text style={{ color: '#9CA3AF', fontSize: 13, textAlign: 'center', marginBottom: 12, lineHeight: 18 }}>
+                    You'll be taken to a secure checkout to pay via GCash or card.
                   </Text>
-                )}
-              </TouchableOpacity>
 
-              <TouchableOpacity
-                style={{ paddingVertical: 14, alignItems: 'center' }}
-                onPress={() => setBuySheetOpen(false)}
-                disabled={buying}
-              >
-                <Text style={{ color: '#6B7280', fontWeight: '600', fontSize: 15 }}>Cancel</Text>
-              </TouchableOpacity>
+                  <View style={{
+                    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+                    backgroundColor: 'rgba(245,158,11,0.10)', borderWidth: 1, borderColor: 'rgba(245,158,11,0.3)',
+                    borderRadius: 10, padding: 10, marginBottom: 20,
+                  }}>
+                    <Text style={{ fontSize: 14 }}>⏱️</Text>
+                    <Text style={{ color: '#F59E0B', fontSize: 12, flex: 1, lineHeight: 16 }}>
+                      This item will be reserved for you for 10 minutes. If payment isn't completed in time, it will be relisted for other buyers.
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: '#10B981', borderRadius: 14, paddingVertical: 16,
+                      alignItems: 'center', marginBottom: 10,
+                      opacity: (buying || addresses.length === 0) ? 0.5 : 1,
+                    }}
+                    onPress={() => void confirmBuyNow()}
+                    disabled={buying || addresses.length === 0}
+                  >
+                    {buying ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+                        Confirm Purchase — {formatPHP(selectedItem.price)}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{ paddingVertical: 14, alignItems: 'center' }}
+                    onPress={() => setBuySheetOpen(false)}
+                    disabled={buying}
+                  >
+                    <Text style={{ color: '#6B7280', fontWeight: '600', fontSize: 15 }}>Cancel</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
           )}
         </TouchableOpacity>
       </Modal>
+
     </ScrollView>
   );
 }
