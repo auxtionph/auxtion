@@ -6,6 +6,9 @@ import {
   ScrollView,
   TextInput,
   ActivityIndicator,
+  Modal,
+  FlatList,
+  Image,
   Platform,
 } from 'react-native';
 import { useState, useEffect, useCallback } from 'react';
@@ -168,6 +171,44 @@ export default function ProfileScreen() {
       // silently fail
     }
   }, []);
+  const [followSheetOpen, setFollowSheetOpen] = useState<'followers' | 'following' | null>(null);
+  const [followList, setFollowList] = useState<{ id: string; displayName: string; avatarUrl?: string; role: string; sellerTier?: string }[]>([]);
+  const [loadingFollowList, setLoadingFollowList] = useState(false);
+  const [loadingMoreFollow, setLoadingMoreFollow] = useState(false);
+  const [followPage, setFollowPage] = useState(1);
+  const [followHasMore, setFollowHasMore] = useState(false);
+  const openFollowSheet = async (type: 'followers' | 'following') => {
+    setFollowSheetOpen(type);
+    setLoadingFollowList(true);
+    setFollowPage(1);
+    try {
+      const res = await apiClient.get(`/users/me/${type}`, { params: { page: 1, limit: 50 } });
+      const data = res.data.data as { items: typeof followList; meta: { hasMore: boolean } };
+      setFollowList(data.items ?? []);
+      setFollowHasMore(data.meta?.hasMore ?? false);
+    } catch {
+      setFollowList([]);
+      setFollowHasMore(false);
+    } finally {
+      setLoadingFollowList(false);
+    }
+  };
+  const loadMoreFollow = async () => {
+    if (!followSheetOpen || !followHasMore || loadingMoreFollow) return;
+    setLoadingMoreFollow(true);
+    try {
+      const nextPage = followPage + 1;
+      const res = await apiClient.get(`/users/me/${followSheetOpen}`, { params: { page: nextPage, limit: 50 } });
+      const data = res.data.data as { items: typeof followList; meta: { hasMore: boolean } };
+      setFollowList(prev => [...prev, ...(data.items ?? [])]);
+      setFollowHasMore(data.meta?.hasMore ?? false);
+      setFollowPage(nextPage);
+    } catch {
+      // silently fail — user can pull to retry by reopening
+    } finally {
+      setLoadingMoreFollow(false);
+    }
+  };
   useEffect(() => {
     void fetchProfileStatus();
     void fetchFollowCounts();
@@ -425,9 +466,19 @@ export default function ProfileScreen() {
               {isSeller ? 'SELLER' : 'BUYER'}
             </Text>
           </View>
-          <Text style={{ color: '#6B7280', fontSize: 12.5, marginTop: 10 }}>
-            <Text style={{ color: '#fff', fontWeight: '700' }}>{followerCount}</Text> followers · <Text style={{ color: '#fff', fontWeight: '700' }}>{followingCount}</Text> following
-          </Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 5, marginTop: 10 }}>
+            <TouchableOpacity onPress={() => void openFollowSheet('followers')}>
+              <Text style={{ color: '#6B7280', fontSize: 12.5 }}>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>{followerCount}</Text> followers
+              </Text>
+            </TouchableOpacity>
+            <Text style={{ color: '#6B7280', fontSize: 12.5 }}>·</Text>
+            <TouchableOpacity onPress={() => void openFollowSheet('following')}>
+              <Text style={{ color: '#6B7280', fontSize: 12.5 }}>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>{followingCount}</Text> following
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Completion banner — buyers only when incomplete */}
@@ -551,6 +602,86 @@ export default function ProfileScreen() {
           Auxtion v1.0.0
         </Text>
       </ScrollView>
+
+      {/* Followers / Following bottom sheet */}
+      <Modal
+        visible={!!followSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setFollowSheetOpen(null)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' }}
+          activeOpacity={1}
+          onPress={() => setFollowSheetOpen(null)}
+        >
+          <View
+            style={{
+              backgroundColor: '#13192A', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+              paddingTop: 12, paddingHorizontal: 20, paddingBottom: insets.bottom + 24,
+              maxHeight: '70%',
+            }}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.15)', alignSelf: 'center', marginBottom: 16 }} />
+            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 14, textAlign: 'center' }}>
+              {followSheetOpen === 'followers' ? 'Followers' : 'Following'}
+            </Text>
+
+            {loadingFollowList ? (
+              <ActivityIndicator color="#A78BFA" style={{ paddingVertical: 32 }} />
+            ) : followList.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 32 }}>
+                <Text style={{ color: '#6B7280', fontSize: 13 }}>
+                  {followSheetOpen === 'followers' ? "No followers yet" : "Not following anyone yet"}
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={followList}
+                keyExtractor={(person) => person.id}
+                showsVerticalScrollIndicator={false}
+                onEndReachedThreshold={0.4}
+                onEndReached={() => void loadMoreFollow()}
+                ListFooterComponent={loadingMoreFollow ? (
+                  <ActivityIndicator color="#A78BFA" style={{ paddingVertical: 16 }} />
+                ) : null}
+                renderItem={({ item: person }) => (
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 }}
+                    onPress={() => {
+                      setFollowSheetOpen(null);
+                      router.push(`/seller/${person.id}` as any);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={{
+                      width: 42, height: 42, borderRadius: 21,
+                      backgroundColor: '#1A56DB', alignItems: 'center', justifyContent: 'center',
+                      overflow: 'hidden',
+                    }}>
+                      {person.avatarUrl ? (
+                        <Image source={{ uri: person.avatarUrl }} style={{ width: 42, height: 42 }} />
+                      ) : (
+                        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>
+                          {person.displayName.charAt(0).toUpperCase()}
+                        </Text>
+                      )}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{person.displayName}</Text>
+                      <Text style={{ color: '#6B7280', fontSize: 11.5, marginTop: 1 }}>
+                        {person.role === 'SELLER' ? `${person.sellerTier ?? 'NEW'} Seller` : 'Buyer'}
+                      </Text>
+                    </View>
+                    <Icon symbol="chevron.right" fallback="›" size={13} tint="#4B5563" />
+                  </TouchableOpacity>
+                )}
+              />
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }

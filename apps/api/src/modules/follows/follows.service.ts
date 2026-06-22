@@ -108,4 +108,59 @@ export class FollowsService {
           : null,
     };
   }
+
+  // ── List Followers / Following ─────────────────────────────────────────────
+  async listFollowers(userId: string, page = 1, limit = 50) {
+    const [rows, total] = await Promise.all([
+      this.prisma.sellerFollower.findMany({
+        where: { sellerId: userId },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        select: {
+          user: {
+            select: {
+              id: true,
+              displayName: true,
+              avatarUrl: true,
+              role: true,
+              sellerTier: true,
+            },
+          },
+        },
+      }),
+      this.prisma.sellerFollower.count({ where: { sellerId: userId } }),
+    ]);
+    return {
+      items: rows.map((r) => r.user),
+      meta: { total, page, limit, hasMore: page * limit < total },
+    };
+  }
+
+  async listFollowing(userId: string, page = 1, limit = 50) {
+    const [rows, total] = await Promise.all([
+      this.prisma.sellerFollower.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        select: {
+          seller: {
+            select: {
+              id: true,
+              displayName: true,
+              avatarUrl: true,
+              role: true,
+              sellerTier: true,
+            },
+          },
+        },
+      }),
+      this.prisma.sellerFollower.count({ where: { userId } }),
+    ]);
+    return {
+      items: rows.map((r) => r.seller),
+      meta: { total, page, limit, hasMore: page * limit < total },
+    };
+  }
 }
