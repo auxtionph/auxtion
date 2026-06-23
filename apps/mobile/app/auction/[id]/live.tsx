@@ -472,7 +472,7 @@ export default function LiveAuctionRoom() {
       if (result.canceled || !result.assets[0]) return;
       setUploadingChatProof(true);
       const { uploadPhotoToCloudinary } = await import('../../../src/lib/cloudinary');
-      const uploaded = await uploadPhotoToCloudinary(result.assets[0].uri);
+      const uploaded = await uploadPhotoToCloudinary(result.assets[0].uri, 'payment-proof');
       setChatPayProofUrl(uploaded.url);
     } catch {
       Alert.alert('Upload failed', 'Could not upload screenshot. Try again.');

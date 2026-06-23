@@ -1,5 +1,7 @@
 import { apiClient } from '../services/api/client';
 
+export type UploadPurpose = 'shop-items' | 'seller-application' | 'payment-proof';
+
 export type CloudinaryPhoto = {
   url: string;
   publicId: string;
@@ -16,31 +18,38 @@ type UploadSignature = {
   eager: string;
 };
 
-let cachedSignature: { sig: UploadSignature; fetchedAt: number } | null = null;
+const signatureCache = new Map<UploadPurpose, { sig: UploadSignature; fetchedAt: number }>();
 const SIGNATURE_TTL_MS = 50 * 60 * 1000;
 
-async function getSignature(): Promise<UploadSignature> {
+async function getSignature(purpose: UploadPurpose): Promise<UploadSignature> {
   const now = Date.now();
-  if (cachedSignature && now - cachedSignature.fetchedAt < SIGNATURE_TTL_MS) {
-    return cachedSignature.sig;
+  const cached = signatureCache.get(purpose);
+  if (cached && now - cached.fetchedAt < SIGNATURE_TTL_MS) {
+    return cached.sig;
   }
-  const { data } = await apiClient.get<{ data: UploadSignature }>('/shop-items/upload-signature');
+  const { data } = await apiClient.get<{ data: UploadSignature }>('/uploads/signature', {
+    params: { purpose },
+  });
   // API wraps response in { success, data, timestamp }
   const sig = (data as any).data ?? data;
-  cachedSignature = { sig, fetchedAt: now };
+  signatureCache.set(purpose, { sig, fetchedAt: now });
   return sig;
 }
 
-export function invalidateUploadSignature() {
-  cachedSignature = null;
+export function invalidateUploadSignature(purpose?: UploadPurpose) {
+  if (purpose) {
+    signatureCache.delete(purpose);
+  } else {
+    signatureCache.clear();
+  }
 }
 
 export async function uploadPhotoToCloudinary(
   localUri: string,
+  purpose: UploadPurpose,
   onProgress?: (pct: number) => void,
 ): Promise<CloudinaryPhoto> {
-  const sig = await getSignature();
-
+  const sig = await getSignature(purpose);
   const formData = new FormData();
   formData.append('file', {
     uri: localUri,
@@ -58,13 +67,11 @@ export async function uploadPhotoToCloudinary(
   return new Promise<CloudinaryPhoto>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', uploadUrl);
-
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && onProgress) {
         onProgress(event.loaded / event.total);
       }
     };
-
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
@@ -80,11 +87,10 @@ export async function uploadPhotoToCloudinary(
           reject(new Error('Invalid Cloudinary response'));
         }
       } else {
-        if (xhr.status === 401) cachedSignature = null;
+        if (xhr.status === 401) signatureCache.delete(purpose);
         reject(new Error(`Upload failed: ${xhr.status} — ${xhr.responseText}`));
       }
     };
-
     xhr.onerror = () => reject(new Error('Network error during upload'));
     xhr.send(formData);
   });

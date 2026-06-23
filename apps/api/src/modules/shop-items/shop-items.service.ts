@@ -8,77 +8,26 @@ import { CreateShopItemDto } from './dto/create-shop-item.dto';
 import { UpdateShopItemDto } from './dto/update-shop-item.dto';
 import { ReorderQueueDto } from './dto/reorder-queue.dto';
 import { ShopItemStatus, ShopItemType, Prisma } from '@prisma/client';
-import * as crypto from 'crypto';
+import { UploadsService } from '../uploads/uploads.service';
+import { UploadPurpose } from '../uploads/uploads.service';
 
 @Injectable()
 export class ShopItemsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly uploadsService: UploadsService,
+  ) {}
 
   // ── Cloudinary Upload Signature ────────────────────────────────────────────
 
-  getUploadSignature(userId: string): {
-    signature: string;
-    timestamp: number;
-    cloudName: string;
-    apiKey: string;
-    folder: string;
-    eager: string;
-  } {
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-    const apiKey = process.env.CLOUDINARY_API_KEY;
-    const apiSecret = process.env.CLOUDINARY_API_SECRET;
-
-    if (!cloudName || !apiKey || !apiSecret) {
-      throw new Error('Cloudinary credentials not configured');
-    }
-
-    const timestamp = Math.round(Date.now() / 1000);
-    const folder = `auxtion/shop-items/${userId}`;
-    const eager = 'c_limit,w_1600,q_auto,f_auto';
-    const paramsToSign = `eager=${eager}&folder=${folder}&timestamp=${timestamp}`;
-    const signature = crypto
-      .createHash('sha1')
-      .update(paramsToSign + apiSecret)
-      .digest('hex');
-
-    return { signature, timestamp, cloudName, apiKey, folder, eager };
+  getUploadSignature(userId: string) {
+    return this.uploadsService.getSignature(userId, UploadPurpose.SHOP_ITEMS);
   }
 
   // ── Cloudinary Delete (fire-and-forget) ───────────────────────────────────
 
   async deletePhotoFromCloudinary(publicId: string): Promise<void> {
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-    const apiKey = process.env.CLOUDINARY_API_KEY;
-    const apiSecret = process.env.CLOUDINARY_API_SECRET;
-    if (!cloudName || !apiKey || !apiSecret) return;
-
-    const timestamp = Math.round(Date.now() / 1000);
-    const paramsToSign = `public_id=${publicId}&timestamp=${timestamp}`;
-    const signature = crypto
-      .createHash('sha1')
-      .update(paramsToSign + apiSecret)
-      .digest('hex');
-
-    const formData = new URLSearchParams();
-    formData.append('public_id', publicId);
-    formData.append('timestamp', String(timestamp));
-    formData.append('api_key', apiKey);
-    formData.append('signature', signature);
-
-    try {
-      const res = await fetch(
-        `https://api.cloudinary.com/v1_1/${cloudName}/image/destroy`,
-        { method: 'POST', body: formData },
-      );
-      if (!res.ok) {
-        console.warn(
-          `[Cloudinary] delete ${publicId} failed:`,
-          await res.text(),
-        );
-      }
-    } catch (err) {
-      console.warn(`[Cloudinary] delete error ${publicId}:`, err);
-    }
+    return this.uploadsService.deletePhoto(publicId);
   }
 
   // ── Create Item ────────────────────────────────────────────────────────────

@@ -158,7 +158,7 @@ export default function OrderDetailScreen() {
       if (result.canceled || !result.assets[0]) return;
       setUploadingProof(true);
       const { uploadPhotoToCloudinary } = await import('../../src/lib/cloudinary');
-      const uploaded = await uploadPhotoToCloudinary(result.assets[0].uri);
+      const uploaded = await uploadPhotoToCloudinary(result.assets[0].uri, 'payment-proof');
       setProofUrl(uploaded.url);
     } catch {
       Alert.alert('Upload failed', 'Could not upload screenshot. Try again.');

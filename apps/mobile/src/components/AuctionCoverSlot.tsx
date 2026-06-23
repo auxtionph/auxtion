@@ -32,7 +32,7 @@ export function AuctionCoverSlot({ onUploaded, onUploadingChange }: Props) {
     setSlot({ status: 'uploading', localUri, progress: 0 });
     onUploadingChange?.(true);
     try {
-      const result = await uploadPhotoToCloudinary(localUri, (pct) => {
+      const result = await uploadPhotoToCloudinary(localUri, 'shop-items', (pct) => {
         setSlot((prev) =>
           prev.status === 'uploading' ? { ...prev, progress: pct } : prev,
         );

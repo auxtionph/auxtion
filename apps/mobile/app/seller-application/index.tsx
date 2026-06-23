@@ -8,12 +8,14 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SymbolView, SFSymbol } from 'expo-symbols';
 import { apiClient } from '../../src/services/api/client';
+import { uploadPhotoToCloudinary } from '../../src/lib/cloudinary';
 
 type ApplicationStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
@@ -126,6 +128,38 @@ export default function SellerApplicationScreen() {
   }, [checkExistingApplication]);
 
   const [loading, setLoading] = useState(false);
+  const [idPhotoUri, setIdPhotoUri] = useState<string | null>(null);
+  const [idPhotoUrl, setIdPhotoUrl] = useState<string | null>(null);
+  const [idPhotoPublicId, setIdPhotoPublicId] = useState<string | null>(null);
+  const [uploadingIdPhoto, setUploadingIdPhoto] = useState(false);
+
+  const handlePickIdPhoto = async () => {
+    try {
+      const IPicker = await import('expo-image-picker');
+      const { status } = await IPicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Allow photo access to attach your ID.');
+        return;
+      }
+      const result = await IPicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 0.8,
+      });
+      if (result.canceled || !result.assets[0]) return;
+      setIdPhotoUri(result.assets[0].uri);
+      setUploadingIdPhoto(true);
+      const uploaded = await uploadPhotoToCloudinary(result.assets[0].uri, 'seller-application');
+      setIdPhotoUrl(uploaded.url);
+      setIdPhotoPublicId(uploaded.publicId);
+    } catch {
+      Alert.alert('Upload failed', 'Could not upload ID photo. Try again.');
+      setIdPhotoUri(null);
+    } finally {
+      setUploadingIdPhoto(false);
+    }
+  };
+
   const [form, setForm] = useState<FormData>({
     legalName: '',
     phone: '',
@@ -172,6 +206,7 @@ export default function SellerApplicationScreen() {
     if (step === 3) {
       if (!form.idType) { Alert.alert('Required', 'Please select an ID type'); return false; }
       if (!form.idNumber.trim() || form.idNumber.trim().length < 4) { Alert.alert('Required', 'ID number must be at least 4 characters'); return false; }
+      if (!idPhotoUrl) { Alert.alert('Required', 'Please add a photo of your ID'); return false; }
       if (!form.agreed) { Alert.alert('Required', 'Please agree to the terms'); return false; }
     }
     return true;
@@ -188,6 +223,8 @@ export default function SellerApplicationScreen() {
         try {
             await apiClient.post('/seller-applications', {
             fullName: form.legalName,
+            idImageUrl: idPhotoUrl,
+            idImagePublicId: idPhotoPublicId,
             idType: form.idType,
             idNumber: form.idNumber,
             contactNo: form.phone,
@@ -491,6 +528,44 @@ export default function SellerApplicationScreen() {
                 onChangeText={v => update('idNumber', v)}
                 autoCapitalize="characters"
               />
+            </View>
+
+            <View>
+              <Text className="text-sm font-semibold text-gray-300 mb-1">
+                ID Photo *
+              </Text>
+              <TouchableOpacity
+                className={`rounded-xl border ${
+                  idPhotoUri ? 'border-[#1A56DB]' : 'border-gray-700 border-dashed'
+                } bg-gray-900 items-center justify-center overflow-hidden`}
+                style={{ height: 180 }}
+                onPress={handlePickIdPhoto}
+                disabled={uploadingIdPhoto}
+              >
+                {uploadingIdPhoto ? (
+                  <ActivityIndicator color="#1A56DB" />
+                ) : idPhotoUri ? (
+                  <Image
+                    source={{ uri: idPhotoUri }}
+                    style={{ width: '100%', height: '100%' }}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View className="items-center gap-2">
+                    {Platform.OS === 'ios' ? (
+                      <SymbolView name={'camera.fill' as SFSymbol} size={28} tintColor="#6B7280" />
+                    ) : (
+                      <Text style={{ fontSize: 28 }}>📷</Text>
+                    )}
+                    <Text className="text-gray-500 text-sm">Tap to add a photo of your ID</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+              {idPhotoUri && !uploadingIdPhoto && (
+                <TouchableOpacity onPress={handlePickIdPhoto} className="mt-2">
+                  <Text className="text-[#1A56DB] text-sm text-center">Retake Photo</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Terms Agreement */}

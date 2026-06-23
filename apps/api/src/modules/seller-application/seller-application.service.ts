@@ -7,10 +7,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
 import { ReviewApplicationDto } from './dto/review-application.dto';
 import { UserRole, SellerApplicationStatus } from '@prisma/client';
+import { UploadsService } from '../uploads/uploads.service';
 
 @Injectable()
 export class SellerApplicationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly uploadsService: UploadsService,
+  ) {}
 
   // ── Apply ──────────────────────────────────────────────────────────────────
 
@@ -49,12 +53,24 @@ export class SellerApplicationService {
       }
     }
     const idNumberMasked = this.maskIdNumber(dto.idNumber);
+
+    // If replacing a previous ID photo with a new one, clean up the orphaned asset
+    const previousPublicId = user.sellerApplication?.idImagePublicId;
+    if (
+      previousPublicId &&
+      dto.idImagePublicId &&
+      previousPublicId !== dto.idImagePublicId
+    ) {
+      await this.uploadsService.deletePhoto(previousPublicId);
+    }
+
     const application = await this.prisma.sellerApplication.upsert({
       where: { userId },
       create: {
         userId,
         fullName: dto.fullName,
         idImageUrl: dto.idImageUrl ?? null,
+        idImagePublicId: dto.idImagePublicId ?? null,
         idType: dto.idType,
         idNumberMasked,
         contactNo: dto.contactNo,
@@ -65,6 +81,7 @@ export class SellerApplicationService {
       update: {
         fullName: dto.fullName,
         idImageUrl: dto.idImageUrl ?? null,
+        idImagePublicId: dto.idImagePublicId ?? null,
         idType: dto.idType,
         idNumberMasked,
         contactNo: dto.contactNo,

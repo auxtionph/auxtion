@@ -16,9 +16,12 @@ export class CreateApplicationDto {
   @MaxLength(100)
   fullName: string;
 
+  @IsString()
+  idImageUrl: string;
+
   @IsOptional()
   @IsString()
-  idImageUrl?: string;
+  idImagePublicId?: string;
 
   @IsIn(VALID_ID_TYPES)
   idType: string;

@@ -79,7 +79,7 @@ export function PhotoSlotRow({
     async (index: number, localUri: string) => {
       updateSlot(index, { status: 'uploading', localUri, progress: 0 });
       try {
-        const result = await uploadPhotoToCloudinary(localUri, (pct) => {
+        const result = await uploadPhotoToCloudinary(localUri, 'shop-items', (pct) => {
           setSlots((prev) => {
             const cur = prev[index];
             if (cur.status !== 'uploading') return prev;

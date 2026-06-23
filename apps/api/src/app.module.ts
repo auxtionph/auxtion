@@ -18,6 +18,7 @@ import { MaxBidsModule } from './modules/max-bids/max-bids.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { FollowsModule } from './modules/follows/follows.module';
 import { ShopModule } from './modules/shop/shop.module';
+import { UploadsModule } from './modules/uploads/uploads.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { ShopModule } from './modules/shop/shop.module';
     NotificationsModule,
     FollowsModule,
     ShopModule,
+    UploadsModule,
   ],
 })
 export class AppModule {}
