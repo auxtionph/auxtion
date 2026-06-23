@@ -9,9 +9,58 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SymbolView, SFSymbol } from 'expo-symbols';
 import { apiClient } from '../../src/services/api/client';
+
+type ApplicationStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+interface SellerApplicationRecord {
+  id: string;
+  status: ApplicationStatus;
+  createdAt: string;
+  description?: string | null;
+}
+
+type ViewState = 'loading' | 'form' | 'status';
+
+interface StatusConfigEntry {
+  symbol: SFSymbol;
+  fallback: string;
+  color: string;
+  bg: string;
+  title: string;
+  body: string;
+}
+
+const STATUS_CONFIG: Record<ApplicationStatus, StatusConfigEntry> = {
+  PENDING: {
+    symbol: 'clock.fill' as SFSymbol,
+    fallback: '⏳',
+    color: '#F59E0B',
+    bg: '#F59E0B22',
+    title: 'Application Under Review',
+    body: 'We\'re reviewing your seller application. You\'ll be notified within 48 hours of submission.',
+  },
+  APPROVED: {
+    symbol: 'checkmark.seal.fill' as SFSymbol,
+    fallback: '✅',
+    color: '#10B981',
+    bg: '#10B98122',
+    title: 'You\'re Already a Seller',
+    body: 'Your seller application has been approved. Head to My Shop to start listing items.',
+  },
+  REJECTED: {
+    symbol: 'xmark.seal.fill' as SFSymbol,
+    fallback: '❌',
+    color: '#EF4444',
+    bg: '#EF444422',
+    title: 'Application Not Approved',
+    body: 'Your previous application wasn\'t approved this time. You can submit a new application below.',
+  },
+};
 
 type Step = 1 | 2 | 3;
 
@@ -52,6 +101,30 @@ const ID_TYPES = [
 export default function SellerApplicationScreen() {
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
+  const insets = useSafeAreaInsets();
+  const [viewState, setViewState] = useState<ViewState>('loading');
+  const [existingApp, setExistingApp] = useState<SellerApplicationRecord | null>(null);
+
+  const checkExistingApplication = useCallback(async () => {
+    try {
+      const res = await apiClient.get<SellerApplicationRecord>('/seller-applications/me');
+      setExistingApp(res.data);
+      setViewState('status');
+    } catch (error: unknown) {
+      const err = error as { response?: { status?: number } };
+      if (err.response?.status === 404) {
+        setViewState('form');
+      } else {
+        Alert.alert('Error', 'Could not check application status. Please try again.');
+        setViewState('form');
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void checkExistingApplication();
+  }, [checkExistingApplication]);
+
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState<FormData>({
     legalName: '',
@@ -163,6 +236,65 @@ export default function SellerApplicationScreen() {
     2: { title: 'Shop Details', subtitle: 'What will you be selling?' },
     3: { title: 'ID Verification', subtitle: 'Verify your identity' },
   };
+
+  if (viewState === 'loading') {
+    return (
+      <View
+        className="flex-1 bg-[#1E2A3A] items-center justify-center"
+        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
+      >
+        <ActivityIndicator size="large" color="#1A56DB" />
+      </View>
+    );
+  }
+
+  if (viewState === 'status' && existingApp) {
+    const cfg = STATUS_CONFIG[existingApp.status];
+    return (
+      <View
+        className="flex-1 bg-[#1E2A3A] px-6"
+        style={{ paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }}
+      >
+        <TouchableOpacity onPress={() => router.back()} className="mb-6">
+          <Text className="text-[#1A56DB] text-base">← Back</Text>
+        </TouchableOpacity>
+        <View className="flex-1 items-center justify-center">
+          <View
+            className="w-20 h-20 rounded-full items-center justify-center mb-6"
+            style={{ backgroundColor: cfg.bg }}
+          >
+            {Platform.OS === 'ios' ? (
+              <SymbolView name={cfg.symbol} size={36} tintColor={cfg.color} />
+            ) : (
+              <Text style={{ fontSize: 36 }}>{cfg.fallback}</Text>
+            )}
+          </View>
+          <Text className="text-white font-bold text-xl text-center mb-3">
+            {cfg.title}
+          </Text>
+          <Text className="text-gray-400 text-base text-center leading-6 mb-8">
+            {cfg.body}
+          </Text>
+          {existingApp.status === 'APPROVED' && (
+            <TouchableOpacity
+              className="rounded-2xl py-4 px-8 items-center bg-[#1A56DB] w-full"
+              onPress={() => router.replace('/seller/shop' as any)}
+            >
+              <Text className="text-white font-semibold text-base">Go to My Shop</Text>
+            </TouchableOpacity>
+          )}
+          {existingApp.status === 'REJECTED' && (
+            <TouchableOpacity
+              className="rounded-2xl py-4 px-8 items-center bg-[#1A56DB] w-full"
+              onPress={() => setViewState('form')}
+            >
+              <Text className="text-white font-semibold text-base">Submit New Application</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView

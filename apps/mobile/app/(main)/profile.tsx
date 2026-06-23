@@ -397,10 +397,10 @@ export default function ProfileScreen() {
     { symbol: 'mappin.and.ellipse' as SFSymbol, fallback: '📍', label: 'Shipping Address', action: () => router.push('/profile/address' as any) },
     { symbol: 'creditcard' as SFSymbol, fallback: '💳', label: 'Payment Methods', action: () => router.push('/seller/payment-settings' as any) },
     ...(!isSeller ? [{
-      symbol: 'building.storefront' as SFSymbol,
+      symbol: 'storefront.fill' as SFSymbol,
       fallback: '🏪',
       label: 'Become a Seller',
-      action: () => router.push('/seller/shop' as any),
+      action: () => router.push('/seller-application' as any),
     }] : []),
   ];
 
