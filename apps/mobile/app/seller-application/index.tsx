@@ -171,7 +171,7 @@ export default function SellerApplicationScreen() {
     }
     if (step === 3) {
       if (!form.idType) { Alert.alert('Required', 'Please select an ID type'); return false; }
-      if (!form.idNumber.trim()) { Alert.alert('Required', 'Please enter your ID number'); return false; }
+      if (!form.idNumber.trim() || form.idNumber.trim().length < 4) { Alert.alert('Required', 'ID number must be at least 4 characters'); return false; }
       if (!form.agreed) { Alert.alert('Required', 'Please agree to the terms'); return false; }
     }
     return true;
@@ -188,7 +188,8 @@ export default function SellerApplicationScreen() {
         try {
             await apiClient.post('/seller-applications', {
             fullName: form.legalName,
-            idImageUrl: `ID-${form.idType}-${form.idNumber}`,
+            idType: form.idType,
+            idNumber: form.idNumber,
             contactNo: form.phone,
             description: `Shop: ${form.shopName}. Categories: ${form.categories.join(', ')}. Experience: ${form.experience || 'None provided'}`,
             payoutInfo: form.address,

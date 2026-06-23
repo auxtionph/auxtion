@@ -55,7 +55,9 @@ model SellerApplication {
   id             String                  @id @default(cuid())
   userId         String                  @unique
   fullName       String
-  idImageUrl     String
+  idImageUrl     String?
+  idType         String?
+  idNumberMasked String?
   contactNo      String
   description    String
   payoutInfo     String

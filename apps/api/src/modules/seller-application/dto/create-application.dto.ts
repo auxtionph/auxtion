@@ -1,4 +1,14 @@
-import { IsString, MinLength, MaxLength, Matches } from 'class-validator';
+import { IsString, MinLength, MaxLength, Matches, IsIn, IsOptional } from 'class-validator';
+
+const VALID_ID_TYPES = [
+  "Driver's License",
+  'PhilSys National ID',
+  'Passport',
+  'SSS ID',
+  'UMID',
+  "Voter's ID",
+  'PRC ID',
+] as const;
 
 export class CreateApplicationDto {
   @IsString()
@@ -6,8 +16,17 @@ export class CreateApplicationDto {
   @MaxLength(100)
   fullName: string;
 
+  @IsOptional()
   @IsString()
-  idImageUrl: string;
+  idImageUrl?: string;
+
+  @IsIn(VALID_ID_TYPES)
+  idType: string;
+
+  @IsString()
+  @MinLength(4)
+  @MaxLength(30)
+  idNumber: string;
 
   @Matches(/^(09|\+639)\d{9}$/, {
     message: 'Phone must be a valid PH number',

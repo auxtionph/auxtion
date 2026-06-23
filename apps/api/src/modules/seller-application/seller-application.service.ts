@@ -14,34 +14,49 @@ export class SellerApplicationService {
 
   // ── Apply ──────────────────────────────────────────────────────────────────
 
+  private maskIdNumber(idNumber: string): string {
+    const trimmed = idNumber.trim();
+    if (trimmed.length <= 4) return '*'.repeat(trimmed.length);
+    return '*'.repeat(trimmed.length - 4) + trimmed.slice(-4);
+  }
+
   async apply(userId: string, dto: CreateApplicationDto) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: { sellerApplication: true },
     });
-
     if (!user) throw new NotFoundException('User not found');
-
     if (user.role === UserRole.SELLER) {
       throw new BadRequestException('You are already a seller');
     }
-
     if (user.sellerApplication) {
-      const { status } = user.sellerApplication;
+      const { status, updatedAt } = user.sellerApplication;
       if (status === SellerApplicationStatus.PENDING) {
         throw new BadRequestException('You already have a pending application');
       }
       if (status === SellerApplicationStatus.APPROVED) {
         throw new BadRequestException('Your application is already approved');
       }
+      if (status === SellerApplicationStatus.REJECTED) {
+        const cooldownMs = 48 * 60 * 60 * 1000;
+        const elapsedMs = Date.now() - updatedAt.getTime();
+        if (elapsedMs < cooldownMs) {
+          const hoursLeft = Math.ceil((cooldownMs - elapsedMs) / (60 * 60 * 1000));
+          throw new BadRequestException(
+            `You can resubmit in ${hoursLeft} hour${hoursLeft === 1 ? '' : 's'}`,
+          );
+        }
+      }
     }
-
+    const idNumberMasked = this.maskIdNumber(dto.idNumber);
     const application = await this.prisma.sellerApplication.upsert({
       where: { userId },
       create: {
         userId,
         fullName: dto.fullName,
-        idImageUrl: dto.idImageUrl,
+        idImageUrl: dto.idImageUrl ?? null,
+        idType: dto.idType,
+        idNumberMasked,
         contactNo: dto.contactNo,
         description: dto.description,
         payoutInfo: dto.payoutInfo,
@@ -49,7 +64,9 @@ export class SellerApplicationService {
       },
       update: {
         fullName: dto.fullName,
-        idImageUrl: dto.idImageUrl,
+        idImageUrl: dto.idImageUrl ?? null,
+        idType: dto.idType,
+        idNumberMasked,
         contactNo: dto.contactNo,
         description: dto.description,
         payoutInfo: dto.payoutInfo,
@@ -57,7 +74,6 @@ export class SellerApplicationService {
         rejectedReason: null,
       },
     });
-
     return application;
   }
 
@@ -142,22 +158,24 @@ export class SellerApplicationService {
       );
     }
 
-    const updated = await this.prisma.sellerApplication.update({
-      where: { id: applicationId },
-      data: {
-        status: dto.status,
-        rejectedReason: dto.rejectedReason ?? null,
-        reviewedBy: adminId,
-      },
-    });
-
-    // If approved, upgrade user role to SELLER
-    if (dto.status === SellerApplicationStatus.APPROVED) {
-      await this.prisma.user.update({
-        where: { id: application.userId },
-        data: { role: UserRole.SELLER },
-      });
-    }
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.sellerApplication.update({
+        where: { id: applicationId },
+        data: {
+          status: dto.status,
+          rejectedReason: dto.rejectedReason ?? null,
+          reviewedBy: adminId,
+        },
+      }),
+      ...(dto.status === SellerApplicationStatus.APPROVED
+        ? [
+            this.prisma.user.update({
+              where: { id: application.userId },
+              data: { role: UserRole.SELLER },
+            }),
+          ]
+        : []),
+    ]);
 
     return updated;
   }
