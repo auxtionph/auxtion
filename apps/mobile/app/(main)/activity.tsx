@@ -3,14 +3,19 @@ import {
   Text,
   TouchableOpacity,
   FlatList,
+  SectionList,
   ActivityIndicator,
   RefreshControl,
   ScrollView,
   Image,
   Alert,
+  TextInput,
+  Modal,
+  Platform,
 } from 'react-native';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'expo-router';
+import { SymbolView, SFSymbol } from 'expo-symbols';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiClient } from '../../src/services/api/client';
 import { formatPHP } from '@auxtion/utils';
@@ -89,6 +94,15 @@ const MODE_BADGES: Record<string, { emoji: string; label: string; color: string 
   buynow:  { emoji: '🏷️', label: 'Buy Now', color: '#10B981' },
 };
 
+function Icon({ symbol, fallback, size = 14, tint = '#9CA3AF' }: {
+  symbol: SFSymbol; fallback: string; size?: number; tint?: string;
+}) {
+  if (Platform.OS === 'ios') {
+    return <SymbolView name={symbol} size={size} tintColor={tint} />;
+  }
+  return <Text style={{ fontSize: size, color: tint }}>{fallback}</Text>;
+}
+
 export default function ActivityScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -98,6 +112,14 @@ export default function ActivityScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [winsFilter, setWinsFilter] = useState<'all' | 'topay' | 'pending' | 'transit' | 'delivered' | 'completed'>('all');
+  const [ordersSearch, setOrdersSearch] = useState('');
+  const [ordersPage, setOrdersPage] = useState(1);
+  const [ordersHasMore, setOrdersHasMore] = useState(false);
+  const [loadingMoreOrders, setLoadingMoreOrders] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [timeFilter, setTimeFilter] = useState<'all' | 'week' | 'month' | 'year'>('all');
+  const [timeFilterOpen, setTimeFilterOpen] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
@@ -118,23 +140,101 @@ export default function ActivityScreen() {
   };
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setOrdersPage(1);
     try {
       const [ordersRes, offersRes] = await Promise.all([
-        apiClient.get('/orders/buying'),
+        apiClient.get('/orders/buying', {
+          params: {
+            page: 1, limit: 20,
+            search: ordersSearch || undefined,
+            status: winsFilter !== 'all' ? winsFilter : undefined,
+            timeRange: timeFilter !== 'all' ? timeFilter : undefined,
+          },
+        }),
         apiClient.get('/offers/my-offers'),
       ]);
-      setOrders(ordersRes.data.data as Order[]);
+      const ordersData = ordersRes.data.data as { items: Order[]; meta: { hasMore: boolean } };
+      setOrders(ordersData.items ?? []);
+      setOrdersHasMore(ordersData.meta?.hasMore ?? false);
       setOffers(offersRes.data.data as Offer[]);
     } catch {
       // fail silently — empty states handle it
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [ordersSearch, winsFilter, timeFilter]);
+
+  // Lightweight refetch for search/status/time-filter changes — deliberately
+  // does NOT touch `loading`, since that gates the whole screen (including
+  // the search bar and filter chips themselves). Touching it here would
+  // unmount/remount the TextInput on every keystroke and drop focus.
+  // Accepts explicit overrides rather than reading state directly, since
+  // state setters (setWinsFilter/setTimeFilter) haven't applied yet in the
+  // same tick they're called from.
+  const refetchOrdersLight = useCallback(async (overrides: { search?: string; status?: string; timeRange?: string } = {}) => {
+    setSearchLoading(true);
+    setOrdersPage(1);
+    const effectiveSearch = overrides.search ?? ordersSearch;
+    const effectiveStatus = overrides.status ?? winsFilter;
+    const effectiveTimeRange = overrides.timeRange ?? timeFilter;
+    try {
+      const res = await apiClient.get('/orders/buying', {
+        params: {
+          page: 1, limit: 20,
+          search: effectiveSearch || undefined,
+          status: effectiveStatus !== 'all' ? effectiveStatus : undefined,
+          timeRange: effectiveTimeRange !== 'all' ? effectiveTimeRange : undefined,
+        },
+      });
+      const data = res.data.data as { items: Order[]; meta: { hasMore: boolean } };
+      setOrders(data.items ?? []);
+      setOrdersHasMore(data.meta?.hasMore ?? false);
+    } catch {
+      // silently fail — keep showing whatever was already on screen
+    } finally {
+      setSearchLoading(false);
+    }
+  }, [ordersSearch, winsFilter, timeFilter]);
+
+  const loadMoreOrders = useCallback(async () => {
+    if (!ordersHasMore || loadingMoreOrders) return;
+    setLoadingMoreOrders(true);
+    try {
+      const nextPage = ordersPage + 1;
+      const res = await apiClient.get('/orders/buying', {
+        params: {
+          page: nextPage, limit: 20,
+          search: ordersSearch || undefined,
+          status: winsFilter !== 'all' ? winsFilter : undefined,
+          timeRange: timeFilter !== 'all' ? timeFilter : undefined,
+        },
+      });
+      const data = res.data.data as { items: Order[]; meta: { hasMore: boolean } };
+      setOrders(prev => [...prev, ...(data.items ?? [])]);
+      setOrdersHasMore(data.meta?.hasMore ?? false);
+      setOrdersPage(nextPage);
+    } catch {
+      // silently fail — user can pull-to-refresh to retry
+    } finally {
+      setLoadingMoreOrders(false);
+    }
+  }, [ordersPage, ordersHasMore, ordersSearch, winsFilter, timeFilter, loadingMoreOrders]);
+
+  const onSearchChange = useCallback((q: string) => {
+    setOrdersSearch(q);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      void refetchOrdersLight({ search: q });
+    }, 400);
+  }, [refetchOrdersLight]);
 
   useEffect(() => {
     void fetchData();
-  }, [fetchData]);
+    // Intentionally run once on mount only — fetchData's identity changes
+    // whenever ordersSearch changes, and re-running this effect on every
+    // keystroke would bypass the debounce in onSearchChange entirely.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -164,7 +264,19 @@ export default function ActivityScreen() {
     );
   }, [fetchData]);
 
+  const matchesTimeFilter = (createdAt: string): boolean => {
+    if (timeFilter === 'all') return true;
+    const now = new Date();
+    const d = new Date(createdAt);
+    const daysAgo = Math.floor((now.getTime() - d.getTime()) / 86400000);
+    if (timeFilter === 'week') return daysAgo <= 7;
+    if (timeFilter === 'month') return daysAgo <= 31;
+    if (timeFilter === 'year') return d.getFullYear() === now.getFullYear();
+    return true;
+  };
+
   const filteredOrders = orders.filter(o => {
+    if (!matchesTimeFilter(o.createdAt)) return false;
     if (winsFilter === 'all') return true;
     if (winsFilter === 'topay') return o.status === 'PENDING_PAYMENT' || o.status === 'PENDING_MANUAL_PAYMENT';
     if (winsFilter === 'pending') return o.status === 'PAID';
@@ -173,6 +285,58 @@ export default function ActivityScreen() {
     if (winsFilter === 'completed') return o.status === 'COMPLETED' || o.status === 'CANCELLED';
     return true;
   });
+
+  const ACTIONABLE_STATUSES = ['PENDING_PAYMENT', 'PENDING_MANUAL_PAYMENT', 'DELIVERED'];
+
+  const groupOrdersByDate = (items: Order[]): { title: string; data: Order[] }[] => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const thisMonthKey = `${now.getFullYear()}-${now.getMonth()}`;
+    const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthKey = `${lastMonthDate.getFullYear()}-${lastMonthDate.getMonth()}`;
+
+    const groups = new Map<string, { title: string; data: Order[] }>();
+    for (const order of items) {
+      const d = new Date(order.createdAt);
+      const daysAgo = Math.floor((startOfToday.getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 86400000);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      let title: string;
+      if (daysAgo <= 0) title = 'Today';
+      else if (daysAgo === 1) title = 'Yesterday';
+      else if (daysAgo <= 6) title = 'This Week';
+      else if (daysAgo <= 13) title = 'Last Week';
+      else if (key === thisMonthKey) title = 'This Month';
+      else if (key === lastMonthKey) title = 'Last Month';
+      else if (d.getFullYear() === now.getFullYear()) title = 'Earlier This Year';
+      else title = String(d.getFullYear());
+
+      if (!groups.has(title)) groups.set(title, { title, data: [] });
+      groups.get(title)!.data.push(order);
+    }
+
+    const priority = ['Today', 'Yesterday', 'This Week', 'Last Week', 'This Month', 'Last Month', 'Earlier This Year'];
+    const titles = Array.from(groups.keys()).sort((a, b) => {
+      const ai = priority.indexOf(a);
+      const bi = priority.indexOf(b);
+      if (ai !== -1 && bi !== -1) return ai - bi;
+      if (ai !== -1) return -1;
+      if (bi !== -1) return 1;
+      return Number(b) - Number(a);
+    });
+    return titles.map(t => groups.get(t)!);
+  };
+
+  const orderSections = useMemo(() => {
+    if (winsFilter !== 'all') {
+      return groupOrdersByDate(filteredOrders);
+    }
+    const actionable = filteredOrders.filter(o => ACTIONABLE_STATUSES.includes(o.status));
+    const rest = filteredOrders.filter(o => !ACTIONABLE_STATUSES.includes(o.status));
+    const dateSections = groupOrdersByDate(rest);
+    return actionable.length > 0
+      ? [{ title: 'Needs Your Attention', data: actionable }, ...dateSections]
+      : dateSections;
+  }, [filteredOrders, winsFilter, timeFilter]);
 
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: 'orders', label: 'Wins', count: orders.length },
@@ -269,15 +433,68 @@ export default function ActivityScreen() {
           {/* ── Orders Tab ── */}
           {activeTab === 'orders' && (
             <View style={{ flex: 1 }}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={{ maxHeight: 44 }}
-                contentContainerStyle={{
-                  flexDirection: 'row',
-                  paddingLeft: 20, paddingRight: 20,
-                }}
-              >
+              <View style={{
+                flexDirection: 'row', alignItems: 'center', gap: 10,
+                backgroundColor: '#111827', borderRadius: 12,
+                paddingHorizontal: 14, paddingVertical: 10,
+                marginHorizontal: 20, marginBottom: 12,
+                borderWidth: 1, borderColor: '#1F2937',
+              }}>
+                <Text style={{ color: '#6B7280', fontSize: 14 }}>🔍</Text>
+                <TextInput
+                  style={{ flex: 1, color: '#fff', fontSize: 14 }}
+                  placeholder="Search by item or seller..."
+                  placeholderTextColor="#4B5563"
+                  value={ordersSearch}
+                  onChangeText={onSearchChange}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  returnKeyType="search"
+                />
+                {searchLoading && (
+                  <ActivityIndicator size="small" color="#6B7280" />
+                )}
+                {!searchLoading && ordersSearch.length > 0 && (
+                  <TouchableOpacity onPress={() => onSearchChange('')}>
+                    <Text style={{ color: '#6B7280', fontSize: 13 }}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ maxHeight: 44, marginBottom: 12 }}
+                  contentContainerStyle={{
+                    flexDirection: 'row', alignItems: 'center',
+                    paddingLeft: 20, paddingRight: 20,
+                  }}
+                >
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
+                      height: 34,
+                      backgroundColor: timeFilter !== 'all' ? '#1A56DB22' : '#374151',
+                      borderWidth: 1, borderColor: timeFilter !== 'all' ? '#1A56DB' : '#4B5563',
+                      borderRadius: 999, paddingHorizontal: 12,
+                    }}
+                    onPress={() => setTimeFilterOpen(true)}
+                  >
+                    <Icon symbol="calendar" fallback="📅" size={12} tint={timeFilter !== 'all' ? '#60A5FA' : '#9CA3AF'} />
+                    <Text style={{
+                      color: timeFilter !== 'all' ? '#60A5FA' : '#9CA3AF',
+                      fontSize: 13, fontWeight: '600',
+                    }}>
+                      {timeFilter === 'all' ? 'All time'
+                        : timeFilter === 'week' ? 'This week'
+                        : timeFilter === 'month' ? 'This month'
+                        : 'This year'}
+                    </Text>
+                    <Icon symbol="chevron.down" fallback="▾" size={10} tint="#6B7280" />
+                  </TouchableOpacity>
+
+                  <View style={{ width: 1, height: 20, backgroundColor: '#374151', marginHorizontal: 10 }} />
+
                 {([
                     { key: 'all',       label: 'All' },
                     { key: 'topay',     label: 'Pending' },
@@ -288,7 +505,7 @@ export default function ActivityScreen() {
                   ] as const).map(opt => (
                   <TouchableOpacity
                     key={opt.key}
-                    onPress={() => setWinsFilter(opt.key)}
+                    onPress={() => { setWinsFilter(opt.key); void refetchOrdersLight({ status: opt.key }); }}
                     style={{
                       height: 34,
                       paddingHorizontal: 14,
@@ -305,15 +522,31 @@ export default function ActivityScreen() {
                   </TouchableOpacity>
                 ))}
               </ScrollView>
-              <FlatList
+              <SectionList
                 style={{ flex: 1, marginTop: 12 }}
-                data={filteredOrders}
+                sections={orderSections}
                 keyExtractor={item => item.id}
-                contentContainerStyle={{ paddingHorizontal: 16, gap: 12, paddingBottom: insets.bottom + 100 }}
+                stickySectionHeadersEnabled={false}
+                contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: insets.bottom + 100 }}
                 refreshControl={
                   <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor="#1A56DB" />
                 }
+                onEndReachedThreshold={0.4}
+                onEndReached={() => void loadMoreOrders()}
+                ListFooterComponent={loadingMoreOrders ? (
+                  <ActivityIndicator color="#1A56DB" style={{ paddingVertical: 16 }} />
+                ) : null}
                 ListEmptyComponent={<EmptyState tab="orders" />}
+                renderSectionHeader={({ section }) => (
+                  <View style={{ backgroundColor: '#0D1117', paddingTop: 14, paddingBottom: 8 }}>
+                    <Text style={{
+                      color: section.title === 'Needs Your Attention' ? '#F59E0B' : '#6B7280',
+                      fontSize: 12, fontWeight: '800', letterSpacing: 0.4,
+                    }}>
+                      {section.title.toUpperCase()}
+                    </Text>
+                  </View>
+                )}
                 renderItem={({ item }) => {
                   const isActionable = item.status === 'PENDING_PAYMENT' || item.status === 'PENDING_MANUAL_PAYMENT' || item.status === 'DELIVERED';
                   const accentColor = STATUS_COLORS[item.status] ?? '#1F2937';
@@ -327,6 +560,7 @@ export default function ActivityScreen() {
                         borderColor: isActionable ? accentColor : '#1F2937',
                         borderRadius: 16,
                         overflow: 'hidden',
+                        marginBottom: 12,
                         opacity: item.status === 'COMPLETED' || item.status === 'CANCELLED' ? 0.7 : 1,
                       }}
                       onPress={() => router.push(`/order/${item.id}`)}
@@ -529,6 +763,53 @@ export default function ActivityScreen() {
           )}
         </>
       )}
+
+      {/* Time filter picker */}
+      <Modal
+        visible={timeFilterOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTimeFilterOpen(false)}
+      >
+        <TouchableOpacity
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}
+          activeOpacity={1}
+          onPress={() => setTimeFilterOpen(false)}
+        >
+          <View
+            style={{
+              backgroundColor: '#13192A', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+              paddingTop: 12, paddingHorizontal: 20, paddingBottom: insets.bottom + 24,
+            }}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.15)', alignSelf: 'center', marginBottom: 16 }} />
+            {([
+              { key: 'all', label: 'All time' },
+              { key: 'week', label: 'This week' },
+              { key: 'month', label: 'This month' },
+              { key: 'year', label: 'This year' },
+            ] as const).map((opt, i) => (
+              <TouchableOpacity
+                key={opt.key}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                  paddingVertical: 14,
+                  borderBottomWidth: i < 3 ? 1 : 0, borderBottomColor: 'rgba(255,255,255,0.06)',
+                }}
+                onPress={() => { setTimeFilter(opt.key); setTimeFilterOpen(false); void refetchOrdersLight({ timeRange: opt.key }); }}
+              >
+                <Text style={{ color: '#fff', fontSize: 15, fontWeight: timeFilter === opt.key ? '700' : '400' }}>
+                  {opt.label}
+                </Text>
+                {timeFilter === opt.key && (
+                  <Icon symbol="checkmark" fallback="✓" size={15} tint="#60A5FA" />
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }

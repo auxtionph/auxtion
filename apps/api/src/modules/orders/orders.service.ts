@@ -13,6 +13,7 @@ import {
   PayoutStatus,
   SellerTier,
   PaymentMethod,
+  Prisma,
 } from '@prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 
@@ -28,24 +29,117 @@ export class OrdersService {
 
   // ── Get Buyer Orders ───────────────────────────────────────────────────────
 
-  async getBuyerOrders(buyerId: string) {
-    return this.prisma.order.findMany({
-      where: { buyerId },
-      include: {
-        item: {
-          select: { id: true, title: true, photos: true },
-        },
-        seller: {
-          select: { id: true, displayName: true, avatarUrl: true },
-        },
-        payment: {
-          select: { status: true, paymongoRef: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-  }
+  async getBuyerOrders(
+    buyerId: string,
+    opts: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      status?: string;
+      timeRange?: string;
+    } = {},
+  ) {
+    const page = opts.page ?? 1;
+    const limit = opts.limit ?? 20;
+    const actionableStatuses: OrderStatus[] = [
+      OrderStatus.PENDING_PAYMENT,
+      OrderStatus.PENDING_MANUAL_PAYMENT,
+      OrderStatus.DELIVERED,
+    ];
 
+    const searchWhere: Prisma.OrderWhereInput = opts.search
+      ? {
+          OR: [
+            { item: { title: { contains: opts.search, mode: 'insensitive' } } },
+            { seller: { displayName: { contains: opts.search, mode: 'insensitive' } } },
+          ],
+        }
+      : {};
+
+    const timeWhere: Prisma.OrderWhereInput = (() => {
+      if (!opts.timeRange || opts.timeRange === 'all') return {};
+      const now = new Date();
+      let since: Date;
+      if (opts.timeRange === 'week') since = new Date(now.getTime() - 7 * 86400000);
+      else if (opts.timeRange === 'month') since = new Date(now.getTime() - 31 * 86400000);
+      else if (opts.timeRange === 'year') since = new Date(now.getFullYear(), 0, 1);
+      else return {};
+      return { createdAt: { gte: since } };
+    })();
+
+    const statusWhere: Prisma.OrderWhereInput = (() => {
+      switch (opts.status) {
+        case 'topay':
+          return { status: { in: [OrderStatus.PENDING_PAYMENT, OrderStatus.PENDING_MANUAL_PAYMENT] } };
+        case 'pending':
+          return { status: OrderStatus.PAID };
+        case 'transit':
+          return { status: OrderStatus.SHIPPED };
+        case 'delivered':
+          return { status: OrderStatus.DELIVERED };
+        case 'completed':
+          return { status: { in: [OrderStatus.COMPLETED, OrderStatus.CANCELLED] } };
+        default:
+          return {};
+      }
+    })();
+
+    const hasExplicitStatusFilter = !!opts.status && opts.status !== 'all';
+
+    const include = {
+      item: {
+        select: { id: true, title: true, photos: true },
+      },
+      seller: {
+        select: { id: true, displayName: true, avatarUrl: true },
+      },
+      payment: {
+        select: { status: true, paymongoRef: true },
+      },
+    };
+
+    // The "Needs Your Attention" actionable bucket (always fully fetched,
+    // shown ungrouped above the rest) only makes sense for the default "All"
+    // view. Once a specific status is selected, a single normal paginated
+    // query filtered by that exact status is simpler AND correctly paginated —
+    // mixing the two approaches is what caused pagination math to go wrong
+    // when a status/time filter was combined with infinite scroll.
+    const actionable =
+      page === 1 && !hasExplicitStatusFilter
+        ? await this.prisma.order.findMany({
+            where: { buyerId, status: { in: actionableStatuses }, ...searchWhere, ...timeWhere },
+            include,
+            orderBy: { createdAt: 'desc' },
+          })
+        : [];
+
+    const historicalStatusWhere: Prisma.OrderWhereInput = hasExplicitStatusFilter
+      ? statusWhere
+      : { status: { notIn: actionableStatuses } };
+
+    const [historical, historicalTotal] = await Promise.all([
+      this.prisma.order.findMany({
+        where: { buyerId, ...historicalStatusWhere, ...searchWhere, ...timeWhere },
+        include,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.order.count({
+        where: { buyerId, ...historicalStatusWhere, ...searchWhere, ...timeWhere },
+      }),
+    ]);
+
+    return {
+      items: [...actionable, ...historical],
+      meta: {
+        page,
+        limit,
+        hasMore: page * limit < historicalTotal,
+        actionableCount: actionable.length,
+      },
+    };
+  }
   // ── Get Seller Orders ──────────────────────────────────────────────────────
 
   async getSellerOrders(sellerId: string) {

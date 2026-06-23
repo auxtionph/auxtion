@@ -4,6 +4,7 @@ import {
   Patch,
   Body,
   Param,
+  Query,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -25,8 +26,21 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Get('buying')
-  getBuyerOrders(@CurrentUser() user: AuthUser) {
-    return this.ordersService.getBuyerOrders(user.id);
+  getBuyerOrders(
+    @CurrentUser() user: AuthUser,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('status') status?: string,
+    @Query('timeRange') timeRange?: string,
+  ) {
+    return this.ordersService.getBuyerOrders(user.id, {
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      search,
+      status,
+      timeRange,
+    });
   }
 
   @Get('selling')
