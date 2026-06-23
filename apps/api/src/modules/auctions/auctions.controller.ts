@@ -29,8 +29,8 @@ export class AuctionsController {
 
   // Public feed — live and upcoming auctions
   @Get('feed')
-  getFeed() {
-    return this.auctionsService.getFeed();
+  getFeed(@CurrentUser() user: AuthUser) {
+    return this.auctionsService.getFeed(user.id);
   }
 
   // Get taken time slots for a seller on a specific date

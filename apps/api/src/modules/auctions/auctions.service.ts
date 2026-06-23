@@ -43,44 +43,76 @@ export class AuctionsService {
 
   // ── Get All Live & Scheduled Auctions (Feed) ───────────────────────────────
 
-  async getFeed() {
-    return this.prisma.auction.findMany({
-      where: {
-        status: {
-          in: [AuctionStatus.LIVE, AuctionStatus.SCHEDULED],
-        },
-      },
-      include: {
-        seller: {
-          select: {
-            id: true,
-            displayName: true,
-            avatarUrl: true,
-            sellerTier: true,
+  async getFeed(userId: string) {
+    const [auctions, follows] = await Promise.all([
+      this.prisma.auction.findMany({
+        where: {
+          status: {
+            in: [AuctionStatus.LIVE, AuctionStatus.SCHEDULED],
           },
         },
-        shopItems: {
-          where: {
-            status: {
-              in: [ShopItemStatus.QUEUED, ShopItemStatus.AVAILABLE],
+        include: {
+          seller: {
+            select: {
+              id: true,
+              displayName: true,
+              avatarUrl: true,
+              sellerTier: true,
+              totalSales: true,
             },
           },
-          select: {
-            id: true,
-            title: true,
-            photos: true,
-            price: true,
-            type: true,
-            status: true,
-            queueOrder: true,
+          shopItems: {
+            where: {
+              status: {
+                in: [ShopItemStatus.QUEUED, ShopItemStatus.AVAILABLE],
+              },
+            },
+            select: {
+              id: true,
+              title: true,
+              photos: true,
+              price: true,
+              type: true,
+              status: true,
+              queueOrder: true,
+            },
+            orderBy: { queueOrder: 'asc' },
           },
-          orderBy: { queueOrder: 'asc' },
         },
-      },
-      orderBy: { startTime: 'asc' },
+        orderBy: { startTime: 'asc' },
+      }),
+      this.prisma.sellerFollower.findMany({
+        where: { userId },
+        select: { sellerId: true },
+      }),
+    ]);
+
+    const followedSellerIds = new Set(follows.map((f) => f.sellerId));
+    const now = Date.now();
+
+    // Secondary score within each followed/not-followed group:
+    // live-ness, seller track record, and freshness (just-went-live or starting soon)
+    const secondaryScore = (auction: (typeof auctions)[number]): number => {
+      const isLive = auction.status === AuctionStatus.LIVE;
+      const sellerScore = Math.min(auction.seller.totalSales ?? 0, 100) * 0.5;
+      let freshness = 0;
+      if (isLive) {
+        const elapsedMin = (now - auction.startTime.getTime()) / 60000;
+        freshness = -Math.min(Math.max(elapsedMin, 0), 120) * 0.2;
+      } else {
+        const untilMin = (auction.startTime.getTime() - now) / 60000;
+        freshness = -Math.min(Math.max(untilMin, 0), 1440) * 0.1;
+      }
+      return (isLive ? 500 : 0) + sellerScore + freshness;
+    };
+
+    return [...auctions].sort((a, b) => {
+      const aFollowed = followedSellerIds.has(a.sellerId) ? 1 : 0;
+      const bFollowed = followedSellerIds.has(b.sellerId) ? 1 : 0;
+      if (aFollowed !== bFollowed) return bFollowed - aFollowed;
+      return secondaryScore(b) - secondaryScore(a);
     });
   }
-
   // ── Get Single Auction ─────────────────────────────────────────────────────
 
   async getAuctionById(auctionId: string) {
@@ -388,7 +420,10 @@ export class AuctionsService {
     if (item.sellerId !== sellerId) {
       throw new ForbiddenException('You do not own this item');
     }
-    if (item.status !== ShopItemStatus.AVAILABLE && item.status !== ShopItemStatus.STOREFRONT) {
+    if (
+      item.status !== ShopItemStatus.AVAILABLE &&
+      item.status !== ShopItemStatus.STOREFRONT
+    ) {
       throw new BadRequestException('Item is not available');
     }
 

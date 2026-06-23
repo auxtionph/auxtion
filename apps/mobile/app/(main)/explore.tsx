@@ -8,15 +8,45 @@ import {
   Image,
   Dimensions,
   ScrollView,
+  Platform,
 } from 'react-native';
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useRouter } from 'expo-router';
+import { SymbolView, SFSymbol } from 'expo-symbols';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiClient } from '../../src/services/api/client';
+import { useAuthStore } from '../../src/stores/auth.store';
 import { AuctionFeedItem } from '../../src/services/api/auctions.api';
 import { formatPHP } from '@auxtion/utils';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const CARD_WIDTH = (SCREEN_WIDTH - 16 * 2 - 10) / 2;
+
+const CATEGORIES: { label: string; symbol: SFSymbol; fallback: string; color: string }[] = [
+  { label: 'Sneakers', symbol: 'bag.fill' as SFSymbol, fallback: '👟', color: '#1A56DB' },
+  { label: 'Fashion', symbol: 'tshirt.fill' as SFSymbol, fallback: '👔', color: '#7C3AED' },
+  { label: 'Electronics', symbol: 'tv.fill' as SFSymbol, fallback: '📱', color: '#059669' },
+  { label: 'Collectibles', symbol: 'trophy.fill' as SFSymbol, fallback: '🏆', color: '#D97706' },
+  { label: 'Jewelry', symbol: 'sparkles' as SFSymbol, fallback: '💍', color: '#B45309' },
+  { label: 'Trading Cards', symbol: 'rectangle.stack.fill' as SFSymbol, fallback: '🃏', color: '#DC2626' },
+  { label: 'Toys', symbol: 'gamecontroller.fill' as SFSymbol, fallback: '🧸', color: '#7C3AED' },
+  { label: 'Sports', symbol: 'sportscourt.fill' as SFSymbol, fallback: '⚽', color: '#059669' },
+  { label: 'Vintage', symbol: 'clock.arrow.circlepath' as SFSymbol, fallback: '🎸', color: '#1A56DB' },
+  { label: 'Comics', symbol: 'book.fill' as SFSymbol, fallback: '📚', color: '#DB2777' },
+  { label: 'Beauty', symbol: 'paintbrush.fill' as SFSymbol, fallback: '💄', color: '#DB2777' },
+  { label: 'Food', symbol: 'fork.knife' as SFSymbol, fallback: '🍜', color: '#D97706' },
+];
+
+function CategoryIcon({ symbol, fallback, size, tint }: {
+  symbol: SFSymbol; fallback: string; size: number; tint: string;
+}) {
+  if (Platform.OS === 'ios') {
+    return <SymbolView name={symbol} size={size} tintColor={tint} />;
+  }
+  return <Text style={{ fontSize: size }}>{fallback}</Text>;
+}
+
+const getRecentSearchesKey = (userId?: string) => `auxtion:recentSearches:${userId ?? 'guest'}`;
 
 type SearchTab = 'shows' | 'users';
 
@@ -38,6 +68,7 @@ interface Suggestion {
 
 export default function ExploreScreen() {
   const router = useRouter();
+  const { user } = useAuthStore();
   const inputRef = useRef<TextInput>(null);
   const debounceRef = useRef<any>(null);
   const feedCacheRef = useRef<AuctionFeedItem[]>([]);
@@ -48,9 +79,24 @@ export default function ExploreScreen() {
   const [users, setUsers] = useState<UserResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [recentSearches, setRecentSearches] = useState<string[]>([
-    'Sneakers', 'Jordan', 'Nike', 'Vintage',
-  ]);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+
+  useEffect(() => {
+    AsyncStorage.getItem(getRecentSearchesKey(user?.id))
+      .then(stored => {
+        setRecentSearches(stored ? (JSON.parse(stored) as string[]) : []);
+      })
+      .catch(() => {
+        setRecentSearches([]);
+      });
+  }, [user?.id]);
+
+  const persistRecentSearches = (next: string[]) => {
+    setRecentSearches(next);
+    void AsyncStorage.setItem(getRecentSearchesKey(user?.id), JSON.stringify(next)).catch(() => {
+      // silently fail — non-critical
+    });
+  };
   const userSuggestionCacheRef = useRef<Map<string, UserResult[]>>(new Map());
 
   const doSearch = useCallback(async (q: string) => {
@@ -129,7 +175,7 @@ export default function ExploreScreen() {
     if (!q.trim()) return;
     setSuggestions([]);
     if (!recentSearches.includes(q)) {
-      setRecentSearches(prev => [q, ...prev].slice(0, 8));
+      persistRecentSearches([q, ...recentSearches.filter(s => s !== q)].slice(0, 8));
     }
     void doSearch(q);
   };
@@ -240,7 +286,10 @@ export default function ExploreScreen() {
               }}
               onPress={() => {
                if (s.type === 'seller' && s.id) {
-                router.push(`/seller/${s.id}`);
+                  if (search.trim() && !recentSearches.includes(search.trim())) {
+                    persistRecentSearches([search.trim(), ...recentSearches.filter(s => s !== search.trim())].slice(0, 8));
+                  }
+                  router.push(`/seller/${s.id}`);
                   setSuggestions([]);
                 } else {
                   setSearch(s.label);
@@ -286,7 +335,7 @@ export default function ExploreScreen() {
             <View style={{ marginBottom: 28 }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Recent Searches</Text>
-                <TouchableOpacity onPress={() => setRecentSearches([])}>
+                <TouchableOpacity onPress={() => persistRecentSearches([])}>
                   <Text style={{ color: '#1A56DB', fontSize: 13 }}>Clear All</Text>
                 </TouchableOpacity>
               </View>
@@ -304,7 +353,7 @@ export default function ExploreScreen() {
                   >
                     <Text style={{ color: '#9CA3AF', fontSize: 12 }}>🕐</Text>
                     <Text style={{ color: '#fff', fontSize: 13 }}>{term}</Text>
-                    <TouchableOpacity onPress={() => setRecentSearches(p => p.filter(s => s !== term))}>
+                    <TouchableOpacity onPress={() => persistRecentSearches(recentSearches.filter(s => s !== term))}>
                       <Text style={{ color: '#4B5563', fontSize: 11, marginLeft: 2 }}>✕</Text>
                     </TouchableOpacity>
                   </TouchableOpacity>
@@ -314,24 +363,23 @@ export default function ExploreScreen() {
           )}
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16, marginBottom: 12 }}>Browse Categories</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {[
-              { label: 'Sneakers', emoji: '👟' }, { label: 'Fashion', emoji: '👔' },
-              { label: 'Electronics', emoji: '📱' }, { label: 'Collectibles', emoji: '🏆' },
-              { label: 'Jewelry', emoji: '💍' }, { label: 'Trading Cards', emoji: '🃏' },
-              { label: 'Toys', emoji: '🧸' }, { label: 'Sports', emoji: '⚽' },
-              { label: 'Vintage', emoji: '🎸' }, { label: 'Comics', emoji: '📚' },
-            ].map(cat => (
+            {CATEGORIES.map(cat => (
               <TouchableOpacity
                 key={cat.label}
                 style={{
-                  flexDirection: 'row', alignItems: 'center', gap: 6,
+                  flexDirection: 'row', alignItems: 'center', gap: 7,
                   backgroundColor: '#1F2937', borderRadius: 999,
-                  paddingHorizontal: 14, paddingVertical: 8,
+                  paddingHorizontal: 13, paddingVertical: 7,
                   borderWidth: 1, borderColor: '#374151',
                 }}
                 onPress={() => { setSearch(cat.label); void doSearch(cat.label); }}
               >
-                <Text style={{ fontSize: 14 }}>{cat.emoji}</Text>
+                <View style={{
+                  width: 24, height: 24, borderRadius: 12,
+                  backgroundColor: cat.color + '26', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <CategoryIcon symbol={cat.symbol} fallback={cat.fallback} size={13} tint={cat.color} />
+                </View>
                 <Text style={{ color: '#fff', fontSize: 13 }}>{cat.label}</Text>
               </TouchableOpacity>
             ))}
@@ -400,7 +448,7 @@ export default function ExploreScreen() {
                   >
                     <View style={{ width: 80, height: 80, borderRadius: 10, backgroundColor: '#374151', overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
                       {firstPhoto ? (
-                        <Image source={{ uri: firstPhoto }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                        <Image source={{ uri: firstPhoto.url }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                       ) : (
                         <Text style={{ fontSize: 28 }}>📦</Text>
                       )}
@@ -482,37 +530,27 @@ export default function ExploreScreen() {
       {/* ── Idle State ── */}
       {!isFocused && (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 16 }}>Browse Categories</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
-            {[
-              { label: 'Sneakers', emoji: '👟', color: '#1A56DB' },
-              { label: 'Fashion', emoji: '👔', color: '#7C3AED' },
-              { label: 'Electronics', emoji: '📱', color: '#059669' },
-              { label: 'Collectibles', emoji: '🏆', color: '#D97706' },
-              { label: 'Jewelry', emoji: '💍', color: '#B45309' },
-              { label: 'Trading Cards', emoji: '🃏', color: '#DC2626' },
-              { label: 'Toys', emoji: '🧸', color: '#7C3AED' },
-              { label: 'Sports', emoji: '⚽', color: '#059669' },
-              { label: 'Vintage', emoji: '🎸', color: '#1A56DB' },
-              { label: 'Comics', emoji: '📚', color: '#DB2777' },
-              { label: 'Beauty', emoji: '💄', color: '#DB2777' },
-              { label: 'Food', emoji: '🍜', color: '#D97706' },
-            ].map(cat => (
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 18, marginBottom: 14 }}>Browse Categories</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9 }}>
+            {CATEGORIES.map(cat => (
               <TouchableOpacity
                 key={cat.label}
                 style={{
-                  width: (SCREEN_WIDTH - 32 - 10) / 2,
-                  backgroundColor: '#1F2937', borderRadius: 16, overflow: 'hidden',
+                  flexDirection: 'row', alignItems: 'center', gap: 8,
+                  backgroundColor: '#1F2937', borderRadius: 999,
+                  paddingHorizontal: 14, paddingVertical: 9,
+                  borderWidth: 1, borderColor: '#374151',
                 }}
                 onPress={() => { setSearch(cat.label); setIsFocused(true); void doSearch(cat.label); }}
                 activeOpacity={0.85}
               >
-                <View style={{ backgroundColor: cat.color + '22', padding: 20, alignItems: 'center' }}>
-                  <Text style={{ fontSize: 36 }}>{cat.emoji}</Text>
+                <View style={{
+                  width: 28, height: 28, borderRadius: 14,
+                  backgroundColor: cat.color + '26', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <CategoryIcon symbol={cat.symbol} fallback={cat.fallback} size={15} tint={cat.color} />
                 </View>
-                <View style={{ padding: 12 }}>
-                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{cat.label}</Text>
-                </View>
+                <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13.5 }}>{cat.label}</Text>
               </TouchableOpacity>
             ))}
           </View>

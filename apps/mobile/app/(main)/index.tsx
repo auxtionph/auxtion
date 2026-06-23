@@ -112,16 +112,23 @@ function AuctionCard({ item, onPress, wide = false }: {
   );
 }
 
-function EmptyFeed({ searching }: { searching: boolean }) {
+function EmptyFeed({ searching, onBrowseAll }: { searching: boolean; onBrowseAll: () => void }) {
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 80 }}>
       <Text style={{ fontSize: 48, marginBottom: 16 }}>{searching ? '🔍' : '📭'}</Text>
       <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 8 }}>
         {searching ? 'No Results' : 'No Live Auctions'}
       </Text>
-      <Text style={{ color: '#6B7280', fontSize: 14, textAlign: 'center', paddingHorizontal: 32 }}>
-        {searching ? 'Try a different search term' : 'Check back soon for live auctions.'}
+      <Text style={{ color: '#6B7280', fontSize: 14, textAlign: 'center', paddingHorizontal: 32, marginBottom: searching ? 16 : 0 }}>
+        {searching ? "Nothing matches in today's live and upcoming shows" : 'Check back soon for live auctions.'}
       </Text>
+      {searching && (
+        <TouchableOpacity onPress={onBrowseAll}>
+          <Text style={{ color: '#1A56DB', fontSize: 14, fontWeight: '700' }}>
+            Search all sellers and shows →
+          </Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -167,10 +174,14 @@ export default function HomeScreen() {
   const liveAuctions = feed.filter(a => a.status === 'LIVE');
   const scheduledAuctions = feed.filter(a => a.status === 'SCHEDULED');
   const displayAuctions = searchQuery.trim()
-    ? [...liveAuctions, ...scheduledAuctions].filter(a =>
-        a.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        a.seller.displayName.toLowerCase().includes(searchQuery.toLowerCase())
-      )
+    ? [...liveAuctions, ...scheduledAuctions].filter(a => {
+        const q = searchQuery.toLowerCase();
+        return (
+          a.title.toLowerCase().includes(q) ||
+          a.seller.displayName.toLowerCase().includes(q) ||
+          a.shopItems.some(item => item.title.toLowerCase().includes(q))
+        );
+      })
     : liveAuctions;
 
   const rows: AuctionFeedItem[][] = [];
@@ -260,7 +271,7 @@ export default function HomeScreen() {
             </View>
           ) : null
         }
-        ListEmptyComponent={<EmptyFeed searching={searchQuery.length > 0} />}
+        ListEmptyComponent={<EmptyFeed searching={searchQuery.length > 0} onBrowseAll={() => router.push('/(main)/explore')} />}
         renderItem={({ item: row }) => (
           <View style={{ flexDirection: 'row', gap: 12 }}>
             {row.map(auction => (
