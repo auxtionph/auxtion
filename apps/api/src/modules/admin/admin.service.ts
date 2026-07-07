@@ -116,10 +116,22 @@ export class AdminService {
     });
   }
 
-  async getAllOrders(opts: { status?: OrderStatus; page?: number; limit?: number }) {
+  async getAllOrders(opts: {
+    status?: OrderStatus;
+    userId?: string;
+    page?: number;
+    limit?: number;
+  }) {
     const page = Math.max(1, opts.page ?? 1);
     const limit = Math.min(50, Math.max(1, opts.limit ?? 20));
-    const where = opts.status ? { status: opts.status } : {};
+    const where: {
+      status?: OrderStatus;
+      OR?: { buyerId?: string; sellerId?: string }[];
+    } = {};
+    if (opts.status) where.status = opts.status;
+    if (opts.userId) {
+      where.OR = [{ buyerId: opts.userId }, { sellerId: opts.userId }];
+    }
 
     const [orders, total] = await this.prisma.$transaction([
       this.prisma.order.findMany({

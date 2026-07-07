@@ -42,11 +42,13 @@ export class AdminController {
   @Get('orders')
   getAllOrders(
     @Query('status') status?: OrderStatus,
+    @Query('userId') userId?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
     return this.adminService.getAllOrders({
       status,
+      userId,
       page: page ? parseInt(page, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
     });

@@ -76,12 +76,17 @@ export default function AdminOrdersScreen() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [actioningId, setActioningId] = useState<string | null>(null);
-
+  const [userFilter, setUserFilter] = useState<{ id: string; name: string } | null>(null);
   const fetchOrders = useCallback(
-    async (status: OrderStatus | undefined, pageNum: number, append: boolean) => {
+    async (
+      status: OrderStatus | undefined,
+      userId: string | undefined,
+      pageNum: number,
+      append: boolean,
+    ) => {
       try {
         const res = await apiClient.get('/admin/orders', {
-          params: { status, page: pageNum, limit: 20 },
+          params: { status, userId, page: pageNum, limit: 20 },
         });
         const data = res.data.data ?? res.data;
         const items = (data?.items ?? []) as AdminOrder[];
@@ -97,16 +102,14 @@ export default function AdminOrdersScreen() {
     },
     [],
   );
-
   useEffect(() => {
     setLoading(true);
-    void fetchOrders(filter.value, 1, false);
-  }, [filter, fetchOrders]);
-
+    void fetchOrders(filter.value, userFilter?.id, 1, false);
+  }, [filter, userFilter, fetchOrders]);
   const onEndReached = () => {
     if (hasMore && !loadingMore && !loading) {
       setLoadingMore(true);
-      void fetchOrders(filter.value, page + 1, true);
+      void fetchOrders(filter.value, userFilter?.id, page + 1, true);
     }
   };
 
@@ -190,6 +193,20 @@ export default function AdminOrdersScreen() {
         </ScrollView>
       </View>
 
+      {userFilter && (
+        <View className="px-6 pb-2">
+          <TouchableOpacity
+            onPress={() => setUserFilter(null)}
+            className="self-start flex-row items-center bg-[#1A56DB22] border border-[#1A56DB55] rounded-full px-3 py-1.5"
+          >
+            <Text className="text-[#60A5FA] text-xs font-semibold mr-1">
+              {userFilter.name}
+            </Text>
+            <Text className="text-[#60A5FA] text-xs font-bold">✕</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {loading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator size="large" color="#1A56DB" />
@@ -233,10 +250,22 @@ export default function AdminOrdersScreen() {
 
                 <View className="mt-3 gap-1">
                   <Text className="text-gray-500 text-xs">
-                    Buyer: <Text className="text-gray-300">{item.buyer.displayName}</Text>
+                    Buyer:{' '}
+                    <Text
+                      className="text-[#60A5FA]"
+                      onPress={() => setUserFilter({ id: item.buyer.id, name: item.buyer.displayName })}
+                    >
+                      {item.buyer.displayName}
+                    </Text>
                   </Text>
                   <Text className="text-gray-500 text-xs">
-                    Seller: <Text className="text-gray-300">{item.seller.displayName}</Text>
+                    Seller:{' '}
+                    <Text
+                      className="text-[#60A5FA]"
+                      onPress={() => setUserFilter({ id: item.seller.id, name: item.seller.displayName })}
+                    >
+                      {item.seller.displayName}
+                    </Text>
                   </Text>
                   <Text className="text-gray-600 text-xs">
                     {new Date(item.createdAt).toLocaleDateString()}
