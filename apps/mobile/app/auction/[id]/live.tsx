@@ -706,7 +706,7 @@ export default function LiveAuctionRoom() {
     try {
       if (isSeller) {
         const res = await apiClient.get('/orders/selling');
-        const orders = (res.data.data ?? []) as Array<{ id: string; itemId: string; status: string; auction?: { id: string } }>;
+        const orders = (res.data.data?.orders ?? []) as Array<{ id: string; itemId: string; status: string; auction?: { id: string } }>;
         const auctionOrders = orders.filter(o => o.auction?.id === id);
         setSoldItemWinners(prev => {
           const updated = { ...prev };
@@ -3333,7 +3333,7 @@ export default function LiveAuctionRoom() {
                             if (!sellerOrder) return;
                             try {
                               const res = await apiClient.get('/orders/selling');
-                              const orders = (res.data.data ?? []) as Array<{ id: string; itemId: string; status: string; auction?: { id: string } }>;
+                              const orders = (res.data.data?.orders ?? []) as Array<{ id: string; itemId: string; status: string; auction?: { id: string } }>;
                               const order = orders.find(o => o.itemId === item.id && o.auction?.id === id);
                               if (!order) return;
                               setSellerChatOrder({
