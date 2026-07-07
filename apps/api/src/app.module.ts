@@ -22,6 +22,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { FollowsModule } from './modules/follows/follows.module';
 import { ShopModule } from './modules/shop/shop.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { UploadsModule } from './modules/uploads/uploads.module';
     FollowsModule,
     ShopModule,
     UploadsModule,
+    AdminModule,
   ],
   providers: [
     // Applies the global throttle to all HTTP routes (skips WebSocket events).
