@@ -73,6 +73,7 @@ Live room Modes 1/2/3 (swipe / chat-bid / live buy-now), Max Bid proxy bidding, 
 ## Backlog
 
 - **Admin panel** — no UI; `reviewApplication` (`PATCH /seller-applications/:id/review`) reachable only via raw API w/ ADMIN JWT. Needs own scoping session.
+- **Consignment (dedicated session)** — `ShopItem.consignedToUserId` is DEAD: defined in schema (+ `consignedTo`/`consignedItems` relations) but never written or read anywhere in source. Making it work needs: (1) a write path to consign an item to a user (endpoint + host UI); (2) effective-seller derivation `item.consignedToUserId ?? item.sellerId` at the 5 order-creation sites — `bidding.gateway.ts` timer-win (~1234), auto-end win (~1865), buy-now claim (~1367), chat winner (~926), and `offers.service.ts` acceptOffer (~199) — order `sellerId` drives payout/shipping/GCash routing; (3) rewrite the self-bid guard (`bidding.service.ts:60` `auction.sellerId === bidderId`, gateway ~588 host/co-host block) to key off the effective owner so the host CAN win a consignor's item (order seller = consignor) but the consignor can't bid on their own.
 - Prisma migration-drift cleanup (before prod migrate deploy); Prisma 5→7 upgrade (deferred)
 - Push notifications; Winner announced in chat (Mode 2); PayMongo live mode; DB cleanup before TestFlight; Railway prod PG migration
 - **Verify:** Cloudinary may reject new folder paths (`auxtion/seller-application/*`, `auxtion/payment-proof/*`) if account is preset/folder-restricted — test a real device upload.
