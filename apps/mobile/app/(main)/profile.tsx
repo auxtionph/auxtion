@@ -402,6 +402,12 @@ export default function ProfileScreen() {
       label: 'Become a Seller',
       action: () => router.push('/seller-application' as any),
     }] : []),
+    ...(user?.role === 'ADMIN' ? [{
+      symbol: 'shield.checkered' as SFSymbol,
+      fallback: '🛡️',
+      label: 'Admin Panel',
+      action: () => router.push('/admin/applications' as any),
+    }] : []),
   ];
 
   return (

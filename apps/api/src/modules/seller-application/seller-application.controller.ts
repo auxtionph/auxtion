@@ -7,6 +7,7 @@ import {
   Param,
   Query,
   UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { SellerApplicationService } from './seller-application.service';
 import { CreateApplicationDto } from './dto/create-application.dto';
@@ -63,6 +64,20 @@ export class SellerApplicationController {
     @Body() dto: ReviewApplicationDto,
   ) {
     return this.sellerApplicationService.reviewApplication(user.id, id, dto);
+  }
+
+  @Patch(':id/revoke')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN)
+  revokeApplication(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body('reason') reason: string,
+  ) {
+    if (!reason || !reason.trim()) {
+      throw new BadRequestException('A reason is required when revoking a seller');
+    }
+    return this.sellerApplicationService.revokeApplication(user.id, id, reason.trim());
   }
 }
 import {

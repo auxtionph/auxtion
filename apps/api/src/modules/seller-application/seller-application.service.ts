@@ -196,4 +196,33 @@ export class SellerApplicationService {
 
     return updated;
   }
+
+  // ── Admin: Revoke Seller Status ────────────────────────────────────────────
+
+  async revokeApplication(adminId: string, applicationId: string, reason: string) {
+    const application = await this.prisma.sellerApplication.findUnique({
+      where: { id: applicationId },
+    });
+    if (!application) throw new NotFoundException('Application not found');
+    if (application.status !== SellerApplicationStatus.APPROVED) {
+      throw new BadRequestException('Only approved applications can be revoked');
+    }
+
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.sellerApplication.update({
+        where: { id: applicationId },
+        data: {
+          status: SellerApplicationStatus.REJECTED,
+          rejectedReason: reason,
+          reviewedBy: adminId,
+        },
+      }),
+      this.prisma.user.update({
+        where: { id: application.userId },
+        data: { role: UserRole.BUYER },
+      }),
+    ]);
+
+    return updated;
+  }
 }
