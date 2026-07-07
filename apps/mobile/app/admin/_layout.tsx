@@ -6,6 +6,7 @@ export default function AdminLayout() {
       <Stack.Screen name="index" />
       <Stack.Screen name="applications" />
       <Stack.Screen name="users" />
+      <Stack.Screen name="orders" />
     </Stack>
   );
 }

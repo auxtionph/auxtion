@@ -6,6 +6,8 @@ import {
   AuctionStatus,
   OrderStatus,
   UserRole,
+  CancelReason,
+  ShopItemStatus,
 } from '@prisma/client';
 
 @Injectable()
@@ -111,5 +113,69 @@ export class AdminService {
       data: { role },
       select: { id: true, email: true, displayName: true, role: true },
     });
+  }
+
+  async getAllOrders(opts: { status?: OrderStatus; page?: number; limit?: number }) {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(50, Math.max(1, opts.limit ?? 20));
+    const where = opts.status ? { status: opts.status } : {};
+
+    const [orders, total] = await this.prisma.$transaction([
+      this.prisma.order.findMany({
+        where,
+        select: {
+          id: true,
+          amount: true,
+          status: true,
+          payoutStatus: true,
+          createdAt: true,
+          paymentDeadline: true,
+          buyer: { select: { id: true, displayName: true, email: true } },
+          seller: { select: { id: true, displayName: true, email: true } },
+          item: { select: { id: true, title: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    return {
+      items: orders,
+      meta: { page, limit, total, hasMore: page * limit < total },
+    };
+  }
+
+  async forceCancelOrder(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, status: true, itemId: true },
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (
+      order.status === OrderStatus.COMPLETED ||
+      order.status === OrderStatus.CANCELLED
+    ) {
+      throw new BadRequestException(
+        `Cannot force-cancel an order that is already ${order.status}`,
+      );
+    }
+
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.order.update({
+        where: { id: orderId },
+        data: {
+          status: OrderStatus.CANCELLED,
+          cancelReason: CancelReason.SELLER_MANUAL,
+        },
+      }),
+      this.prisma.shopItem.update({
+        where: { id: order.itemId },
+        data: { status: ShopItemStatus.AVAILABLE },
+      }),
+    ]);
+
+    return updated;
   }
 }

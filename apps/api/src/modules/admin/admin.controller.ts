@@ -4,7 +4,7 @@ import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { UserRole } from '@prisma/client';
+import { UserRole, OrderStatus } from '@prisma/client';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -37,5 +37,23 @@ export class AdminController {
     @Body('role') role: UserRole,
   ) {
     return this.adminService.changeUserRole(user.id, id, role);
+  }
+
+  @Get('orders')
+  getAllOrders(
+    @Query('status') status?: OrderStatus,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.adminService.getAllOrders({
+      status,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
+  }
+
+  @Patch('orders/:id/force-cancel')
+  forceCancelOrder(@Param('id') id: string) {
+    return this.adminService.forceCancelOrder(id);
   }
 }
