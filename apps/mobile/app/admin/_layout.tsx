@@ -8,6 +8,7 @@ export default function AdminLayout() {
       <Stack.Screen name="users" />
       <Stack.Screen name="orders" />
       <Stack.Screen name="disputes" />
+      <Stack.Screen name="user-picker" options={{ presentation: 'modal' }} />
     </Stack>
   );
 }

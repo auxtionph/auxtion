@@ -8,7 +8,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatPHP } from '@auxtion/utils';
 import { apiClient } from '../../src/services/api/client';
@@ -77,6 +77,14 @@ export default function AdminOrdersScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [userFilter, setUserFilter] = useState<{ id: string; name: string } | null>(null);
+  const params = useLocalSearchParams<{ filterUserId?: string; filterUserName?: string }>();
+
+  useEffect(() => {
+    if (params.filterUserId && params.filterUserName) {
+      setUserFilter({ id: params.filterUserId, name: params.filterUserName });
+    }
+  }, [params.filterUserId, params.filterUserName]);
+
   const fetchOrders = useCallback(
     async (
       status: OrderStatus | undefined,
@@ -165,6 +173,13 @@ export default function AdminOrdersScreen() {
           <Text className="text-[#1A56DB] text-base">← Back</Text>
         </TouchableOpacity>
         <Text className="text-white font-bold text-lg">Orders</Text>
+        <View className="flex-1" />
+        <TouchableOpacity
+          onPress={() => router.push('/admin/user-picker' as any)}
+          className="flex-row items-center gap-1"
+        >
+          <Text className="text-[#1A56DB] text-sm font-semibold">Filter by user</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={{ maxHeight: 44 }}>
