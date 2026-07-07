@@ -8,6 +8,7 @@ import {
   UserRole,
   CancelReason,
   ShopItemStatus,
+  PayoutStatus,
 } from '@prisma/client';
 
 @Injectable()
@@ -177,5 +178,93 @@ export class AdminService {
     ]);
 
     return updated;
+  }
+
+  async getDisputes(opts: { status?: DisputeStatus; page?: number; limit?: number }) {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(50, Math.max(1, opts.limit ?? 20));
+    const where = opts.status ? { status: opts.status } : {};
+
+    const [disputes, total] = await this.prisma.$transaction([
+      this.prisma.dispute.findMany({
+        where,
+        select: {
+          id: true,
+          reason: true,
+          status: true,
+          raisedBy: true,
+          createdAt: true,
+          order: {
+            select: {
+              id: true,
+              amount: true,
+              status: true,
+              buyer: { select: { id: true, displayName: true, email: true } },
+              seller: { select: { id: true, displayName: true, email: true } },
+              item: { select: { id: true, title: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.dispute.count({ where }),
+    ]);
+
+    return {
+      items: disputes,
+      meta: { page, limit, total, hasMore: page * limit < total },
+    };
+  }
+
+  async resolveDispute(
+    adminId: string,
+    disputeId: string,
+    inFavorOf: 'BUYER' | 'SELLER',
+  ) {
+    const dispute = await this.prisma.dispute.findUnique({
+      where: { id: disputeId },
+      select: { id: true, status: true, orderId: true },
+    });
+    if (!dispute) throw new NotFoundException('Dispute not found');
+    if (dispute.status !== DisputeStatus.OPEN) {
+      throw new BadRequestException('This dispute has already been resolved');
+    }
+
+    if (inFavorOf === 'SELLER') {
+      // Seller wins: complete the order, release payout.
+      const [resolved] = await this.prisma.$transaction([
+        this.prisma.dispute.update({
+          where: { id: disputeId },
+          data: { status: DisputeStatus.RESOLVED_SELLER, resolvedBy: adminId },
+        }),
+        this.prisma.order.update({
+          where: { id: dispute.orderId },
+          data: {
+            status: OrderStatus.COMPLETED,
+            payoutStatus: PayoutStatus.RELEASED,
+          },
+        }),
+      ]);
+      return resolved;
+    }
+
+    // Buyer wins: cancel order, freeze payout for manual refund review.
+    const [resolved] = await this.prisma.$transaction([
+      this.prisma.dispute.update({
+        where: { id: disputeId },
+        data: { status: DisputeStatus.RESOLVED_BUYER, resolvedBy: adminId },
+      }),
+      this.prisma.order.update({
+        where: { id: dispute.orderId },
+        data: {
+          status: OrderStatus.CANCELLED,
+          payoutStatus: PayoutStatus.FROZEN,
+          cancelReason: CancelReason.SELLER_MANUAL,
+        },
+      }),
+    ]);
+    return resolved;
   }
 }

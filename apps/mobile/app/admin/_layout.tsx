@@ -7,6 +7,7 @@ export default function AdminLayout() {
       <Stack.Screen name="applications" />
       <Stack.Screen name="users" />
       <Stack.Screen name="orders" />
+      <Stack.Screen name="disputes" />
     </Stack>
   );
 }
