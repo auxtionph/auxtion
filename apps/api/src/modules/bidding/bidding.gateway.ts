@@ -10,6 +10,8 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { BiddingService } from './bidding.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MaxBidsService } from '../max-bids/max-bids.service';
@@ -165,10 +167,77 @@ export class BiddingGateway
     private readonly ordersService: OrdersService,
     private readonly notifications: NotificationsService,
     private readonly streaming: StreamingService,
+    private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
   ) {}
 
-  handleConnection(client: Socket) {
-    this.logger.log(`Client connected: ${client.id}`);
+  async handleConnection(client: Socket) {
+    // ── Authenticate the handshake ──────────────────────────────────────────
+    // Identity for every socket action is derived from the verified JWT
+    // (client.data.userId), never from event payloads. Passive viewing is
+    // allowed without a token, but any state-changing action requires one.
+    const token = this.extractToken(client);
+    let userId: string | null = null;
+    if (token) {
+      try {
+        const payload = await this.jwtService.verifyAsync<{ sub: string }>(
+          token,
+          { secret: this.configService.getOrThrow<string>('JWT_SECRET') },
+        );
+        userId = payload.sub;
+      } catch {
+        userId = null;
+      }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    client.data.userId = userId;
+    this.logger.log(
+      `Client connected: ${client.id} (user: ${userId ?? 'anonymous'})`,
+    );
+  }
+
+  /** Pull a bearer token from the socket handshake auth or Authorization header. */
+  private extractToken(client: Socket): string | null {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const authToken = client.handshake.auth?.token;
+    if (typeof authToken === 'string' && authToken.length > 0) {
+      return authToken.replace(/^Bearer\s+/i, '');
+    }
+    const header = client.handshake.headers?.authorization;
+    if (typeof header === 'string' && header.length > 0) {
+      return header.replace(/^Bearer\s+/i, '');
+    }
+    return null;
+  }
+
+  /** The authenticated user id, or null for an unauthenticated socket. */
+  private getUserId(client: Socket): string | null {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    return (client.data?.userId as string | undefined) ?? null;
+  }
+
+  /**
+   * Confirm the socket is authenticated AND owns the auction. Emits `error`
+   * and returns null when it doesn't, so seller-only handlers can early-return.
+   */
+  private async requireSeller(
+    client: Socket,
+    auctionId: string,
+  ): Promise<{ sellerId: string; coHostId: string | null } | null> {
+    const userId = this.getUserId(client);
+    if (!userId) {
+      client.emit('error', { message: 'Not authenticated' });
+      return null;
+    }
+    const auction = await this.prisma.auction.findUnique({
+      where: { id: auctionId },
+      select: { sellerId: true, coHostId: true },
+    });
+    if (!auction || auction.sellerId !== userId) {
+      client.emit('error', { message: 'Unauthorized' });
+      return null;
+    }
+    return auction;
   }
 
   handleDisconnect(client: Socket) {
@@ -280,17 +349,16 @@ export class BiddingGateway
   ) {
     const room = `auction:${payload.auctionId}`;
     await client.join(room);
-    this.logger.log(`Join payload: ${JSON.stringify(payload)}`);
+
+    // Identity comes from the authenticated socket, never the payload.
+    const userId = this.getUserId(client);
 
     const auction = await this.prisma.auction.findUnique({
       where: { id: payload.auctionId },
       select: { sellerId: true, status: true },
     });
     if (auction) {
-      this.logger.log(
-        `Join payload sellerId: ${payload.sellerId ?? 'none'}, auction sellerId: ${auction.sellerId}`,
-      );
-      if (payload.sellerId === auction.sellerId && auction.status === 'LIVE') {
+      if (userId && userId === auction.sellerId && auction.status === 'LIVE') {
         if (!this.sellerSockets.has(payload.auctionId)) {
           this.sellerSockets.set(payload.auctionId, new Set());
         }
@@ -315,9 +383,9 @@ export class BiddingGateway
       }
     }
 
-    // Track every joiner (seller, co-host, viewer) by userId for targeted emits.
-    // Client passes the userId in the `sellerId` field of the join payload (legacy).
-    const joinerUserId = payload.userId ?? payload.sellerId;
+    // Track every joiner (seller, co-host, viewer) by verified userId for
+    // targeted emits.
+    const joinerUserId = userId;
     if (joinerUserId) {
       this.userSocketMap.set(joinerUserId, client.id);
       this.socketToAuction.set(client.id, payload.auctionId);
@@ -347,12 +415,12 @@ export class BiddingGateway
     }
 
     // ── Viewer dedup ──────────────────────────────────────────
-    const isSeller = auction?.sellerId === payload.sellerId;
+    const isSeller = !!userId && auction?.sellerId === userId;
     if (!isSeller) {
       if (!this.auctionViewers.has(payload.auctionId)) {
         this.auctionViewers.set(payload.auctionId, new Set());
       }
-      const viewerId = payload.userId ?? client.id;
+      const viewerId = userId ?? client.id;
       this.auctionViewers.get(payload.auctionId)!.add(viewerId);
       this.socketToViewer.set(client.id, {
         auctionId: payload.auctionId,
@@ -423,7 +491,7 @@ export class BiddingGateway
       this.socketToViewer.delete(client.id);
     }
     // Roster cleanup on explicit leave
-    const leaverUserId = payload.userId ?? payload.sellerId;
+    const leaverUserId = this.getUserId(client);
     if (leaverUserId) {
       const roster = this.auctionRosters.get(payload.auctionId);
       if (roster?.has(leaverUserId)) {
@@ -442,19 +510,17 @@ export class BiddingGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: StartItemTimerPayload,
   ) {
-    const { auctionId, itemId, sellerId, startSeconds, counterbidSeconds } =
-      payload;
+    const { auctionId, itemId, startSeconds, counterbidSeconds } = payload;
 
-    const auction = await this.prisma.auction.findUnique({
-      where: { id: auctionId },
-    });
-    if (!auction || auction.sellerId !== sellerId) {
-      client.emit('error', { message: 'Unauthorized' });
-      return;
-    }
+    const auction = await this.requireSeller(client, auctionId);
+    if (!auction) return;
 
     this.clearTimer(itemId);
-    await this.biddingService.startItemBidding(sellerId, auctionId, itemId);
+    await this.biddingService.startItemBidding(
+      auction.sellerId,
+      auctionId,
+      itemId,
+    );
 
     const item = await this.prisma.shopItem.update({
       where: { id: itemId },
@@ -499,9 +565,15 @@ export class BiddingGateway
   @SubscribeMessage('place-bid')
   async handlePlaceBid(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: PlaceBidPayload & { bidderId: string },
+    @MessageBody() payload: PlaceBidPayload,
   ) {
     try {
+      const bidderId = this.getUserId(client);
+      if (!bidderId) {
+        client.emit('bid-error', { message: 'Not authenticated' });
+        return;
+      }
+
       const timerState = this.timerState.get(payload.itemId);
       if (timerState?.paused) {
         client.emit('bid-error', {
@@ -515,13 +587,13 @@ export class BiddingGateway
         where: { id: payload.auctionId },
         select: { coHostId: true, sellerId: true },
       });
-      if (auctionForBid?.coHostId === payload.bidderId) {
+      if (auctionForBid?.coHostId === bidderId) {
         client.emit('bid-error', {
           message: "Co-hosts can't bid on the live they're hosting.",
         });
         return;
       }
-      if (auctionForBid?.sellerId === payload.bidderId) {
+      if (auctionForBid?.sellerId === bidderId) {
         client.emit('bid-error', {
           message: "You can't bid on your own live.",
         });
@@ -531,7 +603,7 @@ export class BiddingGateway
       this.lastBidTime.set(payload.itemId, Date.now());
 
       const result = await this.biddingService.placeBid(
-        payload.bidderId,
+        bidderId,
         payload.auctionId,
         payload.itemId,
         payload.amount,
@@ -574,8 +646,8 @@ export class BiddingGateway
       await this.resolveProxyBids(
         payload.auctionId,
         payload.itemId,
-        payload.amount,
-        payload.bidderId,
+        result.amount,
+        bidderId,
       );
 
       return result;
@@ -589,11 +661,13 @@ export class BiddingGateway
   @SubscribeMessage('start-item')
   async handleStartItem(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: StartItemPayload & { sellerId: string },
+    @MessageBody() payload: StartItemPayload,
   ) {
     try {
+      const auction = await this.requireSeller(client, payload.auctionId);
+      if (!auction) return;
       const item = await this.biddingService.startItemBidding(
-        payload.sellerId,
+        auction.sellerId,
         payload.auctionId,
         payload.itemId,
       );
@@ -616,12 +690,14 @@ export class BiddingGateway
   @SubscribeMessage('end-item')
   async handleEndItem(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: StartItemPayload & { sellerId: string },
+    @MessageBody() payload: StartItemPayload,
   ) {
     try {
+      const auction = await this.requireSeller(client, payload.auctionId);
+      if (!auction) return;
       this.clearTimer(payload.itemId);
       const result = await this.biddingService.endItemBidding(
-        payload.sellerId,
+        auction.sellerId,
         payload.auctionId,
         payload.itemId,
       );
@@ -652,17 +728,18 @@ export class BiddingGateway
   }
 
   @SubscribeMessage('pause-item-timer')
-  handlePauseTimer(
+  async handlePauseTimer(
+    @ConnectedSocket() client: Socket,
     @MessageBody()
     payload: {
       auctionId: string;
       itemId: string;
-      sellerId: string;
     },
   ) {
+    const auction = await this.requireSeller(client, payload.auctionId);
+    if (!auction) return;
     const state = this.timerState.get(payload.itemId);
     if (!state || state.auctionId !== payload.auctionId) return;
-    if (!payload.sellerId) return;
 
     state.paused = true;
     const existing = this.activeTimers.get(payload.itemId);
@@ -682,14 +759,16 @@ export class BiddingGateway
   }
 
   @SubscribeMessage('resume-item-timer')
-  handleResumeTimer(
+  async handleResumeTimer(
+    @ConnectedSocket() client: Socket,
     @MessageBody()
     payload: {
       auctionId: string;
       itemId: string;
-      sellerId: string;
     },
   ) {
+    const auction = await this.requireSeller(client, payload.auctionId);
+    if (!auction) return;
     const state = this.timerState.get(payload.itemId);
     if (!state || state.auctionId !== payload.auctionId) return;
 
@@ -705,9 +784,12 @@ export class BiddingGateway
   }
 
   @SubscribeMessage('cancel-item-timer')
-  handleCancelItemTimer(
+  async handleCancelItemTimer(
+    @ConnectedSocket() client: Socket,
     @MessageBody() payload: { auctionId: string; itemId: string },
   ) {
+    const auction = await this.requireSeller(client, payload.auctionId);
+    if (!auction) return;
     this.clearTimer(payload.itemId);
     this.logger.log(`Timer CANCELLED for item ${payload.itemId}`);
 
@@ -731,17 +813,16 @@ export class BiddingGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: StartChatBidPayload,
   ) {
-    const { auctionId, itemId, sellerId, displaySeconds } = payload;
+    const { auctionId, itemId, displaySeconds } = payload;
 
-    const auction = await this.prisma.auction.findUnique({
-      where: { id: auctionId },
-    });
-    if (!auction || auction.sellerId !== sellerId) {
-      client.emit('error', { message: 'Unauthorized' });
-      return;
-    }
+    const auction = await this.requireSeller(client, auctionId);
+    if (!auction) return;
 
-    await this.biddingService.startItemBidding(sellerId, auctionId, itemId);
+    await this.biddingService.startItemBidding(
+      auction.sellerId,
+      auctionId,
+      itemId,
+    );
 
     const item = await this.prisma.shopItem.update({
       where: { id: itemId },
@@ -789,25 +870,29 @@ export class BiddingGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: DeclareChatWinnerPayload,
   ) {
-    const { auctionId, itemId, sellerId, winnerId, winnerName, amount } =
-      payload;
+    const { auctionId, itemId, winnerId, winnerName, amount } = payload;
 
-    const auction = await this.prisma.auction.findUnique({
-      where: { id: auctionId },
-    });
-    if (!auction || auction.sellerId !== sellerId) {
-      client.emit('error', { message: 'Unauthorized' });
+    const auction = await this.requireSeller(client, auctionId);
+    if (!auction) return;
+
+    if (!Number.isInteger(amount) || amount <= 0) {
+      client.emit('error', { message: 'Invalid winning amount' });
       return;
     }
 
     // Clear any display timer
     this.clearTimer(itemId);
 
-    // Record the sale
-    await this.prisma.shopItem.update({
-      where: { id: itemId },
+    // Record the sale atomically — only the first declaration on a still-open
+    // item takes effect, so a double-tap can't create two orders.
+    const sold = await this.prisma.shopItem.updateMany({
+      where: { id: itemId, status: { not: 'SOLD' } },
       data: { status: 'SOLD' },
     });
+    if (sold.count === 0) {
+      client.emit('error', { message: 'Item already sold' });
+      return;
+    }
 
     await this.prisma.bid.create({
       data: {
@@ -868,25 +953,32 @@ export class BiddingGateway
     @MessageBody()
     payload: {
       auctionId: string;
-      userId: string;
       displayName: string;
       message: string;
     },
   ) {
+    const userId = this.getUserId(client);
+    if (!userId) {
+      client.emit('error', { message: 'Not authenticated' });
+      return;
+    }
+    const message = (payload.message ?? '').toString().trim();
+    if (!message) return;
+
     const timestamp = Date.now();
     await this.prisma.auctionChatMessage.create({
       data: {
         auctionId: payload.auctionId,
-        userId: payload.userId,
+        userId,
         displayName: payload.displayName,
-        message: payload.message,
+        message,
         timestamp: BigInt(timestamp),
       },
     });
     this.server.to(`auction:${payload.auctionId}`).emit('chat-message', {
-      userId: payload.userId,
+      userId,
       displayName: payload.displayName,
-      message: payload.message,
+      message,
       timestamp,
     });
   }
@@ -895,12 +987,14 @@ export class BiddingGateway
   handleReaction(
     @ConnectedSocket() client: Socket,
     @MessageBody()
-    payload: { auctionId: string; emoji: string; userId: string },
+    payload: { auctionId: string; emoji: string },
   ) {
+    const userId = this.getUserId(client);
+    if (!userId) return;
     // Broadcast to everyone in the room including sender
     this.server.to(`auction:${payload.auctionId}`).emit('reaction', {
       emoji: payload.emoji,
-      userId: payload.userId,
+      userId,
     });
   }
 
@@ -909,15 +1003,10 @@ export class BiddingGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: SkipChatItemPayload,
   ) {
-    const { auctionId, itemId, sellerId } = payload;
+    const { auctionId, itemId } = payload;
 
-    const auction = await this.prisma.auction.findUnique({
-      where: { id: auctionId },
-    });
-    if (!auction || auction.sellerId !== sellerId) {
-      client.emit('error', { message: 'Unauthorized' });
-      return;
-    }
+    const auction = await this.requireSeller(client, auctionId);
+    if (!auction) return;
 
     // Clear any display timer
     this.clearTimer(itemId);
@@ -959,7 +1048,13 @@ export class BiddingGateway
   }
 
   @SubscribeMessage('end-auction')
-  handleEndAuction(@MessageBody() payload: { auctionId: string }) {
+  async handleEndAuction(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { auctionId: string },
+  ) {
+    const auction = await this.requireSeller(client, payload.auctionId);
+    if (!auction) return;
+
     // Clear any pending auto-end timer — seller ended manually
     const pendingTimer = this.sellerDisconnectTimers.get(payload.auctionId);
     if (pendingTimer) {
@@ -1191,12 +1286,18 @@ export class BiddingGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: StartLiveBuyNowPayload,
   ) {
-    const { auctionId, itemId, sellerId } = payload;
+    const { auctionId, itemId } = payload;
+
+    const userId = this.getUserId(client);
+    if (!userId) {
+      client.emit('error', { message: 'Not authenticated' });
+      return;
+    }
 
     const item = await this.prisma.shopItem.findUnique({
       where: { id: itemId },
     });
-    if (!item || item.sellerId !== sellerId) return;
+    if (!item || item.sellerId !== userId) return;
     if (item.type !== 'BUY_NOW') return;
 
     await this.prisma.shopItem.update({
@@ -1219,13 +1320,26 @@ export class BiddingGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: ClaimBuyNowPayload,
   ) {
-    const { auctionId, itemId, buyerId, buyerName } = payload;
+    const { auctionId, itemId, buyerName } = payload;
 
-    // Atomic check — only first claimer wins
-    const item = await this.prisma.shopItem.findUnique({
-      where: { id: itemId },
+    const buyerId = this.getUserId(client);
+    if (!buyerId) {
+      client.emit('buynow-claim-failed', {
+        itemId,
+        reason: 'Not authenticated',
+      });
+      return;
+    }
+
+    // ── Atomic claim — only the first claimer flips LIVE_BUYNOW → SOLD ──
+    // A conditional updateMany is the atomic compare-and-set: concurrent
+    // claimers both hit this, but exactly one gets count === 1, so only one
+    // order is ever created.
+    const claimed = await this.prisma.shopItem.updateMany({
+      where: { id: itemId, status: 'LIVE_BUYNOW' },
+      data: { status: 'SOLD' },
     });
-    if (!item || item.status !== 'LIVE_BUYNOW') {
+    if (claimed.count === 0) {
       client.emit('buynow-claim-failed', {
         itemId,
         reason: 'Already claimed or not available',
@@ -1233,11 +1347,10 @@ export class BiddingGateway
       return;
     }
 
-    // Mark SOLD atomically
-    await this.prisma.shopItem.update({
+    const item = await this.prisma.shopItem.findUnique({
       where: { id: itemId },
-      data: { status: 'SOLD' },
     });
+    if (!item) return;
 
     this.server.to(`auction:${auctionId}`).emit('buynow-claimed', {
       itemId,
@@ -1258,7 +1371,20 @@ export class BiddingGateway
         mode: 'buynow',
       });
     } catch (e) {
+      // Order creation failed after the item was committed SOLD — roll the
+      // item back so it can be re-claimed rather than being stuck unsellable.
+      await this.prisma.shopItem
+        .updateMany({
+          where: { id: itemId, status: 'SOLD' },
+          data: { status: 'LIVE_BUYNOW' },
+        })
+        .catch(() => undefined);
+      this.server.to(`auction:${auctionId}`).emit('buynow-claim-failed', {
+        itemId,
+        reason: 'Could not create order, please try again',
+      });
       this.logger.error(`Buy Now order creation failed for item ${itemId}:`, e);
+      return;
     }
 
     this.logger.log(`Buy Now claimed: ${itemId} by ${buyerName}`);
@@ -1269,12 +1395,18 @@ export class BiddingGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: PullBuyNowPayload,
   ) {
-    const { auctionId, itemId, sellerId } = payload;
+    const { auctionId, itemId } = payload;
+
+    const userId = this.getUserId(client);
+    if (!userId) {
+      client.emit('error', { message: 'Not authenticated' });
+      return;
+    }
 
     const item = await this.prisma.shopItem.findUnique({
       where: { id: itemId },
     });
-    if (!item || item.sellerId !== sellerId) return;
+    if (!item || item.sellerId !== userId) return;
     if (item.status !== 'LIVE_BUYNOW') return;
 
     await this.prisma.shopItem.update({
@@ -1310,30 +1442,47 @@ export class BiddingGateway
     const [topProxy, secondProxy] = activeMaxBids;
     if (!topProxy) return;
 
+    // The proxy leader becomes the recorded winning bidder — resolve their name
+    // once for the Redis cache / bid row written by applyProxyBid.
+    const leader = await this.prisma.user.findUnique({
+      where: { id: topProxy.userId },
+      select: { displayName: true },
+    });
+    const leaderName = leader?.displayName ?? 'Bidder';
+
     if (secondProxy) {
       const finalPrice = Math.min(
         topProxy.amount,
         secondProxy.amount + increment,
       );
-      await this.prisma.shopItem.update({
-        where: { id: itemId },
-        data: { price: finalPrice },
-      });
+      const outcome = await this.biddingService.applyProxyBid(
+        auctionId,
+        itemId,
+        topProxy.userId,
+        leaderName,
+        finalPrice,
+      );
+      if (!outcome.applied) return;
       this.emitToUser(topProxy.userId, 'max-bid-triggered', {
         itemId,
-        newPrice: finalPrice,
+        newPrice: outcome.currentPrice,
         yourMax: topProxy.amount,
       });
       this.emitToUser(secondProxy.userId, 'max-bid-exceeded', {
         itemId,
-        newPrice: finalPrice,
+        newPrice: outcome.currentPrice,
         yourMax: secondProxy.amount,
       });
       this.emitToAuction(auctionId, 'bid-update', {
         itemId,
-        currentPrice: finalPrice,
+        bidderId: topProxy.userId,
+        bidderName: leaderName,
+        amount: outcome.currentPrice,
+        currentPrice: outcome.currentPrice,
+        totalBids: outcome.totalBids,
         winnerId: topProxy.userId,
         bidType: 'proxy',
+        timestamp: Date.now(),
       });
       return;
     }
@@ -1351,20 +1500,29 @@ export class BiddingGateway
     }
 
     const counterPrice = Math.min(incomingAmount + increment, topProxy.amount);
-    await this.prisma.shopItem.update({
-      where: { id: itemId },
-      data: { price: counterPrice },
-    });
+    const outcome = await this.biddingService.applyProxyBid(
+      auctionId,
+      itemId,
+      topProxy.userId,
+      leaderName,
+      counterPrice,
+    );
+    if (!outcome.applied) return;
     this.emitToUser(topProxy.userId, 'max-bid-triggered', {
       itemId,
-      newPrice: counterPrice,
+      newPrice: outcome.currentPrice,
       yourMax: topProxy.amount,
     });
     this.emitToAuction(auctionId, 'bid-update', {
       itemId,
-      currentPrice: counterPrice,
+      bidderId: topProxy.userId,
+      bidderName: leaderName,
+      amount: outcome.currentPrice,
+      currentPrice: outcome.currentPrice,
+      totalBids: outcome.totalBids,
       winnerId: topProxy.userId,
       bidType: 'proxy',
+      timestamp: Date.now(),
     });
   }
 
@@ -1376,11 +1534,15 @@ export class BiddingGateway
       auctionId: string;
       itemId: string;
       amount: number;
-      userId: string;
     },
   ) {
     try {
-      const maxBid = await this.maxBidsService.upsert(payload.userId, {
+      const userId = this.getUserId(client);
+      if (!userId) {
+        client.emit('bid-error', { message: 'Not authenticated' });
+        return;
+      }
+      const maxBid = await this.maxBidsService.upsert(userId, {
         auctionId: payload.auctionId,
         itemId: payload.itemId,
         amount: payload.amount,
@@ -1398,7 +1560,7 @@ export class BiddingGateway
           payload.auctionId,
           payload.itemId,
           item.price ?? 0,
-          payload.userId,
+          userId,
         );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Max bid failed';
@@ -1415,7 +1577,13 @@ export class BiddingGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: InviteCoHostPayload,
   ) {
-    const { auctionId, hostUserId, targetUserId } = payload;
+    const { auctionId, targetUserId } = payload;
+
+    const hostUserId = this.getUserId(client);
+    if (!hostUserId) {
+      client.emit('error', { message: 'Not authenticated' });
+      return;
+    }
 
     const auction = await this.prisma.auction.findUnique({
       where: { id: auctionId },
@@ -1477,7 +1645,13 @@ export class BiddingGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: AcceptCoHostInvitePayload,
   ) {
-    const { auctionId, userId, displayName, hmsPeerId } = payload;
+    const { auctionId, displayName, hmsPeerId } = payload;
+
+    const userId = this.getUserId(client);
+    if (!userId) {
+      client.emit('error', { message: 'Not authenticated' });
+      return;
+    }
 
     const pending = this.pendingCoHostInvites.get(auctionId);
     if (!pending || pending.targetUserId !== userId) {
@@ -1538,15 +1712,16 @@ export class BiddingGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: DeclineCoHostInvitePayload,
   ) {
+    const userId = this.getUserId(client);
+    if (!userId) return;
     const pending = this.pendingCoHostInvites.get(payload.auctionId);
-    if (pending?.targetUserId === payload.userId) {
-      this.pendingCoHostInvites.delete(payload.auctionId);
-    }
+    if (pending?.targetUserId !== userId) return;
+    this.pendingCoHostInvites.delete(payload.auctionId);
     this.server
       .to(`auction:${payload.auctionId}`)
       .emit('co-host:invite-declined', {
         auctionId: payload.auctionId,
-        declinedByUserId: payload.userId,
+        declinedByUserId: userId,
       });
   }
 
@@ -1555,11 +1730,16 @@ export class BiddingGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: KickCoHostPayload,
   ) {
+    const hostUserId = this.getUserId(client);
+    if (!hostUserId) {
+      client.emit('error', { message: 'Not authenticated' });
+      return;
+    }
     const auction = await this.prisma.auction.findUnique({
       where: { id: payload.auctionId },
       select: { sellerId: true, coHostId: true, hmsRoomId: true },
     });
-    if (!auction || auction.sellerId !== payload.hostUserId) {
+    if (!auction || auction.sellerId !== hostUserId) {
       client.emit('error', { message: 'Only the host can kick the co-host.' });
       return;
     }
@@ -1603,11 +1783,13 @@ export class BiddingGateway
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: LeaveCoHostPayload,
   ) {
+    const userId = this.getUserId(client);
+    if (!userId) return;
     const auction = await this.prisma.auction.findUnique({
       where: { id: payload.auctionId },
       select: { coHostId: true, hmsRoomId: true },
     });
-    if (!auction || auction.coHostId !== payload.userId) return;
+    if (!auction || auction.coHostId !== userId) return;
 
     const coHostInfo = this.coHostPeerIds.get(payload.auctionId);
     if (coHostInfo && auction.hmsRoomId) {
@@ -1630,7 +1812,7 @@ export class BiddingGateway
 
     this.server.to(`auction:${payload.auctionId}`).emit('co-host:left', {
       auctionId: payload.auctionId,
-      userId: payload.userId,
+      userId,
       reason: 'self-left',
     });
 

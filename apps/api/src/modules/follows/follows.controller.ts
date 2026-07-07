@@ -2,6 +2,7 @@ import { Controller, Post, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { FollowsService } from './follows.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { parsePagination } from '../../common/utils/pagination';
 
 interface AuthUser {
   id: string;
@@ -45,8 +46,11 @@ export class FollowsController {
   }
 
   @Get('sellers/:sellerId/payment-info')
-  getSellerPaymentInfo(@Param('sellerId') sellerId: string) {
-    return this.followsService.getSellerPaymentInfo(sellerId);
+  getSellerPaymentInfo(
+    @CurrentUser() user: AuthUser,
+    @Param('sellerId') sellerId: string,
+  ) {
+    return this.followsService.getSellerPaymentInfo(user.id, sellerId);
   }
 
   @Get('users/me/followers')
@@ -55,11 +59,8 @@ export class FollowsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.followsService.listFollowers(
-      user.id,
-      page ? parseInt(page, 10) : 1,
-      limit ? parseInt(limit, 10) : 50,
-    );
+    const p = parsePagination(page, limit, { defaultLimit: 50 });
+    return this.followsService.listFollowers(user.id, p.page, p.limit);
   }
 
   @Get('users/me/following')
@@ -68,10 +69,7 @@ export class FollowsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.followsService.listFollowing(
-      user.id,
-      page ? parseInt(page, 10) : 1,
-      limit ? parseInt(limit, 10) : 50,
-    );
+    const p = parsePagination(page, limit, { defaultLimit: 50 });
+    return this.followsService.listFollowing(user.id, p.page, p.limit);
   }
 }

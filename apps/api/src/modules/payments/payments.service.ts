@@ -55,6 +55,15 @@ export class PaymentsService {
     });
     if (!item) throw new NotFoundException('Item not found');
 
+    // ── Idempotency guard ──────────────────────────────────────────────────
+    // A single item can only have one live order. If two sell paths race
+    // (concurrent buy-now claim + offer accept, or a retried call), return the
+    // existing order instead of creating a duplicate and charging twice.
+    const existingOrder = await this.prisma.order.findFirst({
+      where: { itemId: params.itemId, status: { not: OrderStatus.CANCELLED } },
+    });
+    if (existingOrder) return existingOrder;
+
     const [order] = await this.prisma.$transaction([
       this.prisma.order.create({
         data: {
@@ -267,12 +276,42 @@ export class PaymentsService {
     paymongoRef: string,
     webhookEventId: string,
   ) {
-    await this.prisma.$transaction([
-      this.prisma.order.update({
-        where: { id: orderId },
+    const existingOrder = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { status: true },
+    });
+    if (!existingOrder) {
+      this.logger.warn(`Webhook ${webhookEventId}: order ${orderId} not found`);
+      return;
+    }
+
+    // ── Status precondition ────────────────────────────────────────────────
+    // Only an order still awaiting payment may become PAID. A payment.paid that
+    // arrives after the order was CANCELLED (e.g. retries exhausted, then the
+    // buyer pays via a still-open checkout) must NOT resurrect it to PAID and
+    // tell the seller to ship — that's a refund case. Record the event id so
+    // the payment isn't reprocessed, and stop.
+    if (existingOrder.status !== OrderStatus.PENDING_PAYMENT) {
+      this.logger.warn(
+        `Webhook ${webhookEventId}: order ${orderId} is ${existingOrder.status}, ` +
+          `not marking PAID (late/duplicate payment — flag for refund review)`,
+      );
+      await this.prisma.payment
+        .update({
+          where: { orderId },
+          data: { paymongoRef, webhookEventId },
+        })
+        .catch(() => undefined);
+      return;
+    }
+
+    const applied = await this.prisma.$transaction(async (tx) => {
+      const upd = await tx.order.updateMany({
+        where: { id: orderId, status: OrderStatus.PENDING_PAYMENT },
         data: { status: OrderStatus.PAID, paidAt: new Date() },
-      }),
-      this.prisma.payment.update({
+      });
+      if (upd.count === 0) return false;
+      await tx.payment.update({
         where: { orderId },
         data: {
           status: PaymentStatus.PAID,
@@ -280,8 +319,17 @@ export class PaymentsService {
           webhookEventId,
           paidAt: new Date(),
         },
-      }),
-    ]);
+      });
+      return true;
+    });
+
+    if (!applied) {
+      this.logger.warn(
+        `Webhook ${webhookEventId}: order ${orderId} was no longer pending, skipped`,
+      );
+      return;
+    }
+
     this.logger.log(
       `Order ${orderId} marked PAID via webhook ${webhookEventId}`,
     );

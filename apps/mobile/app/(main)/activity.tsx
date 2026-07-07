@@ -156,7 +156,7 @@ export default function ActivityScreen() {
       const ordersData = ordersRes.data.data as { items: Order[]; meta: { hasMore: boolean } };
       setOrders(ordersData.items ?? []);
       setOrdersHasMore(ordersData.meta?.hasMore ?? false);
-      setOffers(offersRes.data.data as Offer[]);
+      setOffers((offersRes.data.data as Offer[]) ?? []);
     } catch {
       // fail silently — empty states handle it
     } finally {

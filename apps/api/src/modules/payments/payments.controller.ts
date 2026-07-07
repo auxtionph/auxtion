@@ -11,6 +11,7 @@ import {
   Req,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { Throttle } from '@nestjs/throttler';
 import { PaymentsService } from './payments.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -44,7 +45,9 @@ export class PaymentsController {
     return this.paymentsService.getPaymentStatus(user.id, orderId);
   }
 
+  // Separate bucket for the PayMongo webhook: 20 requests / 60s per source IP.
   @Post('webhook/paymongo')
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   handleWebhook(
     @Req() req: Request,

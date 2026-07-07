@@ -142,23 +142,34 @@ export class OffersService {
     if (offer.status !== OfferStatus.PENDING)
       throw new BadRequestException('Offer is no longer pending');
 
-    const accepted = await this.prisma.offer.update({
-      where: { id: offerId },
-      data: { status: OfferStatus.ACCEPTED },
-    });
+    // ── Atomic accept ──────────────────────────────────────────────────────
+    // Claim the item, mark this offer accepted, and decline siblings in one
+    // transaction. The conditional item claim (updateMany where NOT SOLD) is
+    // the gate: a racing offer-accept or buy-now claim can't also sell it.
+    const accepted = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.shopItem.updateMany({
+        where: { id: offer.itemId, status: { not: ShopItemStatus.SOLD } },
+        data: { status: ShopItemStatus.SOLD },
+      });
+      if (claimed.count === 0) {
+        throw new BadRequestException('Item is no longer available');
+      }
 
-    await this.prisma.offer.updateMany({
-      where: {
-        itemId: offer.itemId,
-        status: OfferStatus.PENDING,
-        id: { not: offerId },
-      },
-      data: { status: OfferStatus.DECLINED },
-    });
+      const acc = await tx.offer.update({
+        where: { id: offerId },
+        data: { status: OfferStatus.ACCEPTED },
+      });
 
-    await this.prisma.shopItem.update({
-      where: { id: offer.itemId },
-      data: { status: ShopItemStatus.SOLD },
+      await tx.offer.updateMany({
+        where: {
+          itemId: offer.itemId,
+          status: OfferStatus.PENDING,
+          id: { not: offerId },
+        },
+        data: { status: OfferStatus.DECLINED },
+      });
+
+      return acc;
     });
 
     const activeAuction = await this.prisma.auction.findFirst({

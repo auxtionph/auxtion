@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
@@ -78,7 +78,23 @@ export class FollowsService {
   }
 
   // ── Get Seller Payment Info (for chat bid buyers) ──────────────────────────
-  async getSellerPaymentInfo(sellerId: string) {
+  // Full GCash/bank details, so this is gated: the caller must actually have an
+  // order with this seller (i.e. they won/bought something and need to pay).
+  // Without the gate, any account could enumerate sellerIds and harvest every
+  // seller's bank account number.
+  async getSellerPaymentInfo(requesterId: string, sellerId: string) {
+    if (requesterId !== sellerId) {
+      const order = await this.prisma.order.findFirst({
+        where: { sellerId, buyerId: requesterId },
+        select: { id: true },
+      });
+      if (!order) {
+        throw new ForbiddenException(
+          'You can only view payment details for a seller you have an order with',
+        );
+      }
+    }
+
     const seller = await this.prisma.user.findUnique({
       where: { id: sellerId },
       select: {

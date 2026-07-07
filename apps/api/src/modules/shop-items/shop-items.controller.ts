@@ -16,6 +16,7 @@ import { ShopItemsService } from './shop-items.service';
 import { CreateShopItemDto } from './dto/create-shop-item.dto';
 import { UpdateShopItemDto } from './dto/update-shop-item.dto';
 import { ReorderQueueDto } from './dto/reorder-queue.dto';
+import { ConvertToAuctionDto } from './dto/convert-to-auction.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ShopItemType, UserRole } from '@prisma/client';
@@ -96,9 +97,9 @@ export class ShopItemsController {
   convertToAuction(
     @CurrentUser() user: AuthUser,
     @Param('id') id: string,
-    @Body('startingPrice') startingPrice: number,
+    @Body() dto: ConvertToAuctionDto,
   ) {
-    return this.shopItemsService.convertToAuction(user.id, id, startingPrice);
+    return this.shopItemsService.convertToAuction(user.id, id, dto.startingPrice);
   }
 
   @Post(':id/notify')

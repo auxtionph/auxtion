@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
 import { BiddingGateway } from './bidding.gateway';
 import { BiddingService } from './bidding.service';
 import { MaxBidsModule } from '../max-bids/max-bids.module';
@@ -9,6 +10,7 @@ import { StreamingModule } from '../streaming/streaming.module';
 
 @Module({
   imports: [
+    JwtModule.register({}),
     MaxBidsModule,
     PaymentsModule,
     OrdersModule,

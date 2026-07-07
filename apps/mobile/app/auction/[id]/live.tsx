@@ -593,7 +593,7 @@ export default function LiveAuctionRoom() {
         let myItemIds: Record<string, { amount: number; userId: string; paymentDeadline?: string; orderId: string }> = {};
           try {
             const ordersRes = await apiClient.get('/orders/buying');
-            const myOrders = ordersRes.data.data as Array<{ id: string; itemId: string; amount: number; buyerId: string; paymentDeadline?: string }>;
+            const myOrders = (ordersRes.data.data?.items ?? []) as Array<{ id: string; itemId: string; amount: number; buyerId: string; paymentDeadline?: string }>;
             myOrders.forEach(o => {
               myItemIds[o.itemId] = { amount: o.amount, userId: o.buyerId, paymentDeadline: o.paymentDeadline, orderId: o.id };
             });
@@ -706,7 +706,7 @@ export default function LiveAuctionRoom() {
     try {
       if (isSeller) {
         const res = await apiClient.get('/orders/selling');
-        const orders = res.data.data as Array<{ id: string; itemId: string; status: string; auction?: { id: string } }>;
+        const orders = (res.data.data ?? []) as Array<{ id: string; itemId: string; status: string; auction?: { id: string } }>;
         const auctionOrders = orders.filter(o => o.auction?.id === id);
         setSoldItemWinners(prev => {
           const updated = { ...prev };
@@ -719,7 +719,7 @@ export default function LiveAuctionRoom() {
         });
       } else {
         const res = await apiClient.get('/orders/buying');
-        const orders = res.data.data as Array<{ id: string; itemId: string; status: string; paymentDeadline?: string; paymentReference?: string; paymentProofUrl?: string }>;
+        const orders = (res.data.data?.items ?? []) as Array<{ id: string; itemId: string; status: string; paymentDeadline?: string; paymentReference?: string; paymentProofUrl?: string }>;
         setSoldItemWinners(prev => {
           const updated = { ...prev };
           orders.forEach(o => {
@@ -3333,7 +3333,7 @@ export default function LiveAuctionRoom() {
                             if (!sellerOrder) return;
                             try {
                               const res = await apiClient.get('/orders/selling');
-                              const orders = res.data.data as Array<{ id: string; itemId: string; status: string; auction?: { id: string } }>;
+                              const orders = (res.data.data ?? []) as Array<{ id: string; itemId: string; status: string; auction?: { id: string } }>;
                               const order = orders.find(o => o.itemId === item.id && o.auction?.id === id);
                               if (!order) return;
                               setSellerChatOrder({
@@ -3343,6 +3343,10 @@ export default function LiveAuctionRoom() {
                                 buyerName: sellerOrder.displayName,
                                 paymentReference: (order as any).paymentReference ?? undefined,
                               });
+                              // Close the shop modal before opening the sheet —
+                              // iOS can't present two RN Modals at once (stacking
+                              // them soft-locks the screen). Mirrors the buyer path.
+                              setShowShop(false);
                               setShowSellerChatSheet(true);
                             } catch {
                               Alert.alert('Error', 'Could not load order.');
@@ -3367,7 +3371,7 @@ export default function LiveAuctionRoom() {
                             }
                             try {
                               const res = await apiClient.get('/orders/buying');
-                              const orders = res.data.data as Array<{ id: string; itemId: string; status: string; paymentReference?: string; paymentProofUrl?: string }>;
+                              const orders = (res.data.data?.items ?? []) as Array<{ id: string; itemId: string; status: string; paymentReference?: string; paymentProofUrl?: string }>;
                               const order = orders.find(o => o.itemId === item.id);
                               if (!order) return;
                               // Double-check from fresh data
@@ -3404,7 +3408,7 @@ export default function LiveAuctionRoom() {
                           // Swipe auction win → order detail
                           try {
                             const res = await apiClient.get('/orders/buying');
-                            const orders = res.data.data as Array<{ id: string; itemId: string; status: string }>;
+                            const orders = (res.data.data?.items ?? []) as Array<{ id: string; itemId: string; status: string }>;
                             const order = orders.find(o => o.itemId === item.id);
                             if (!order) {
                               Alert.alert('Order not ready', 'Your order is still being created. Try again in a moment.');

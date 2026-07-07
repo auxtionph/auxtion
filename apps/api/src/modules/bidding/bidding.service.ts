@@ -32,7 +32,14 @@ export class BiddingService {
     itemId: string,
     amount: number,
   ): Promise<BidResult> {
-    // ── Single query to get everything needed ──
+    // ── Amount must be a positive whole number of centavos ──
+    if (!Number.isInteger(amount) || amount <= 0) {
+      throw new BadRequestException(
+        'Bid amount must be a positive whole number',
+      );
+    }
+
+    // ── Cheap up-front validation (re-checked atomically under the row lock) ──
     const [auction, item, bidder] = await Promise.all([
       this.prisma.auction.findUnique({ where: { id: auctionId } }),
       this.prisma.shopItem.findUnique({ where: { id: itemId } }),
@@ -54,28 +61,53 @@ export class BiddingService {
       throw new BadRequestException('Sellers cannot bid on their own auctions');
     if (!bidder) throw new NotFoundException('Bidder not found');
 
-    // ── Use Redis as source of truth for bid count (avoids DB query) ──
-    const cached = await this.redis.get(`bid:${itemId}`);
-    const cachedState = cached
-      ? (JSON.parse(cached) as { totalBids: number; currentPrice: number })
-      : null;
+    // ── Atomic bid: serialize concurrent bids on this item via a row lock ──
+    // Postgres SELECT ... FOR UPDATE on the shop_items row means two racing
+    // bids can never both read the same "current price" and both win — the
+    // second waits for the first to commit. The write is AWAITED (no more
+    // fire-and-forget), so a failed DB write surfaces as a bid-error instead
+    // of a phantom confirmed bid.
+    const newTotalBids = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "shop_items" WHERE id = ${itemId} FOR UPDATE`;
 
-    const existingBidCount = cachedState?.totalBids ?? 0;
-    const currentPrice = cachedState?.currentPrice ?? item.price;
+      const locked = await tx.shopItem.findUnique({
+        where: { id: itemId },
+        select: { price: true, status: true, auctionId: true },
+      });
+      if (!locked || locked.status !== ShopItemStatus.LIVE)
+        throw new BadRequestException('Item is not currently being auctioned');
+      if (locked.auctionId !== auctionId)
+        throw new BadRequestException('Item does not belong to this auction');
 
-    if (existingBidCount === 0) {
-      if (amount < currentPrice)
-        throw new BadRequestException(`Bid must be at least ${currentPrice}`);
-    } else {
-      if (amount <= currentPrice)
-        throw new BadRequestException(
-          `Bid must be higher than ${currentPrice}`,
-        );
-    }
+      const existingBidCount = await tx.bid.count({ where: { itemId } });
+      const currentPrice = locked.price;
 
-    const newTotalBids = existingBidCount + 1;
+      if (existingBidCount === 0) {
+        if (amount < currentPrice)
+          throw new BadRequestException(`Bid must be at least ${currentPrice}`);
+      } else {
+        if (amount <= currentPrice)
+          throw new BadRequestException(
+            `Bid must be higher than ${currentPrice}`,
+          );
+      }
 
-    // ── Update Redis immediately (before DB) for instant response ──
+      await tx.bid.updateMany({
+        where: { itemId, isWinning: true },
+        data: { isWinning: false },
+      });
+      await tx.bid.create({
+        data: { auctionId, itemId, bidderId, amount, isWinning: true },
+      });
+      await tx.shopItem.update({
+        where: { id: itemId },
+        data: { price: amount },
+      });
+
+      return existingBidCount + 1;
+    });
+
+    // ── Redis is now a read-through cache, not the source of truth ──
     const bidState = {
       auctionId,
       itemId,
@@ -85,22 +117,9 @@ export class BiddingService {
       totalBids: newTotalBids,
       updatedAt: Date.now(),
     };
-    await this.redis.set(`bid:${itemId}`, JSON.stringify(bidState), 3600);
-
-    // ── DB write in background (fire and forget for speed) ──
-    void this.prisma.$transaction([
-      this.prisma.bid.updateMany({
-        where: { itemId, isWinning: true },
-        data: { isWinning: false },
-      }),
-      this.prisma.bid.create({
-        data: { auctionId, itemId, bidderId, amount, isWinning: true },
-      }),
-      this.prisma.shopItem.update({
-        where: { id: itemId },
-        data: { price: amount },
-      }),
-    ]);
+    await this.redis
+      .set(`bid:${itemId}`, JSON.stringify(bidState), 3600)
+      .catch(() => undefined);
 
     return {
       auctionId,
@@ -111,6 +130,71 @@ export class BiddingService {
       totalBids: newTotalBids,
       timestamp: Date.now(),
     };
+  }
+
+  // ── Apply a Proxy (Max-Bid) Increment ──────────────────────────────────────
+  // Records the proxy leader as the winning bidder at `amount` under the same
+  // row lock as manual bids, so the DB (the source of truth for the winner)
+  // always reflects who is actually winning. Refuses to lower the price.
+  async applyProxyBid(
+    auctionId: string,
+    itemId: string,
+    bidderId: string,
+    bidderName: string,
+    amount: number,
+  ): Promise<{ applied: boolean; currentPrice: number; totalBids: number }> {
+    if (!Number.isInteger(amount) || amount <= 0) {
+      return { applied: false, currentPrice: 0, totalBids: 0 };
+    }
+
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "shop_items" WHERE id = ${itemId} FOR UPDATE`;
+      const locked = await tx.shopItem.findUnique({
+        where: { id: itemId },
+        select: { price: true, status: true },
+      });
+      if (!locked || locked.status !== ShopItemStatus.LIVE) {
+        return {
+          applied: false,
+          currentPrice: locked?.price ?? 0,
+          totalBids: 0,
+        };
+      }
+      if (amount <= locked.price) {
+        const totalBids = await tx.bid.count({ where: { itemId } });
+        return { applied: false, currentPrice: locked.price, totalBids };
+      }
+      await tx.bid.updateMany({
+        where: { itemId, isWinning: true },
+        data: { isWinning: false },
+      });
+      await tx.bid.create({
+        data: { auctionId, itemId, bidderId, amount, isWinning: true },
+      });
+      await tx.shopItem.update({
+        where: { id: itemId },
+        data: { price: amount },
+      });
+      const totalBids = await tx.bid.count({ where: { itemId } });
+      return { applied: true, currentPrice: amount, totalBids };
+    });
+
+    if (outcome.applied) {
+      const bidState = {
+        auctionId,
+        itemId,
+        currentPrice: amount,
+        highestBidderId: bidderId,
+        highestBidderName: bidderName,
+        totalBids: outcome.totalBids,
+        updatedAt: Date.now(),
+      };
+      await this.redis
+        .set(`bid:${itemId}`, JSON.stringify(bidState), 3600)
+        .catch(() => undefined);
+    }
+
+    return outcome;
   }
 
   // ── Get Current Bid State ──────────────────────────────────────────────────
@@ -206,23 +290,23 @@ export class BiddingService {
       throw new BadRequestException('You do not own this auction');
     }
 
-    // ✅ Use Redis as source of truth — always has the latest bid
-    const cached = await this.redis.get(`bid:${itemId}`);
-    let winner: { userId: string; displayName: string; amount: number } | null =
-      null;
+    // ── DB is the source of truth for the winner ──
+    // Redis has a 3600s TTL and can be evicted/restarted mid-auction; reading
+    // the winner from Redis silently dropped real bids. The highest bid wins;
+    // ties break to the earliest bid (first to reach that amount).
+    const winningBid = await this.prisma.bid.findFirst({
+      where: { itemId },
+      orderBy: [{ amount: 'desc' }, { placedAt: 'asc' }],
+      include: { bidder: { select: { id: true, displayName: true } } },
+    });
 
-    if (cached) {
-      const state = JSON.parse(cached) as {
-        highestBidderId: string;
-        highestBidderName: string;
-        currentPrice: number;
-      };
-      winner = {
-        userId: state.highestBidderId,
-        displayName: state.highestBidderName,
-        amount: state.currentPrice,
-      };
-    }
+    const winner = winningBid
+      ? {
+          userId: winningBid.bidderId,
+          displayName: winningBid.bidder.displayName,
+          amount: winningBid.amount,
+        }
+      : null;
 
     // Mark item as sold or available
     await this.prisma.shopItem.update({
@@ -232,8 +316,8 @@ export class BiddingService {
       },
     });
 
-    // Clear Redis cache
-    await this.redis.del(`bid:${itemId}`);
+    // Clear Redis cache (best-effort — no longer authoritative)
+    await this.redis.del(`bid:${itemId}`).catch(() => undefined);
 
     return { itemId, winner };
   }

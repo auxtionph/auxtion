@@ -454,24 +454,39 @@ export class OrdersService {
       throw new BadRequestException('Order has not been delivered yet');
     }
 
-    const payoutReleaseAt = this.calculatePayoutReleaseDate(
-      order.seller.sellerTier,
-    );
-
-    await this.prisma.order.update({
-      where: { id: orderId },
-      data: {
-        status: OrderStatus.COMPLETED,
-        deliveredAt: new Date(),
-        payoutReleaseAt,
-      },
+    // ── Buyer confirmed receipt → complete + release payout ────────────
+    // Mirrors autoConfirmDeliveries: mark COMPLETED, RELEASE the payout, and
+    // credit the sale — all atomically. The conditional updateMany gates on
+    // status so a racing auto-confirm cron can't double-increment totalSales.
+    const completed = await this.prisma.$transaction(async (tx) => {
+      const res = await tx.order.updateMany({
+        where: { id: orderId, status: OrderStatus.DELIVERED },
+        data: {
+          status: OrderStatus.COMPLETED,
+          payoutStatus: PayoutStatus.RELEASED,
+          payoutReleasedAt: new Date(),
+        },
+      });
+      if (res.count === 0) return false;
+      await tx.user.update({
+        where: { id: order.sellerId },
+        data: { totalSales: { increment: 1 } },
+      });
+      return true;
     });
+
+    if (!completed) {
+      // Already completed by the cron in the meantime — nothing more to do.
+      return { success: true };
+    }
+
+    await this.checkAndUpgradeSellerTier(order.sellerId);
 
     // ── Notify seller ─────────────────────────────────────────────────
     void this.notifications.sendToUser(order.sellerId, {
       title: '✅ Buyer confirmed receipt!',
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      body: `Payment for ${order.item.title ?? 'your item'} will be released soon.`,
+      body: `Payment for ${order.item.title ?? 'your item'} has been released.`,
       data: { screen: 'seller-orders' },
     });
 
@@ -537,15 +552,20 @@ export class OrdersService {
       },
     });
 
+    let confirmed = 0;
     for (const order of orders) {
-      await this.prisma.order.update({
-        where: { id: order.id },
+      // Conditional transition gates the increment: if confirmReceipt or the
+      // payout cron already completed this order, count === 0 and we skip.
+      const res = await this.prisma.order.updateMany({
+        where: { id: order.id, status: OrderStatus.DELIVERED },
         data: {
           status: OrderStatus.COMPLETED,
           payoutStatus: PayoutStatus.RELEASED,
           payoutReleasedAt: new Date(),
         },
       });
+      if (res.count === 0) continue;
+      confirmed += 1;
 
       await this.prisma.user.update({
         where: { id: order.sellerId },
@@ -559,7 +579,7 @@ export class OrdersService {
       );
     }
 
-    return { confirmed: orders.length };
+    return { confirmed };
   }
 
   // ── Expire Pending Payments (Background Job) ───────────────────────────────
@@ -693,15 +713,20 @@ export class OrdersService {
       },
     });
 
+    let released = 0;
     for (const order of orders) {
-      await this.prisma.order.update({
-        where: { id: order.id },
+      // Conditional transition gates the increment so this can't double-count
+      // with autoConfirmDeliveries or a manual confirmReceipt on the same order.
+      const res = await this.prisma.order.updateMany({
+        where: { id: order.id, status: OrderStatus.DELIVERED },
         data: {
           status: OrderStatus.COMPLETED,
           payoutStatus: PayoutStatus.RELEASED,
           payoutReleasedAt: new Date(),
         },
       });
+      if (res.count === 0) continue;
+      released += 1;
 
       // Increment seller total sales
       await this.prisma.user.update({
@@ -713,7 +738,7 @@ export class OrdersService {
       await this.checkAndUpgradeSellerTier(order.sellerId);
     }
 
-    return { released: orders.length };
+    return { released };
   }
 
   // ── Tier Upgrade ───────────────────────────────────────────────────────────

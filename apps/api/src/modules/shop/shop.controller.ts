@@ -19,6 +19,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ShopService } from './shop.service';
 import { CreateStorefrontItemDto } from './dto/create-storefront-item.dto';
 import { UpdateStorefrontItemDto } from './dto/update-storefront-item.dto';
+import { parsePagination } from '../../common/utils/pagination';
 
 @Controller()
 @UseGuards(JwtAuthGuard)
@@ -36,8 +37,7 @@ export class ShopController {
   ) {
     return this.shopService.getSellerStorefront(sellerId, {
       category,
-      page: parseInt(page),
-      limit: parseInt(limit),
+      ...parsePagination(page, limit),
     });
   }
 
@@ -50,8 +50,7 @@ export class ShopController {
   ) {
     return this.shopService.getSellerItems(sellerId, {
       category,
-      page: parseInt(page),
-      limit: parseInt(limit),
+      ...parsePagination(page, limit),
     });
   }
 
@@ -84,8 +83,7 @@ export class ShopController {
     return this.shopService.search(q, {
       type,
       category,
-      page: parseInt(page),
-      limit: parseInt(limit),
+      ...parsePagination(page, limit),
     });
   }
 
@@ -120,8 +118,7 @@ export class ShopController {
   ) {
     return this.shopService.getMyItems(user.id as string, {
       status,
-      page: parseInt(page),
-      limit: parseInt(limit),
+      ...parsePagination(page, limit),
     });
   }
 

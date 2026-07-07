@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { HttpThrottlerGuard } from './common/guards/http-throttler.guard';
 import { AppConfigModule } from './config/config.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
@@ -23,6 +26,9 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 @Module({
   imports: [
     ScheduleModule.forRoot(),
+    // Global default: 60 requests / 60s per route per IP. Auth routes and the
+    // PayMongo webhook tighten this per-handler with @Throttle overrides.
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
     AppConfigModule,
     PrismaModule,
     RedisModule,
@@ -42,6 +48,10 @@ import { UploadsModule } from './modules/uploads/uploads.module';
     FollowsModule,
     ShopModule,
     UploadsModule,
+  ],
+  providers: [
+    // Applies the global throttle to all HTTP routes (skips WebSocket events).
+    { provide: APP_GUARD, useClass: HttpThrottlerGuard },
   ],
 })
 export class AppModule {}

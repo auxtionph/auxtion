@@ -6,6 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { SDK } from '@100mslive/server-sdk';
 import * as jwt from 'jsonwebtoken';
+import { PrismaService } from '../../prisma/prisma.service';
 
 export type HmsRole = 'broadcaster' | 'co-broadcaster' | 'viewer-realtime';
 
@@ -14,7 +15,10 @@ export class StreamingService {
   private readonly logger = new Logger(StreamingService.name);
   private hms: SDK;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {
     this.hms = new SDK(
       this.configService.getOrThrow<string>('HMS_APP_ACCESS_KEY'),
       this.configService.getOrThrow<string>('HMS_APP_SECRET'),
@@ -26,10 +30,30 @@ export class StreamingService {
     userId: string,
     role: 'broadcaster' | 'viewer-realtime',
   ): Promise<string> {
+    // ── Authorize the requested role against room ownership ────────────────
+    // The roomId is publicly discoverable (storefront), so a broadcaster token
+    // must never be handed out on the client's say-so. Only the auction's
+    // seller may publish; everyone else is forced to viewer-realtime. (Co-hosts
+    // join as viewers and are promoted later via changePeerRole.)
+    let grantedRole: HmsRole = 'viewer-realtime';
+    if (role === 'broadcaster') {
+      const auction = await this.prisma.auction.findFirst({
+        where: { hmsRoomId: roomId },
+        select: { sellerId: true },
+      });
+      if (auction && auction.sellerId === userId) {
+        grantedRole = 'broadcaster';
+      } else {
+        this.logger.warn(
+          `Denied broadcaster token: user ${userId} does not own room ${roomId}`,
+        );
+      }
+    }
+
     const authToken = await this.hms.auth.getAuthToken({
       roomId,
       userId,
-      role,
+      role: grantedRole,
     });
     return authToken.token;
   }
