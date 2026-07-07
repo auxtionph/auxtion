@@ -151,6 +151,7 @@ export default function ProfileScreen() {
   const [followingCount, setFollowingCount] = useState(0);
 
   const isSeller = user?.role === 'SELLER';
+  const isAdmin = user?.role === 'ADMIN';
 
   const fetchProfileStatus = useCallback(async () => {
     try {
@@ -380,7 +381,9 @@ export default function ProfileScreen() {
   }
 
   // ── MAIN SCREEN ──────────────────────────────────────────────────────────
-  const quickActions = isSeller
+  const quickActions = isAdmin
+    ? []
+    : isSeller
     ? [
         { symbol: 'storefront.fill' as SFSymbol, fallback: '🏪', label: 'My Shop', color: '#1A56DB', bg: '#1A56DB22', action: () => router.push('/seller/shop' as any) },
         { symbol: 'shippingbox.fill' as SFSymbol, fallback: '📦', label: 'My Orders', color: '#A78BFA', bg: '#7C3AED22', action: () => router.push('/(main)/activity') },
@@ -396,7 +399,7 @@ export default function ProfileScreen() {
     { symbol: 'pencil' as SFSymbol, fallback: '✏️', label: 'Edit Profile', action: () => setScreen('edit') },
     { symbol: 'mappin.and.ellipse' as SFSymbol, fallback: '📍', label: 'Shipping Address', action: () => router.push('/profile/address' as any) },
     { symbol: 'creditcard' as SFSymbol, fallback: '💳', label: 'Payment Methods', action: () => router.push('/seller/payment-settings' as any) },
-    ...(!isSeller ? [{
+    ...(!isSeller && !isAdmin ? [{
       symbol: 'storefront.fill' as SFSymbol,
       fallback: '🏪',
       label: 'Become a Seller',
@@ -462,14 +465,14 @@ export default function ProfileScreen() {
             borderRadius: 999,
             paddingHorizontal: 10, paddingVertical: 3,
             borderWidth: 1,
-            borderColor: isSeller ? '#1A56DB55' : '#6B758055',
-            backgroundColor: isSeller ? '#1A56DB18' : '#6B758018',
+            borderColor: isAdmin ? '#A78BFA55' : isSeller ? '#1A56DB55' : '#6B758055',
+            backgroundColor: isAdmin ? '#A78BFA18' : isSeller ? '#1A56DB18' : '#6B758018',
           }}>
             <Text style={{
-              color: isSeller ? '#60A5FA' : '#9CA3AF',
+              color: isAdmin ? '#C4B5FD' : isSeller ? '#60A5FA' : '#9CA3AF',
               fontSize: 10, fontWeight: '800', letterSpacing: 0.5,
             }}>
-              {isSeller ? 'SELLER' : 'BUYER'}
+              {isAdmin ? 'ADMIN' : isSeller ? 'SELLER' : 'BUYER'}
             </Text>
           </View>
           <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 5, marginTop: 10 }}>
@@ -488,7 +491,7 @@ export default function ProfileScreen() {
         </View>
 
         {/* Completion banner — buyers only when incomplete */}
-        {profileStatus && !profileStatus.isComplete && (
+        {!isAdmin && profileStatus && !profileStatus.isComplete && (
           <TouchableOpacity
             style={{
               marginHorizontal: 20, marginBottom: 20,
