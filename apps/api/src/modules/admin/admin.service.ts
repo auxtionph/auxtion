@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   SellerApplicationStatus,
@@ -49,5 +49,67 @@ export class AdminService {
       completedOrders,
       gmv: gmvAgg._sum.amount ?? 0,
     };
+  }
+
+  async listUsers(opts: { search?: string; page?: number; limit?: number }) {
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(50, Math.max(1, opts.limit ?? 20));
+    const search = opts.search?.trim();
+
+    const where = search
+      ? {
+          OR: [
+            { displayName: { contains: search, mode: 'insensitive' as const } },
+            { email: { contains: search, mode: 'insensitive' as const } },
+          ],
+        }
+      : {};
+
+    const [users, total] = await this.prisma.$transaction([
+      this.prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          displayName: true,
+          avatarUrl: true,
+          role: true,
+          totalSales: true,
+          isEmailVerified: true,
+          createdAt: true,
+          _count: { select: { sellerOrders: true, buyerOrders: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return {
+      items: users,
+      meta: { page, limit, total, hasMore: page * limit < total },
+    };
+  }
+
+  async changeUserRole(adminId: string, targetUserId: string, role: UserRole) {
+    if (adminId === targetUserId) {
+      throw new BadRequestException('You cannot change your own role');
+    }
+
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, role: true },
+    });
+    if (!target) throw new NotFoundException('User not found');
+    if (target.role === role) {
+      throw new BadRequestException(`User is already ${role}`);
+    }
+
+    return this.prisma.user.update({
+      where: { id: targetUserId },
+      data: { role },
+      select: { id: true, email: true, displayName: true, role: true },
+    });
   }
 }
