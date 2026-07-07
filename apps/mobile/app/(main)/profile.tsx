@@ -406,7 +406,7 @@ export default function ProfileScreen() {
       symbol: 'shield.checkered' as SFSymbol,
       fallback: '🛡️',
       label: 'Admin Panel',
-      action: () => router.push('/admin/applications' as any),
+      action: () => router.push('/admin' as any),
     }] : []),
   ];
 
