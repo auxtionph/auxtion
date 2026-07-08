@@ -5356,7 +5356,7 @@ export default function LiveAuctionRoom() {
                     }
                     setSavingProfile(true);
                     try {
-                      await apiClient.post('/users/me/address', addressForm);
+                      await apiClient.post('/users/me/addresses', addressForm);
                       setProfileStep('payment');
                     } catch {
                       Alert.alert('Error', 'Failed to save address. Please try again.');
