@@ -15,6 +15,8 @@ import {
 } from 'react-native';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'expo-router';
+import { useAuthStore } from '../../src/stores/auth.store';
+import { A } from '../../src/theme/admin';
 import { SymbolView, SFSymbol } from 'expo-symbols';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { apiClient } from '../../src/services/api/client';
@@ -106,6 +108,30 @@ function Icon({ symbol, fallback, size = 14, tint = '#9CA3AF' }: {
 export default function ActivityScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'ADMIN';
+
+  if (isAdmin) {
+    return (
+      <View style={{ flex: 1, backgroundColor: A.color.surface, paddingTop: insets.top }}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+          <Text style={{ fontFamily: A.mono, fontSize: 11, letterSpacing: 1.5, color: A.color.ink3, marginBottom: 12 }}>ADMIN ACCOUNT</Text>
+          <Text style={{ color: A.color.ink, fontSize: 20, fontWeight: '700', marginBottom: 8, textAlign: 'center' }}>
+            No activity here
+          </Text>
+          <Text style={{ color: A.color.ink2, fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 28 }}>
+            Admin accounts manage the platform. Head to the Admin Panel to review applications, users, and orders.
+          </Text>
+          <TouchableOpacity
+            onPress={() => router.push('/admin' as any)}
+            style={{ backgroundColor: A.color.accent, borderRadius: 14, paddingHorizontal: 28, paddingVertical: 14 }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Open Admin Panel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
   const [activeTab, setActiveTab] = useState<Tab>('orders');
   const [orders, setOrders] = useState<Order[]>([]);
   const [offers, setOffers] = useState<Offer[]>([]);
