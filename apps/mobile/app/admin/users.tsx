@@ -1,19 +1,10 @@
-import {
-  View,
-  Text,
-  TextInput,
-  FlatList,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-  Platform,
-} from 'react-native';
+import { View, Text, TextInput, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { SymbolView, SFSymbol } from 'expo-symbols';
 import { apiClient } from '../../src/services/api/client';
 import { useAuthStore } from '../../src/stores/auth.store';
+import { AdminScreen, AdminHeader, Card, Badge, Mono } from '../../src/theme/AdminUI';
+import { A } from '../../src/theme/admin';
 
 type Role = 'BUYER' | 'SELLER' | 'ADMIN';
 
@@ -29,17 +20,11 @@ interface AdminUser {
   _count: { sellerOrders: number; buyerOrders: number };
 }
 
-const ROLE_COLOR: Record<Role, string> = {
-  BUYER: '#6B7280',
-  SELLER: '#1A56DB',
-  ADMIN: '#A78BFA',
-};
+const ROLE_TONE = { BUYER: 'neutral', SELLER: 'accent', ADMIN: 'violet' } as const;
 
 export default function AdminUsersScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { user: me } = useAuthStore();
-
   const [search, setSearch] = useState('');
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [page, setPage] = useState(1);
@@ -67,10 +52,7 @@ export default function AdminUsersScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    setLoading(true);
-    void fetchUsers('', 1, false);
-  }, [fetchUsers]);
+  useEffect(() => { setLoading(true); void fetchUsers('', 1, false); }, [fetchUsers]);
 
   const onSearchChange = (text: string) => {
     setSearch(text);
@@ -113,49 +95,43 @@ export default function AdminUsersScreen() {
     if (u.role !== 'BUYER') options.push({ text: 'Set as Buyer', role: 'BUYER' });
     if (u.role !== 'SELLER') options.push({ text: 'Set as Seller', role: 'SELLER' });
     if (u.role !== 'ADMIN') options.push({ text: 'Set as Admin', role: 'ADMIN', style: 'destructive' });
-
-    Alert.alert(
-      `Change role: ${u.displayName}`,
-      `Current role: ${u.role}`,
-      [
-        ...options.map(o => ({
-          text: o.text,
-          style: o.style,
-          onPress: () => o.role && void changeRole(u, o.role),
-        })),
-        { text: 'Cancel', style: 'cancel' as const },
-      ],
-    );
+    Alert.alert(`Change role: ${u.displayName}`, `Current role: ${u.role}`, [
+      ...options.map(o => ({ text: o.text, style: o.style, onPress: () => o.role && void changeRole(u, o.role) })),
+      { text: 'Cancel', style: 'cancel' as const },
+    ]);
   };
 
   if (me?.role !== 'ADMIN') {
     return (
-      <View
-        className="flex-1 bg-[#0D1117] items-center justify-center px-6"
-        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
-      >
-        <Text className="text-white text-lg font-semibold mb-2">Not authorized</Text>
-        <TouchableOpacity onPress={() => router.back()} className="bg-[#1A56DB] rounded-xl px-6 py-3 mt-4">
-          <Text className="text-white font-semibold">Go Back</Text>
-        </TouchableOpacity>
-      </View>
+      <AdminScreen>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: A.space.lg }}>
+          <Text style={{ color: A.color.ink, fontSize: 17, fontWeight: '600', marginBottom: 8 }}>Not authorized</Text>
+          <TouchableOpacity onPress={() => router.back()} style={{ backgroundColor: A.color.accent, borderRadius: A.radius.md, paddingHorizontal: 24, paddingVertical: 12, marginTop: 16 }}>
+            <Text style={{ color: '#fff', fontWeight: '600' }}>Go back</Text>
+          </TouchableOpacity>
+        </View>
+      </AdminScreen>
     );
   }
 
   return (
-    <View className="flex-1 bg-[#0D1117]" style={{ paddingTop: insets.top }}>
-      <View className="px-6 pt-2 pb-3 flex-row items-center gap-4">
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text className="text-[#1A56DB] text-base">← Back</Text>
-        </TouchableOpacity>
-        <Text className="text-white font-bold text-lg">Users</Text>
-      </View>
+    <AdminScreen>
+      <AdminHeader title="Users" onBack={() => router.back()} />
 
-      <View className="px-6 pb-3">
+      <View style={{ paddingHorizontal: A.space.lg, paddingBottom: A.space.sm }}>
         <TextInput
-          className="bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-white"
+          style={{
+            backgroundColor: A.color.card,
+            borderWidth: 1,
+            borderColor: search ? A.color.accentLine : A.color.hairline,
+            borderRadius: A.radius.md,
+            paddingHorizontal: 14,
+            paddingVertical: 12,
+            color: A.color.ink,
+            fontSize: 14,
+          }}
           placeholder="Search by name or email"
-          placeholderTextColor="#4B5563"
+          placeholderTextColor={A.color.ink3}
           value={search}
           onChangeText={onSearchChange}
           autoCapitalize="none"
@@ -163,23 +139,23 @@ export default function AdminUsersScreen() {
       </View>
 
       {loading ? (
-        <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#1A56DB" />
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color={A.color.accent} />
         </View>
       ) : (
         <FlatList
           data={users}
           keyExtractor={item => item.id}
-          contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: insets.bottom + 24 }}
+          contentContainerStyle={{ paddingHorizontal: A.space.lg, paddingBottom: 32 }}
           onEndReached={onEndReached}
           onEndReachedThreshold={0.4}
           ListEmptyComponent={
-            <View className="items-center py-20">
-              <Text className="text-gray-500">No users found.</Text>
+            <View style={{ alignItems: 'center', paddingVertical: 80 }}>
+              <Text style={{ color: A.color.ink3 }}>No users found.</Text>
             </View>
           }
           ListFooterComponent={
-            loadingMore ? <ActivityIndicator color="#1A56DB" style={{ marginVertical: 16 }} /> : null
+            loadingMore ? <ActivityIndicator color={A.color.accent} style={{ marginVertical: 16 }} /> : null
           }
           renderItem={({ item }) => {
             const busy = actioningId === item.id;
@@ -187,32 +163,28 @@ export default function AdminUsersScreen() {
               <TouchableOpacity
                 onPress={() => promptRoleChange(item)}
                 disabled={busy}
-                className="bg-gray-900 border border-gray-800 rounded-2xl p-4 mb-3 flex-row items-center"
+                activeOpacity={0.85}
+                style={{ marginBottom: A.space.sm }}
               >
-                <View className="flex-1">
-                  <Text className="text-white font-semibold text-base">{item.displayName}</Text>
-                  <Text className="text-gray-500 text-sm">{item.email}</Text>
-                  <Text className="text-gray-600 text-xs mt-1">
-                    {item._count.sellerOrders} sold · {item._count.buyerOrders} bought
-                  </Text>
-                </View>
-                {busy ? (
-                  <ActivityIndicator color="#1A56DB" />
-                ) : (
-                  <View
-                    className="rounded-full px-3 py-1"
-                    style={{ backgroundColor: ROLE_COLOR[item.role] + '22' }}
-                  >
-                    <Text className="text-xs font-semibold" style={{ color: ROLE_COLOR[item.role] }}>
-                      {item.role}
-                    </Text>
+                <Card style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: A.color.ink, fontSize: 15, fontWeight: '600' }}>{item.displayName}</Text>
+                    <Text style={{ color: A.color.ink3, fontSize: 13, marginTop: 2 }}>{item.email}</Text>
+                    <Mono style={{ fontSize: 11, color: A.color.ink3, marginTop: 4 }}>
+                      {item._count.sellerOrders} sold · {item._count.buyerOrders} bought
+                    </Mono>
                   </View>
-                )}
+                  {busy ? (
+                    <ActivityIndicator color={A.color.accent} />
+                  ) : (
+                    <Badge text={item.role} tone={ROLE_TONE[item.role]} />
+                  )}
+                </Card>
               </TouchableOpacity>
             );
           }}
         />
       )}
-    </View>
+    </AdminScreen>
   );
 }

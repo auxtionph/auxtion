@@ -1,28 +1,13 @@
-import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-} from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert, ScrollView } from 'react-native';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatPHP } from '@auxtion/utils';
 import { apiClient } from '../../src/services/api/client';
 import { useAuthStore } from '../../src/stores/auth.store';
+import { AdminScreen, AdminHeader, Card, Badge, Tab, FilterChip, Mono } from '../../src/theme/AdminUI';
+import { A, AdminStatusTone } from '../../src/theme/admin';
 
-type OrderStatus =
-  | 'PENDING_PAYMENT'
-  | 'PENDING_MANUAL_PAYMENT'
-  | 'PAID'
-  | 'SHIPPED'
-  | 'DELIVERED'
-  | 'COMPLETED'
-  | 'CANCELLED'
-  | 'DISPUTED';
+type OrderStatus = 'PENDING_PAYMENT' | 'PENDING_MANUAL_PAYMENT' | 'PAID' | 'SHIPPED' | 'DELIVERED' | 'COMPLETED' | 'CANCELLED' | 'DISPUTED';
 
 interface AdminOrder {
   id: string;
@@ -45,30 +30,22 @@ const FILTERS: { label: string; value?: OrderStatus }[] = [
   { label: 'Cancelled', value: 'CANCELLED' },
 ];
 
-const STATUS_COLOR: Record<OrderStatus, string> = {
-  PENDING_PAYMENT: '#F59E0B',
-  PENDING_MANUAL_PAYMENT: '#F59E0B',
-  PAID: '#60A5FA',
-  SHIPPED: '#A78BFA',
-  DELIVERED: '#10B981',
-  COMPLETED: '#10B981',
-  CANCELLED: '#6B7280',
-  DISPUTED: '#EF4444',
+const STATUS_TONE: Record<OrderStatus, AdminStatusTone> = {
+  PENDING_PAYMENT: 'amber',
+  PENDING_MANUAL_PAYMENT: 'amber',
+  PAID: 'accent',
+  SHIPPED: 'violet',
+  DELIVERED: 'emerald',
+  COMPLETED: 'emerald',
+  CANCELLED: 'neutral',
+  DISPUTED: 'red',
 };
 
-const CANCELLABLE: OrderStatus[] = [
-  'PENDING_PAYMENT',
-  'PENDING_MANUAL_PAYMENT',
-  'PAID',
-  'SHIPPED',
-  'DISPUTED',
-];
+const CANCELLABLE: OrderStatus[] = ['PENDING_PAYMENT', 'PENDING_MANUAL_PAYMENT', 'PAID', 'SHIPPED', 'DISPUTED'];
 
 export default function AdminOrdersScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { user: me } = useAuthStore();
-
   const [filter, setFilter] = useState<{ label: string; value?: OrderStatus }>(FILTERS[0]);
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [page, setPage] = useState(1);
@@ -86,225 +63,137 @@ export default function AdminOrdersScreen() {
   }, [params.filterUserId, params.filterUserName]);
 
   const fetchOrders = useCallback(
-    async (
-      status: OrderStatus | undefined,
-      userId: string | undefined,
-      pageNum: number,
-      append: boolean,
-    ) => {
+    async (status: OrderStatus | undefined, userId: string | undefined, pageNum: number, append: boolean) => {
       try {
-        const res = await apiClient.get('/admin/orders', {
-          params: { status, userId, page: pageNum, limit: 20 },
-        });
+        const res = await apiClient.get('/admin/orders', { params: { status, userId, page: pageNum, limit: 20 } });
         const data = res.data.data ?? res.data;
         const items = (data?.items ?? []) as AdminOrder[];
         setOrders(prev => (append ? [...prev, ...items] : items));
         setHasMore(data?.meta?.hasMore ?? false);
         setPage(pageNum);
-      } catch {
-        if (!append) setOrders([]);
-      } finally {
-        setLoading(false);
-        setLoadingMore(false);
-      }
-    },
-    [],
-  );
-  useEffect(() => {
-    setLoading(true);
-    void fetchOrders(filter.value, userFilter?.id, 1, false);
-  }, [filter, userFilter, fetchOrders]);
-  const onEndReached = () => {
-    if (hasMore && !loadingMore && !loading) {
-      setLoadingMore(true);
-      void fetchOrders(filter.value, userFilter?.id, page + 1, true);
-    }
-  };
+      } catch { if (!append) setOrders([]); }
+      finally { setLoading(false); setLoadingMore(false); }
+    }, []);
+
+  useEffect(() => { setLoading(true); void fetchOrders(filter.value, userFilter?.id, 1, false); }, [filter, userFilter, fetchOrders]);
+  const onEndReached = () => { if (hasMore && !loadingMore && !loading) { setLoadingMore(true); void fetchOrders(filter.value, userFilter?.id, page + 1, true); } };
 
   const forceCancel = (order: AdminOrder) => {
-    Alert.alert(
-      'Force Cancel Order',
-      `Cancel order for "${order.item.title}" (${formatPHP(order.amount)})? This returns the item to available and cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Force Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            setActioningId(order.id);
-            try {
-              await apiClient.patch(`/admin/orders/${order.id}/force-cancel`, {});
-              setOrders(prev =>
-                prev.map(o => (o.id === order.id ? { ...o, status: 'CANCELLED' as OrderStatus } : o)),
-              );
-            } catch (error: unknown) {
-              const err = error as { response?: { data?: { message?: string | string[] } } };
-              const msg = Array.isArray(err.response?.data?.message)
-                ? err.response!.data!.message!.join('\n')
-                : err.response?.data?.message ?? 'Failed to cancel order';
-              Alert.alert('Error', msg);
-            } finally {
-              setActioningId(null);
-            }
-          },
-        },
-      ],
-    );
+    Alert.alert('Force Cancel Order', `Cancel order for "${order.item.title}" (${formatPHP(order.amount)})? This returns the item to available and cannot be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Force Cancel', style: 'destructive', onPress: async () => {
+        setActioningId(order.id);
+        try {
+          await apiClient.patch(`/admin/orders/${order.id}/force-cancel`, {});
+          setOrders(prev => prev.map(o => (o.id === order.id ? { ...o, status: 'CANCELLED' as OrderStatus } : o)));
+        } catch (error: unknown) {
+          const err = error as { response?: { data?: { message?: string | string[] } } };
+          const msg = Array.isArray(err.response?.data?.message) ? err.response!.data!.message!.join('\n') : err.response?.data?.message ?? 'Failed to cancel order';
+          Alert.alert('Error', msg);
+        } finally { setActioningId(null); }
+      }},
+    ]);
   };
 
   if (me?.role !== 'ADMIN') {
     return (
-      <View
-        className="flex-1 bg-[#0D1117] items-center justify-center px-6"
-        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
-      >
-        <Text className="text-white text-lg font-semibold mb-2">Not authorized</Text>
-        <TouchableOpacity onPress={() => router.back()} className="bg-[#1A56DB] rounded-xl px-6 py-3 mt-4">
-          <Text className="text-white font-semibold">Go Back</Text>
-        </TouchableOpacity>
-      </View>
+      <AdminScreen>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: A.space.lg }}>
+          <Text style={{ color: A.color.ink, fontSize: 17, fontWeight: '600', marginBottom: 8 }}>Not authorized</Text>
+          <TouchableOpacity onPress={() => router.back()} style={{ backgroundColor: A.color.accent, borderRadius: A.radius.md, paddingHorizontal: 24, paddingVertical: 12, marginTop: 16 }}>
+            <Text style={{ color: '#fff', fontWeight: '600' }}>Go back</Text>
+          </TouchableOpacity>
+        </View>
+      </AdminScreen>
     );
   }
 
   return (
-    <View className="flex-1 bg-[#0D1117]" style={{ paddingTop: insets.top }}>
-      <View className="px-6 pt-2 pb-3 flex-row items-center gap-4">
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text className="text-[#1A56DB] text-base">← Back</Text>
-        </TouchableOpacity>
-        <Text className="text-white font-bold text-lg">Orders</Text>
-        <View className="flex-1" />
-        <TouchableOpacity
-          onPress={() => router.push('/admin/user-picker' as any)}
-          className="flex-row items-center gap-1"
-        >
-          <Text className="text-[#1A56DB] text-sm font-semibold">Filter by user</Text>
-        </TouchableOpacity>
-      </View>
+    <AdminScreen>
+      <AdminHeader
+        title="Orders"
+        onBack={() => router.back()}
+        right={
+          <TouchableOpacity onPress={() => router.push('/admin/user-picker' as any)}>
+            <Text style={{ color: A.color.accent, fontSize: 13, fontWeight: '600' }}>Filter</Text>
+          </TouchableOpacity>
+        }
+      />
 
-      <View style={{ maxHeight: 44 }}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 24, gap: 8 }}
-        >
-          {FILTERS.map(f => (
-            <TouchableOpacity
-              key={f.label}
-              onPress={() => setFilter(f)}
-              className={`rounded-full px-4 py-2 ${
-                filter.label === f.label ? 'bg-[#1A56DB]' : 'bg-gray-900 border border-gray-700'
-              }`}
-            >
-              <Text
-                className={`text-xs font-semibold ${
-                  filter.label === f.label ? 'text-white' : 'text-gray-400'
-                }`}
-              >
-                {f.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: 44 }} contentContainerStyle={{ paddingHorizontal: A.space.lg, gap: 8 }}>
+        {FILTERS.map(f => (
+          <Tab key={f.label} label={f.label} on={filter.label === f.label} onPress={() => setFilter(f)} />
+        ))}
+      </ScrollView>
 
       {userFilter && (
-        <View className="px-6 pb-2">
-          <TouchableOpacity
-            onPress={() => setUserFilter(null)}
-            className="self-start flex-row items-center bg-[#1A56DB22] border border-[#1A56DB55] rounded-full px-3 py-1.5"
-          >
-            <Text className="text-[#60A5FA] text-xs font-semibold mr-1">
-              {userFilter.name}
-            </Text>
-            <Text className="text-[#60A5FA] text-xs font-bold">✕</Text>
-          </TouchableOpacity>
+        <View style={{ paddingHorizontal: A.space.lg, paddingTop: A.space.sm }}>
+          <FilterChip label={userFilter.name} onClear={() => setUserFilter(null)} />
         </View>
       )}
 
       {loading ? (
-        <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#1A56DB" />
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color={A.color.accent} />
         </View>
       ) : (
         <FlatList
           data={orders}
           keyExtractor={item => item.id}
-          contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: insets.bottom + 24 }}
+          contentContainerStyle={{ paddingHorizontal: A.space.lg, paddingTop: 12, paddingBottom: 32 }}
           onEndReached={onEndReached}
           onEndReachedThreshold={0.4}
           ListEmptyComponent={
-            <View className="items-center py-20">
-              <Text className="text-gray-500">No orders found.</Text>
+            <View style={{ alignItems: 'center', paddingVertical: 80 }}>
+              <Text style={{ color: A.color.ink3 }}>No orders found.</Text>
             </View>
           }
-          ListFooterComponent={
-            loadingMore ? <ActivityIndicator color="#1A56DB" style={{ marginVertical: 16 }} /> : null
-          }
+          ListFooterComponent={loadingMore ? <ActivityIndicator color={A.color.accent} style={{ marginVertical: 16 }} /> : null}
           renderItem={({ item }) => {
             const busy = actioningId === item.id;
             const canCancel = CANCELLABLE.includes(item.status);
             return (
-              <View className="bg-gray-900 border border-gray-800 rounded-2xl p-4 mb-3">
-                <View className="flex-row items-start justify-between">
-                  <View className="flex-1 pr-2">
-                    <Text className="text-white font-semibold text-base" numberOfLines={1}>
-                      {item.item.title}
-                    </Text>
-                    <Text className="text-gray-500 text-sm mt-0.5">{formatPHP(item.amount)}</Text>
+              <View style={{ marginBottom: A.space.sm }}>
+                <Card>
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <Text style={{ color: A.color.ink, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>{item.item.title}</Text>
+                      <Mono style={{ fontSize: 14, color: A.color.ink2, marginTop: 3 }}>{formatPHP(item.amount)}</Mono>
+                    </View>
+                    <Badge text={item.status.replace(/_/g, ' ')} tone={STATUS_TONE[item.status]} />
                   </View>
-                  <View
-                    className="rounded-full px-3 py-1"
-                    style={{ backgroundColor: STATUS_COLOR[item.status] + '22' }}
-                  >
-                    <Text className="text-xs font-semibold" style={{ color: STATUS_COLOR[item.status] }}>
-                      {item.status.replace(/_/g, ' ')}
+                  <View style={{ marginTop: 13, gap: 5 }}>
+                    <Text style={{ color: A.color.ink3, fontSize: 12 }}>
+                      Buyer:{' '}
+                      <Text style={{ color: A.color.accentText }} onPress={() => setUserFilter({ id: item.buyer.id, name: item.buyer.displayName })}>
+                        {item.buyer.displayName}
+                      </Text>
                     </Text>
+                    <Text style={{ color: A.color.ink3, fontSize: 12 }}>
+                      Seller:{' '}
+                      <Text style={{ color: A.color.accentText }} onPress={() => setUserFilter({ id: item.seller.id, name: item.seller.displayName })}>
+                        {item.seller.displayName}
+                      </Text>
+                    </Text>
+                    <Mono style={{ fontSize: 11, color: A.color.ink3 }}>
+                      {new Date(item.createdAt).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}
+                    </Mono>
                   </View>
-                </View>
-
-                <View className="mt-3 gap-1">
-                  <Text className="text-gray-500 text-xs">
-                    Buyer:{' '}
-                    <Text
-                      className="text-[#60A5FA]"
-                      onPress={() => setUserFilter({ id: item.buyer.id, name: item.buyer.displayName })}
+                  {canCancel && (
+                    <TouchableOpacity
+                      disabled={busy}
+                      onPress={() => forceCancel(item)}
+                      style={{ marginTop: 13, borderRadius: A.radius.md, paddingVertical: 10, alignItems: 'center', backgroundColor: A.color.raised, borderWidth: 1, borderColor: A.color.red + '50' }}
                     >
-                      {item.buyer.displayName}
-                    </Text>
-                  </Text>
-                  <Text className="text-gray-500 text-xs">
-                    Seller:{' '}
-                    <Text
-                      className="text-[#60A5FA]"
-                      onPress={() => setUserFilter({ id: item.seller.id, name: item.seller.displayName })}
-                    >
-                      {item.seller.displayName}
-                    </Text>
-                  </Text>
-                  <Text className="text-gray-600 text-xs">
-                    {new Date(item.createdAt).toLocaleDateString()}
-                  </Text>
-                </View>
-
-                {canCancel && (
-                  <TouchableOpacity
-                    disabled={busy}
-                    onPress={() => forceCancel(item)}
-                    className="mt-3 rounded-xl py-2.5 items-center bg-gray-800 border border-red-800/50"
-                  >
-                    {busy ? (
-                      <ActivityIndicator color="#EF4444" />
-                    ) : (
-                      <Text className="text-red-400 font-semibold text-sm">Force Cancel</Text>
-                    )}
-                  </TouchableOpacity>
-                )}
+                      {busy ? <ActivityIndicator color={A.color.red} /> : <Text style={{ color: A.color.red, fontWeight: '600', fontSize: 13 }}>Force cancel</Text>}
+                    </TouchableOpacity>
+                  )}
+                </Card>
               </View>
             );
           }}
         />
       )}
-    </View>
+    </AdminScreen>
   );
 }
