@@ -450,8 +450,8 @@ export class OrdersService {
     if (order.buyerId !== buyerId) {
       throw new ForbiddenException('You are not the buyer of this order');
     }
-    if (order.status !== OrderStatus.DELIVERED) {
-      throw new BadRequestException('Order has not been delivered yet');
+    if (order.status !== OrderStatus.SHIPPED && order.status !== OrderStatus.DELIVERED) {
+      throw new BadRequestException('Order has not been shipped or delivered yet');
     }
 
     // ── Buyer confirmed receipt → complete + release payout ────────────
@@ -460,7 +460,7 @@ export class OrdersService {
     // status so a racing auto-confirm cron can't double-increment totalSales.
     const completed = await this.prisma.$transaction(async (tx) => {
       const res = await tx.order.updateMany({
-        where: { id: orderId, status: OrderStatus.DELIVERED },
+        where: { id: orderId, status: { in: [OrderStatus.SHIPPED, OrderStatus.DELIVERED] } },
         data: {
           status: OrderStatus.COMPLETED,
           payoutStatus: PayoutStatus.RELEASED,

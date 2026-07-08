@@ -259,7 +259,8 @@ export default function OrderDetailScreen() {
   const isPendingPayment = order.status === 'PENDING_PAYMENT';
   const isPendingManual = order.status === 'PENDING_MANUAL_PAYMENT';
   const isDelivered = order.status === 'DELIVERED';
-  const hasCTA = isPendingPayment || isPendingManual || isDelivered;
+  const isShipped = order.status === 'SHIPPED';
+  const hasCTA = isPendingPayment || isPendingManual || isDelivered || isShipped;
 
   // Build stepper — collapse PENDING_PAYMENT and PENDING_MANUAL_PAYMENT into one
   const steps = order.status === 'PENDING_MANUAL_PAYMENT'
@@ -737,7 +738,7 @@ export default function OrderDetailScreen() {
       )}
 
       {/* Confirm Receipt CTA */}
-      {isDelivered && (
+      {(isDelivered || isShipped) && (
         <View style={{
           position: 'absolute', bottom: 0, left: 0, right: 0,
           paddingHorizontal: 20, paddingBottom: insets.bottom + 16, paddingTop: 16,
