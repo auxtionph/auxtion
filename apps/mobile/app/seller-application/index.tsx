@@ -582,8 +582,8 @@ export default function SellerApplicationScreen() {
               </View>
               <Text className="text-gray-300 text-sm flex-1">
                 I confirm that the information I provided is accurate and I agree to Auxtion's{' '}
-                <Text className="text-[#1A56DB]">Terms of Service</Text> and{' '}
-                <Text className="text-[#1A56DB]">Seller Policy</Text>.
+                <Text className="text-[#1A56DB]" onPress={() => router.push('/legal/terms' as any)}>Terms of Service</Text> and{' '}
+                <Text className="text-[#1A56DB]" onPress={() => router.push('/legal/privacy' as any)}>Seller Policy</Text>.
               </Text>
             </TouchableOpacity>
 
