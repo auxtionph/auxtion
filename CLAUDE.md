@@ -77,3 +77,46 @@ Live room Modes 1/2/3 (swipe / chat-bid / live buy-now), Max Bid proxy bidding, 
 - Prisma migration-drift cleanup (before prod migrate deploy); Prisma 5→7 upgrade (deferred)
 - Push notifications; Winner announced in chat (Mode 2); PayMongo live mode; DB cleanup before TestFlight; Railway prod PG migration
 - **Verify:** Cloudinary may reject new folder paths (`auxtion/seller-application/*`, `auxtion/payment-proof/*`) if account is preset/folder-restricted — test a real device upload.
+
+
+---
+
+## Session Summary — July 8, 2026
+
+### Completed this session:
+- **Full admin panel** (8 chunks): platform stats, application review (approve/reject/revoke), hub with console design system, user management (paginated list, search, role change with self-lockout guard), order oversight (status filters, pagination, force-cancel), dispute resolution (resolve for buyer/seller, transaction-safe), user-scoped order filter, searchable user-picker modal
+- **Admin design system**: `apps/mobile/src/theme/admin.ts` (tokens) + `apps/mobile/src/theme/AdminUI.tsx` (shared components: AdminScreen, AdminHeader, Eyebrow, Card, StatTile, Badge, Tab, FilterChip, Mono). All 6 admin screens migrated to console design system.
+- **Admin-account UI gating**: Profile (violet ADMIN badge, no buyer/seller UI, no Shipping Address/Payment Methods), Go Live (admin redirect to Admin Panel), Activity (admin redirect, hooks-order fix applied)
+- **Admin backend**: `apps/api/src/modules/admin/` (AdminModule, AdminService, AdminController) registered in AppModule. Endpoints: `GET /admin/stats`, `GET /admin/users` (paginated+search), `PATCH /admin/users/:id/role`, `GET /admin/orders` (status+userId filters), `PATCH /admin/orders/:id/force-cancel`, `GET /admin/disputes`, `PATCH /admin/disputes/:id/resolve`. Seller application: `PATCH /seller-applications/:id/revoke`.
+- **Security audit fixes** (via Claude Code): socket JWT auth, atomic bids, DB-sourced winner, atomic buy-now/offer-accept, streaming authz, payment-info gating, payout release, rate limiting (@nestjs/throttler), mobile refresh queue
+- **ToS + Privacy Policy screens**: `apps/mobile/app/legal/terms.tsx`, `privacy.tsx`, wired into seller-application links
+- **Live room crash fix**: `res.data.data.orders` response shape (seller orders endpoint returns `{orders:[...]}` not flat array)
+- **Address endpoint fix**: `/users/me/address` → `/users/me/addresses` (singular→plural)
+- **Confirm Receipt fix**: backend + mobile now accept SHIPPED orders (was gated on DELIVERED only)
+- **DB cleanup**: wiped all test orders/bids/auctions/items/applications, preserved user accounts
+- **Happy-path VERIFIED end-to-end**: auction→bid→win→PayMongo payment (webhook 200 OK)→ship→confirm receipt→COMPLETED+payout released
+
+### Known gaps (not TestFlight blockers):
+- Buy Now shop-tab placeholder ("Coming Soon" at live.tsx:3797) — needs wiring to actual buy-now claim flow
+- GCash/Bank picker (currently shows both forms simultaneously)
+- Completion ring still shows for admin profile (cosmetic)
+- Consignment architecture (parked — consignedToUserId is dead schema field, 5 order-creation sites need effective-seller derivation)
+
+### TestFlight blockers (remaining):
+- **Railway deployment** — no production backend yet (locally only). Must deploy API + DB + Redis to Railway before TestFlight build. $5/month Hobby plan.
+- **Production .env** — TestFlight build needs `EXPO_PUBLIC_API_URL` and `EXPO_PUBLIC_SOCKET_URL` pointing at Railway URL, not localhost
+- PayMongo webhook URL needs updating from ngrok to Railway URL in PayMongo dashboard
+- PayMongo is in TEST mode (fine for beta, needs live mode for real money)
+
+### Test accounts:
+- **Jim** (jim@gmail.com / Test1234!): role=ADMIN, displayName=Jimgh, id=cmple5wdt0000i2p8bz68em23
+- **Micah** (micah@gmail.com / Test1234!): role=SELLER (re-approved this session), id=cmplebd910001i2p81zz3emhv
+- **Jimboy**: buyer test account used for happy-path verification
+
+### Architecture notes added:
+- `AdminModule` is the single home for all admin-only backend logic (not scattered across existing controllers)
+- Admin design system uses TS token object + StyleSheet (not NativeWind) for centralized control
+- `AdminScreen` component bakes in `useSafeAreaInsets` — no admin screen hardcodes device padding
+- Confirm Receipt accepts both SHIPPED and DELIVERED orders (no separate "mark delivered" step in current flow)
+- PayMongo webhook configured at `/api/v1/payments/webhook/paymongo`, raw body preserved in main.ts
+- The `if (isAdmin) return` early gate MUST be placed AFTER all React hooks in a component (hooks-order violation otherwise — fixed in activity.tsx, already correct in sell.tsx)
