@@ -14,6 +14,8 @@ import {
   Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { A } from '../../src/theme/admin';
 import { useState, useCallback } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuthStore } from '../../src/stores/auth.store';
@@ -26,6 +28,8 @@ export default function SellScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
   const isSeller = user?.role === 'SELLER';
+  const isAdmin = user?.role === 'ADMIN';
+  const insets = useSafeAreaInsets();
 
   const [auctions, setAuctions] = useState<SellerAuction[]>([]);
   const [loading, setLoading] = useState(false);
@@ -170,6 +174,33 @@ export default function SellScreen() {
     if (hours > 0) return `in ${hours}h ${mins % 60}m`;
     return `in ${mins}m`;
   };
+
+  if (isAdmin) {
+    return (
+      <View style={{ flex: 1, backgroundColor: A.color.surface, paddingTop: insets.top }}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+          <Text style={{ fontFamily: A.mono, fontSize: 11, letterSpacing: 1.5, color: A.color.ink3, marginBottom: 12 }}>ADMIN ACCOUNT</Text>
+          <Text style={{ color: A.color.ink, fontSize: 20, fontWeight: '700', marginBottom: 8, textAlign: 'center' }}>
+            This tab is for sellers
+          </Text>
+          <Text style={{ color: A.color.ink2, fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 28 }}>
+            Admin accounts manage the platform, not sell. Head to the Admin Panel to review applications, users, and orders.
+          </Text>
+          <TouchableOpacity
+            onPress={() => router.push('/admin' as any)}
+            style={{
+              backgroundColor: A.color.accent,
+              borderRadius: 14,
+              paddingHorizontal: 28,
+              paddingVertical: 14,
+            }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Open Admin Panel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   if (!isSeller) {
     return (
