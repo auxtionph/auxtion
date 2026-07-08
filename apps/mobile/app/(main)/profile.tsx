@@ -397,8 +397,10 @@ export default function ProfileScreen() {
 
   const settingsItems = [
     { symbol: 'pencil' as SFSymbol, fallback: '✏️', label: 'Edit Profile', action: () => setScreen('edit') },
-    { symbol: 'mappin.and.ellipse' as SFSymbol, fallback: '📍', label: 'Shipping Address', action: () => router.push('/profile/address' as any) },
-    { symbol: 'creditcard' as SFSymbol, fallback: '💳', label: 'Payment Methods', action: () => router.push('/seller/payment-settings' as any) },
+    ...(!isAdmin ? [
+      { symbol: 'mappin.and.ellipse' as SFSymbol, fallback: '📍', label: 'Shipping Address', action: () => router.push('/profile/address' as any) },
+      { symbol: 'creditcard' as SFSymbol, fallback: '💳', label: 'Payment Methods', action: () => router.push('/seller/payment-settings' as any) },
+    ] : []),
     ...(!isSeller && !isAdmin ? [{
       symbol: 'storefront.fill' as SFSymbol,
       fallback: '🏪',
